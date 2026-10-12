@@ -1,0 +1,31 @@
+{
+  "name": "@malgudi/domain",
+  "version": "1.0.0",
+  "description": "Pure domain calculation engines, financial invariants, and aggregate validators for Malgudi Mithais POS",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./pricing": "./src/pricing.ts",
+    "./pricing.js": "./src/pricing.ts",
+    "./tender": "./src/tender.ts",
+    "./tender.js": "./src/tender.ts",
+    "./reversals": "./src/reversals.ts",
+    "./aggregate": "./src/aggregate.ts",
+    "./reservations": "./src/reservations.ts",
+    "./sync": "./src/sync.ts",
+    "./lease": "./src/lease.ts"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "test": "vitest run",
+    "test:poc": "vitest run --reporter=verbose"
+  },
+  "dependencies": {
+    "@malgudi/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}

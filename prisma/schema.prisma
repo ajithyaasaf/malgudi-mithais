@@ -1,0 +1,240 @@
+// Malgudi Mithais POS — Central Cloud Database Schema (PostgreSQL)
+// Multi-Branch Offline Synchronization & Aggregation
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ============================================================================
+// 1. BRANCH & TERMINAL TOPOLOGY
+// ============================================================================
+
+model Branch {
+  id          String   @id @default(uuid())
+  code        String   @unique // e.g. "IB" (Town Hall), "MN" (Mattuthavani), "KK" (KK Nagar)
+  name        String   // Display name: e.g. "Malgudi Mithais - Madurai Town Hall Main Store"
+  address     String
+  city        String   @default("Madurai")
+  state       String   @default("Tamil Nadu")
+  pincode     String   @default("625001")
+  gstin       String   @default("33AAAAA0000A1Z5")
+  phone       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  terminals      Terminal[]
+  sales          ServerSale[]
+  stockMovements ServerStockMovement[]
+  cashMovements  ServerCashMovement[]
+  events         ServerEvent[]
+
+  @@map("branches")
+}
+
+model Terminal {
+  id           String    @id @default(uuid())
+  branchId     String    @map("branch_id")
+  terminalCode String    @map("terminal_code") // e.g. "T1", "T2"
+  counterCode  String    @default("C1") @map("counter_code")
+  isActive     Boolean   @default(true) @map("is_active")
+  lastSeenAt   DateTime? @map("last_seen_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, terminalCode])
+  @@map("terminals")
+}
+
+// ============================================================================
+// 2. SERVER SYNCHRONIZATION EVENT STREAM & OUT-OF-ORDER BUFFER
+// ============================================================================
+
+model ServerEvent {
+  eventId       String   @id @map("event_id")
+  branchId      String   @map("branch_id")
+  terminalId    String   @map("terminal_id")
+  aggregateType String   @map("aggregate_type") // SALE, RETURN, STOCK_MOVEMENT, PAYMENT_RECONCILIATION
+  aggregateId   String   @map("aggregate_id")
+  parentId      String?  @map("parent_id")
+  payloadJson   String   @map("payload_json") @db.Text
+  payloadHash   String   @map("payload_hash")
+  status        String   @default("COMMITTED") // COMMITTED, BUFFERED, CONFLICT
+  createdAt     DateTime @map("created_at")
+  ingestedAt    DateTime @default(now()) @map("ingested_at")
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@index([branchId, aggregateType])
+  @@index([aggregateId])
+  @@index([status])
+  @@map("server_events")
+}
+
+model ServerOutOfOrderBuffer {
+  eventId       String   @id @map("event_id")
+  branchId      String   @map("branch_id")
+  parentId      String   @map("parent_id")
+  aggregateId   String   @map("aggregate_id")
+  eventJson     String   @map("event_json") @db.Text
+  aggregateJson String   @map("aggregate_json") @db.Text
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([branchId, parentId])
+  @@map("server_out_of_order_buffer")
+}
+
+// ============================================================================
+// 3. SYNCHRONIZED CANONICAL SALES & INVOICES
+// ============================================================================
+
+model ServerSale {
+  id                    String   @id // Canonical Sale UUIDv7 from POS
+  invoiceNumber         String   @map("invoice_number") // e.g. "IB1/2627/000101" or "MN1/2627/000042"
+  branchId              String   @map("branch_id")
+  terminalId            String   @map("terminal_id")
+  counterId             String   @map("counter_id")
+  sessionId             String   @map("session_id")
+  businessDate          String   @map("business_date") // YYYY-MM-DD
+  taxPolicyVersion      String   @default("2026.1-TN") @map("tax_policy_version")
+  subtotalTaxablePaise  BigInt   @map("subtotal_taxable_paise")
+  totalCgstPaise        BigInt   @map("total_cgst_paise")
+  totalSgstPaise        BigInt   @map("total_sgst_paise")
+  totalIgstPaise        BigInt   @default(0) @map("total_igst_paise")
+  roundOffPaise         BigInt   @default(0) @map("round_off_paise")
+  netPayablePaise       BigInt   @map("net_payable_paise")
+  saleStatus            String   @map("sale_status") // COMPLETED, VOIDED, CANCELLED_ABORTED
+  paymentStatus         String   @map("payment_status") // SETTLED, PARTIALLY_SETTLED, REFUNDED
+  syncStatus            String   @default("SERVER_ACKNOWLEDGED") @map("sync_status")
+  createdAt             DateTime @map("created_at")
+  ingestedAt            DateTime @default(now()) @map("ingested_at")
+
+  branch   Branch              @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  items    ServerSaleItem[]
+  payments ServerSalePayment[]
+
+  @@unique([branchId, invoiceNumber])
+  @@index([branchId, businessDate])
+  @@index([saleStatus])
+  @@map("server_sales")
+}
+
+model ServerSaleItem {
+  id                  String  @id @default(uuid())
+  saleId              String  @map("sale_id")
+  branchId            String  @map("branch_id")
+  productId           String  @map("product_id")
+  quantityInput       BigInt  @map("quantity_input") // mg for weight, count for units
+  pricingUnit         String  @map("pricing_unit")   // PER_KG, PER_PIECE, PER_PACK, PER_BOX
+  weightInputSource   String  @default("SCALE_AUTO") @map("weight_input_source")
+  unitPricePaise      BigInt  @map("unit_price_paise")
+  taxablePaise        BigInt  @map("taxable_paise")
+  cgstPaise           BigInt  @map("cgst_paise")
+  sgstPaise           BigInt  @map("sgst_paise")
+  igstPaise           BigInt  @default(0) @map("igst_paise")
+  totalTaxPaise       BigInt  @map("total_tax_paise")
+  grossPaise          BigInt  @map("gross_paise")
+  stockDeductionDelta BigInt  @map("stock_deduction_delta")
+  stockUnit           String  @map("stock_unit")
+
+  sale ServerSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@index([branchId, productId])
+  @@map("server_sale_items")
+}
+
+model ServerSalePayment {
+  id                   String  @id @default(uuid())
+  saleId               String  @map("sale_id")
+  branchId             String  @map("branch_id")
+  paymentMethod        String  @map("payment_method") // CASH, UPI_MANUAL_RECORDED, UPI_GATEWAY_DYNAMIC
+  allocatedAmountPaise BigInt  @map("allocated_amount_paise")
+  tenderedPaise        BigInt  @default(0) @map("tendered_paise")
+  changeReturnedPaise  BigInt  @default(0) @map("change_returned_paise")
+  netAmountPaise       BigInt  @map("net_amount_paise")
+  outcome              String  @map("outcome") // SUCCESS, FAILED, REFUNDED
+  referenceNote        String? @map("reference_note")
+
+  sale ServerSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@index([branchId, paymentMethod])
+  @@map("server_sale_payments")
+}
+
+// ============================================================================
+// 4. INVENTORY & CASH MOVEMENTS AUDIT TRAIL
+// ============================================================================
+
+model ServerStockMovement {
+  id            String   @id
+  branchId      String   @map("branch_id")
+  productId     String   @map("product_id")
+  movementType  String   @map("movement_type") // OPENING_STOCK, RECEIPT_PRODUCTION, SALE_DEDUCTION, VOID_STOCK_REVERSAL, WASTAGE_DAMAGE
+  quantityDelta BigInt   @map("quantity_delta")
+  unit          String
+  referenceId   String   @map("reference_id")
+  reason        String?
+  actorId       String?  @map("actor_id")
+  createdAt     DateTime @map("created_at")
+  ingestedAt    DateTime @default(now()) @map("ingested_at")
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@index([branchId, productId])
+  @@index([branchId, movementType])
+  @@map("server_stock_movements")
+}
+
+model ServerCashMovement {
+  id           String   @id
+  branchId     String   @map("branch_id")
+  sessionId    String   @map("session_id")
+  movementType String   @map("movement_type") // OPENING_FLOAT, CASH_SALE, CASH_REFUND
+  amountPaise  BigInt   @map("amount_paise")
+  direction    String   @map("direction")     // IN, OUT
+  referenceId  String   @map("reference_id")
+  createdAt    DateTime @map("created_at")
+  ingestedAt   DateTime @default(now()) @map("ingested_at")
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@index([branchId, sessionId])
+  @@map("server_cash_movements")
+}
+
+// ============================================================================
+// 5. CENTRAL MASTER CATALOG & PRICE DISTRIBUTION
+// ============================================================================
+
+model ServerCatalogProduct {
+  id              String   @id
+  name            String
+  tamilName       String   @map("tamil_name")
+  sku             String   @unique
+  barcode         String?
+  categoryId      String   @map("category_id")
+  pricingUnit     String   @map("pricing_unit")     // PER_KG, PER_PIECE, PER_PACK, PER_BOX
+  inventoryUnit   String   @map("inventory_unit")   // MG, PCS, PACKS, BOXES
+  pricingBasis    String   @default("TAX_INCLUSIVE") @map("pricing_basis")
+  basePricePaise  BigInt   @map("base_price_paise")
+  piecePricePaise BigInt?  @map("piece_price_paise")
+  taxRateBps      Int      @default(500) @map("tax_rate_bps")
+  hsnCode         String   @map("hsn_code")
+  isActive        Boolean  @default(true) @map("is_active")
+  version         Int      @default(1)
+  targetBranchIds String   @default("*") @map("target_branch_ids") // e.g. "IB,MN" or "*"
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([version])
+  @@index([targetBranchIds])
+  @@map("server_catalog_products")
+}

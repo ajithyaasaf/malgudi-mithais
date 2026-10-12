@@ -1,0 +1,72 @@
+# Node & Package Managers
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment & Secrets (Safety First)
+.env
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+.env.staging
+*.pem
+*.key
+*.pfx
+*.cert
+*.crt
+
+# Build Outputs & Bundles
+dist/
+build/
+out/
+.next/
+apps/pos/dist/
+apps/api/dist/
+apps/pos/src-tauri/target/
+target/
+**/target/
+*.exe
+*.msi
+*.dll
+*.pdb
+*.dylib
+*.so
+
+# Databases & Backups (Never commit live or test database storage)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.bak
+*.corrupted.*
+backups/
+**/backups/
+data/
+**/data/
+
+# Logs & Diagnostics
+logs/
+*.log
+err.txt
+out.txt
+npm-debug.log*
+
+# OS & Editor Metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Test & Coverage Outputs
+coverage/
+.nyc_output/

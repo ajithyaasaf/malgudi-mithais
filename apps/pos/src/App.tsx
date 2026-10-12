@@ -1,0 +1,5977 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { calculateLineItem } from '@malgudi/domain/pricing.js';
+import { validateAndReconcileSplitTender, evaluateTransactionPaymentLifecycle } from '@malgudi/domain/tender.js';
+import {
+  PaymentTenderAllocation,
+  ProductDefinition,
+  SaleItemAllocation,
+  PaymentVerificationSource,
+  SettlementPolicy,
+  WeightInputSource,
+  PricingUnit,
+  InventoryUnit,
+  PricingBasis,
+} from '@malgudi/contracts';
+
+declare global {
+  interface Window {
+    __TAURI__?: {
+      core: {
+        invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+      };
+    };
+  }
+}
+
+export interface FinalizeSaleResult {
+  sale_id: string;
+  invoice_number: string;
+  event_id: string;
+  payload_hash: string;
+  items_count: number;
+  net_payable_paise: number;
+  cash_retained_paise: number;
+  upi_settled_paise: number;
+  sale_status?: string;
+  payment_status: string;
+  created_at: string;
+}
+
+export interface DBProductRecord {
+  id: string;
+  name: string;
+  tamil_name: string;
+  sku: string;
+  barcode?: string | null;
+  category_id: string;
+  pricing_unit: PricingUnit;
+  inventory_unit: InventoryUnit;
+  pricing_basis: PricingBasis;
+  base_price_paise: number;
+  piece_price_paise?: number | null;
+  tax_rate_bps: number;
+  hsn_code: string;
+  is_active: boolean;
+  version?: number;
+  current_stock: number;
+  stock_unit: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StockMovementRecord {
+  id: string;
+  branch_id: string;
+  product_id: string;
+  movement_type: string;
+  quantity_delta: number;
+  unit: string;
+  reference_id: string;
+  reason?: string | null;
+  actor_id?: string | null;
+  created_at: string;
+}
+
+export interface DailySalesSummary {
+  total_bills_recorded: number;
+  active_bills_count: number;
+  voided_bills_count: number;
+  gross_sales_paise: number;
+  taxable_sales_paise: number;
+  total_cgst_paise: number;
+  total_sgst_paise: number;
+  total_igst_paise: number;
+  total_tax_paise: number;
+  round_off_paise: number;
+  voided_amount_paise: number;
+  net_sales_paise: number;
+  daily_breakdown: {
+    business_date: string;
+    total_bills: number;
+    active_bills: number;
+    voided_bills: number;
+    taxable_sales_paise: number;
+    total_tax_paise: number;
+    gross_sales_paise: number;
+    voided_amount_paise: number;
+    net_sales_paise: number;
+  }[];
+}
+
+export interface PaymentSummaryReport {
+  total_cash_collected_paise: number;
+  total_cash_tendered_paise: number;
+  total_change_returned_paise: number;
+  total_upi_collected_paise: number;
+  total_split_bills_count: number;
+  total_split_amount_paise: number;
+  cash_refunds_paise: number;
+  upi_refunds_paise: number;
+  net_cash_paise: number;
+  net_upi_paise: number;
+  total_net_collected_paise: number;
+  methods_breakdown: {
+    payment_method: string;
+    bills_count: number;
+    total_collected_paise: number;
+    refunds_paise: number;
+    net_amount_paise: number;
+  }[];
+}
+
+export interface GstReport {
+  total_taxable_paise: number;
+  total_cgst_paise: number;
+  total_sgst_paise: number;
+  total_igst_paise: number;
+  total_gst_paise: number;
+  total_invoice_value_paise: number;
+  slabs_breakdown: {
+    tax_rate_percent: number;
+    taxable_paise: number;
+    cgst_paise: number;
+    sgst_paise: number;
+    igst_paise: number;
+    total_tax_paise: number;
+    total_gross_paise: number;
+  }[];
+  invoice_details: {
+    invoice_number: string;
+    business_date: string;
+    created_at: string;
+    sale_status: string;
+    taxable_paise: number;
+    cgst_paise: number;
+    sgst_paise: number;
+    igst_paise: number;
+    total_tax_paise: number;
+    round_off_paise: number;
+    net_payable_paise: number;
+    hsn_summary: string;
+  }[];
+}
+
+export interface ProductSalesReport {
+  total_items_sold_count: number;
+  total_revenue_paise: number;
+  products: {
+    product_id: string;
+    product_name: string;
+    tamil_name: string;
+    sku: string;
+    category_id: string;
+    pricing_unit: string;
+    total_quantity_canonical: number;
+    quantity_formatted: string;
+    bills_count: number;
+    taxable_paise: number;
+    tax_paise: number;
+    gross_paise: number;
+    revenue_share_percent: number;
+  }[];
+  categories: {
+    category_id: string;
+    category_name: string;
+    items_count: number;
+    taxable_paise: number;
+    tax_paise: number;
+    gross_paise: number;
+    revenue_share_percent: number;
+  }[];
+  top_selling: {
+    product_id: string;
+    product_name: string;
+    tamil_name: string;
+    sku: string;
+    category_id: string;
+    pricing_unit: string;
+    total_quantity_canonical: number;
+    quantity_formatted: string;
+    bills_count: number;
+    taxable_paise: number;
+    tax_paise: number;
+    gross_paise: number;
+    revenue_share_percent: number;
+  }[];
+}
+
+export interface CashDrawerReport {
+  session_id: string | null;
+  opening_float_paise: number;
+  cash_sales_inflow_paise: number;
+  cash_refunds_outflow_paise: number;
+  manual_inflows_paise: number;
+  manual_outflows_paise: number;
+  net_cash_change_paise: number;
+  expected_closing_cash_paise: number;
+  recorded_closing_cash_paise: number | null;
+  variance_paise: number | null;
+  movements: {
+    id: string;
+    created_at: string;
+    movement_type: string;
+    direction: string;
+    amount_paise: number;
+    reference_id: string;
+    session_id: string;
+  }[];
+}
+
+export interface FinancialReportsAggregate {
+  daily_sales: DailySalesSummary;
+  payment_summary: PaymentSummaryReport;
+  gst_report: GstReport;
+  product_sales: ProductSalesReport;
+  cash_drawer: CashDrawerReport;
+}
+
+
+export interface SessionInfo {
+  token: string;
+  user_id: string;
+  username: string;
+  display_name: string;
+  role: 'ADMIN' | 'CASHIER';
+  branch_id: string;
+  terminal_id: string;
+  counter_id: string;
+  session_id: string;
+  permissions: string[];
+  expires_at: string;
+}
+
+export interface UserRecord {
+  id: string;
+  username: string;
+  display_name: string;
+  role: 'ADMIN' | 'CASHIER';
+  status: 'ACTIVE' | 'DISABLED';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuditEventRecord {
+  id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  actor_id: string;
+  created_at: string;
+}
+
+export interface BranchConfigState {
+  branch_id: string;
+  branch_name: string;
+  terminal_id: string;
+  counter_id: string;
+  cloud_api_url: string;
+  cloud_api_key: string;
+  auto_sync_enabled: boolean;
+}
+
+export interface SyncStatusState {
+  branch_id: string;
+  branch_name: string;
+  terminal_id: string;
+  cloud_api_url: string;
+  pending_count: number;
+  synced_count: number;
+  conflict_count: number;
+  total_outbox_count: number;
+  last_sync_timestamp: string | null;
+  last_sync_status: string;
+  last_sync_error: string | null;
+  is_online: boolean;
+  last_inbound_sync_timestamp?: string | null;
+  last_inbound_sync_status?: string;
+  last_inbound_sync_error?: string | null;
+  last_inbound_catalog_version?: number;
+  auto_sync_worker_active?: boolean;
+}
+
+export interface CatalogCategory {
+  id: string;
+  name: string;
+  tamil_name: string;
+  icon: string;
+}
+
+const catalogCategories: CatalogCategory[] = [
+  { id: 'all', name: 'All Items', tamil_name: 'அனைத்தும்', icon: '🍽️' },
+  { id: 'cat_sweets', name: 'Sweets', tamil_name: 'இனிப்புகள்', icon: '🧈' },
+  { id: 'cat_savories', name: 'Savouries', tamil_name: 'கார வகைகள்', icon: '🥨' },
+  { id: 'cat_bakery', name: 'Bakery', tamil_name: 'பேக்கரி', icon: '🥖' },
+  { id: 'cat_beverages', name: 'Drinks & Dairy', tamil_name: 'பானங்கள்', icon: '🥛' },
+];
+
+const defaultCatalog: (ProductDefinition & { icon: string })[] = [
+  {
+    id: 'prod_mysore_pak',
+    name: 'Special Ghee Mysore Pak',
+    tamil_name: 'நெய் மைசூர் பாகு',
+    sku: 'SWT-MP-001',
+    category_id: 'cat_sweets',
+    pricing_unit: 'PER_KG',
+    inventory_unit: 'MG',
+    pricing_basis: 'TAX_INCLUSIVE',
+    base_price_paise: 68000, // ₹680.00 / kg
+    tax_rate_bps: 500,       // 5% GST
+    hsn_code: '21069099',
+    is_active: true,
+    icon: '🧈',
+  },
+  {
+    id: 'prod_madurai_laddu',
+    name: 'Madurai Nei Laddu',
+    tamil_name: 'மதுரை நெய் லட்டு',
+    sku: 'SWT-LD-002',
+    category_id: 'cat_sweets',
+    pricing_unit: 'PER_KG',
+    inventory_unit: 'MG',
+    pricing_basis: 'TAX_INCLUSIVE',
+    base_price_paise: 44000, // ₹440.00 / kg
+    tax_rate_bps: 500,
+    hsn_code: '21069099',
+    is_active: true,
+    icon: '🟡',
+  },
+  {
+    id: 'prod_kaju_katli',
+    name: 'Royal Kaju Katli',
+    tamil_name: 'காஜூ கத்திலி',
+    sku: 'SWT-KK-003',
+    category_id: 'cat_sweets',
+    pricing_unit: 'PER_KG',
+    inventory_unit: 'MG',
+    pricing_basis: 'TAX_INCLUSIVE',
+    base_price_paise: 95000, // ₹950.00 / kg
+    tax_rate_bps: 500,
+    hsn_code: '21069099',
+    is_active: true,
+    icon: '💎',
+  },
+  {
+    id: 'prod_wheat_halwa',
+    name: 'Tirunelveli Wheat Halwa',
+    tamil_name: 'திருநெல்வேலி கோதுமை அல்வா',
+    sku: 'SWT-TH-004',
+    category_id: 'cat_sweets',
+    pricing_unit: 'PER_KG',
+    inventory_unit: 'MG',
+    pricing_basis: 'TAX_INCLUSIVE',
+    base_price_paise: 48000, // ₹480.00 / kg
+    tax_rate_bps: 500,
+    hsn_code: '21069099',
+    is_active: true,
+    icon: '🍯',
+  },
+  {
+    id: 'prod_ribbon_pakoda',
+    name: 'Madurai Ribbon Pakoda',
+    tamil_name: 'ரிப்பன் பகோடா',
+    sku: 'SAV-RP-005',
+    category_id: 'cat_savories',
+    pricing_unit: 'PER_KG',
+    inventory_unit: 'MG',
+    pricing_basis: 'TAX_INCLUSIVE',
+    base_price_paise: 38000, // ₹380.00 / kg
+    tax_rate_bps: 500,
+    hsn_code: '21069099',
+    is_active: true,
+    icon: '🥨',
+  },
+  {
+    id: 'prod_kara_sev',
+    name: 'Sattur Spicy Kara Sev',
+    tamil_name: 'சாத்தூர் காராசேவ்',
+    sku: 'SAV-KS-006',
+    category_id: 'cat_savories',
+    pricing_unit: 'PER_KG',
+    inventory_unit: 'MG',
+    pricing_basis: 'TAX_INCLUSIVE',
+    base_price_paise: 36000, // ₹360.00 / kg
+    tax_rate_bps: 500,
+    hsn_code: '21069099',
+    is_active: true,
+    icon: '🌶️',
+  },
+  {
+    id: 'prod_butter_murukku',
+    name: 'Traditional Butter Murukku',
+    tamil_name: 'வெண்ணெய் முறுக்கு',
+    sku: 'SAV-BM-007',
+    category_id: 'cat_savories',
+    pricing_unit: 'PER_KG',
+    inventory_unit: 'MG',
+    pricing_basis: 'TAX_INCLUSIVE',
+    base_price_paise: 42000, // ₹420.00 / kg
+    tax_rate_bps: 500,
+    hsn_code: '21069099',
+    is_active: true,
+    icon: '🌀',
+  },
+  {
+    id: 'prod_sweet_bun',
+    name: 'Coconut Honey Sweet Bun',
+    tamil_name: 'தேங்காய் பன்',
+    sku: 'BAK-SB-008',
+    category_id: 'cat_bakery',
+    pricing_unit: 'PER_PIECE',
+    inventory_unit: 'PIECE',
+    pricing_basis: 'TAX_INCLUSIVE',
+    base_price_paise: 2500, // ₹25.00 / piece
+    tax_rate_bps: 500,
+    hsn_code: '19059010',
+    is_active: true,
+    icon: '🥖',
+  },
+  {
+    id: 'prod_butter_rusk',
+    name: 'Malgudi Crunchy Butter Rusk',
+    tamil_name: 'மால்குடி ரஸ்க் பாக்கெட்',
+    sku: 'BAK-BR-009',
+    category_id: 'cat_bakery',
+    pricing_unit: 'PER_PACK',
+    inventory_unit: 'PACK',
+    pricing_basis: 'TAX_INCLUSIVE',
+    base_price_paise: 4500, // ₹45.00 / pack
+    tax_rate_bps: 500,
+    hsn_code: '19059010',
+    is_active: true,
+    icon: '🍞',
+  },
+  {
+    id: 'prod_badam_milk',
+    name: 'Kesar Badam Milk (Cold Bottle)',
+    tamil_name: 'குங்குமப்பூ பாதாம் பால்',
+    sku: 'BEV-BM-010',
+    category_id: 'cat_beverages',
+    pricing_unit: 'PER_PIECE',
+    inventory_unit: 'PIECE',
+    pricing_basis: 'TAX_INCLUSIVE',
+    base_price_paise: 6000, // ₹60.00 / bottle
+    tax_rate_bps: 500,
+    hsn_code: '22029990',
+    is_active: true,
+    icon: '🥛',
+  },
+  {
+    id: 'prod_jigarthanda',
+    name: 'Famous Madurai Special Jigarthanda',
+    tamil_name: 'மதுரை ஸ்பெஷல் ஜிகர்தண்டா',
+    sku: 'BEV-JT-011',
+    category_id: 'cat_beverages',
+    pricing_unit: 'PER_PIECE',
+    inventory_unit: 'PIECE',
+    pricing_basis: 'TAX_INCLUSIVE',
+    base_price_paise: 8000, // ₹80.00 / glass
+    tax_rate_bps: 500,
+    hsn_code: '22029990',
+    is_active: true,
+    icon: '🍧',
+  },
+  {
+    id: 'prod_filter_coffee',
+    name: 'Madurai Degree Filter Coffee',
+    tamil_name: 'மதுரை டிகிரி பில்டர் காபி',
+    sku: 'BEV-FC-012',
+    category_id: 'cat_beverages',
+    pricing_unit: 'PER_PIECE',
+    inventory_unit: 'PIECE',
+    pricing_basis: 'TAX_INCLUSIVE',
+    base_price_paise: 3500, // ₹35.00 / cup
+    tax_rate_bps: 500,
+    hsn_code: '09012190',
+    is_active: true,
+    icon: '☕',
+  },
+];
+
+export const App: React.FC = () => {
+  const isTauriRuntime = typeof window !== 'undefined' && !!window.__TAURI__?.core;
+
+  // --- 1. Authentication & Session State ---
+  const [isProvisioned, setIsProvisioned] = useState<boolean>(true);
+  const [currentSession, setCurrentSession] = useState<SessionInfo | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  // Login form state
+  const [loginUsername, setLoginUsername] = useState<string>('');
+  const [loginPin, setLoginPin] = useState<string>('');
+
+  // Owner provisioning form state
+  const [provUsername, setProvUsername] = useState<string>('owner');
+  const [provDisplayName, setProvDisplayName] = useState<string>('Thiru Murugan (Store Owner)');
+  const [provPin, setProvPin] = useState<string>('');
+  const [provConfirmPin, setProvConfirmPin] = useState<string>('');
+  const [provBranchId, setProvBranchId] = useState<string>('IB');
+  const [provTerminalId, setProvTerminalId] = useState<string>('T1');
+
+  // Cashier Handover Modal state
+  const [isSwitchModalOpen, setIsSwitchModalOpen] = useState<boolean>(false);
+  const [switchUsername, setSwitchUsername] = useState<string>('');
+  const [switchPin, setSwitchPin] = useState<string>('');
+  const [switchError, setSwitchError] = useState<string | null>(null);
+
+  // Navigation tab state
+  const [activeTab, setActiveTab] = useState<'billing' | 'owner_panel'>('billing');
+
+  // Owner administration state
+  const [userList, setUserList] = useState<UserRecord[]>([]);
+  const [securityLogs, setSecurityLogs] = useState<AuditEventRecord[]>([]);
+  const [newCashierUsername, setNewCashierUsername] = useState<string>('');
+  const [newCashierDisplayName, setNewCashierDisplayName] = useState<string>('');
+  const [newCashierRole, setNewCashierRole] = useState<'CASHIER' | 'ADMIN'>('CASHIER');
+  const [newCashierPin, setNewCashierPin] = useState<string>('');
+  const [adminActionMessage, setAdminActionMessage] = useState<string | null>(null);
+  const [adminActionError, setAdminActionError] = useState<string | null>(null);
+  const [resetPinUserId, setResetPinUserId] = useState<string | null>(null);
+  const [resetPinValue, setResetPinValue] = useState<string>('');
+
+  // --- Dynamic Authoritative Product Catalog & Inventory State ---
+  const [catalog, setCatalog] = useState<DBProductRecord[]>(() =>
+    defaultCatalog.map(p => ({
+      ...p,
+      barcode: null,
+      current_stock: 25000000,
+      stock_unit: p.inventory_unit,
+      created_at: '',
+      updated_at: '',
+    }))
+  );
+  const [catalogLoading, setCatalogLoading] = useState<boolean>(false);
+  const [ownerSubTab, setOwnerSubTab] = useState<'products' | 'stock' | 'reports' | 'users_security' | 'cloud_sync'>('products');
+  const [ownerProductSearch, setOwnerProductSearch] = useState<string>('');
+  const [ownerCategoryFilter, setOwnerCategoryFilter] = useState<string>('all');
+  const [ownerStatusFilter, setOwnerStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+
+  // --- Cloud Sync & Multi-Branch State ---
+  const [syncStatus, setSyncStatus] = useState<SyncStatusState | null>(null);
+  const [syncConfig, setSyncConfig] = useState<BranchConfigState | null>(null);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncConfigForm, setSyncConfigForm] = useState<BranchConfigState>({
+    branch_id: 'IB',
+    branch_name: 'Madurai Town Hall Main Store (IB)',
+    terminal_id: 'T1',
+    counter_id: 'C1',
+    cloud_api_url: 'http://127.0.0.1:3000',
+    cloud_api_key: 'malgudi_sync_secret_token_2026',
+    auto_sync_enabled: true,
+  });
+
+  // --- Reports State ---
+  const [reportsLoading, setReportsLoading] = useState<boolean>(false);
+  const [reportsError, setReportsError] = useState<string | null>(null);
+  const [activeReportView, setActiveReportView] = useState<'daily' | 'payments' | 'gst' | 'products' | 'drawer'>('daily');
+  const [reportStartDate, setReportStartDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [reportEndDate, setReportEndDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [reportsData, setReportsData] = useState<FinancialReportsAggregate | null>(null);
+
+  // Product Add/Edit Modal state
+  const [isProductModalOpen, setIsProductModalOpen] = useState<boolean>(false);
+  const [editingProduct, setEditingProduct] = useState<DBProductRecord | null>(null);
+  const [prodFormName, setProdFormName] = useState<string>('');
+  const [prodFormTamilName, setProdFormTamilName] = useState<string>('');
+  const [prodFormSku, setProdFormSku] = useState<string>('');
+  const [prodFormBarcode, setProdFormBarcode] = useState<string>('');
+  const [prodFormCategory, setProdFormCategory] = useState<string>('cat_sweets');
+  const [prodFormPricingUnit, setProdFormPricingUnit] = useState<PricingUnit>('PER_KG');
+  const [prodFormInventoryUnit, setProdFormInventoryUnit] = useState<InventoryUnit>('MG');
+  const [prodFormPriceRupees, setProdFormPriceRupees] = useState<string>('500');
+  const [prodFormGstPercent, setProdFormGstPercent] = useState<number>(5);
+  const [prodFormHsn, setProdFormHsn] = useState<string>('21069099');
+  const [prodFormInitialStock, setProdFormInitialStock] = useState<string>('25');
+  const [prodFormError, setProdFormError] = useState<string | null>(null);
+
+  // Stock Adjustment Modal & Movement Log state
+  const [isStockAdjustModalOpen, setIsStockAdjustModalOpen] = useState<boolean>(false);
+  const [adjustProductId, setAdjustProductId] = useState<string>('');
+  const [adjustMovementType, setAdjustMovementType] = useState<string>('RECEIPT_PRODUCTION');
+  const [adjustQuantity, setAdjustQuantity] = useState<string>('10');
+  const [adjustReason, setAdjustReason] = useState<string>('');
+  const [adjustReferenceId, setAdjustReferenceId] = useState<string>('');
+  const [adjustError, setAdjustError] = useState<string | null>(null);
+  const [stockMovements, setStockMovements] = useState<StockMovementRecord[]>([]);
+
+  // Void Sale Confirmation Modal state
+  const [voidTargetSale, setVoidTargetSale] = useState<FinalizeSaleResult | null>(null);
+  const [voidReason, setVoidReason] = useState<string>('');
+  const [voidError, setVoidError] = useState<string | null>(null);
+
+  // --- 2. Catalog & Product Filter State ---
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+
+  // Weight Entry Dialog state (for PER_KG products)
+  const [weightModalProduct, setWeightModalProduct] = useState<ProductDefinition | null>(null);
+  const [weightModalGrams, setWeightModalGrams] = useState<number>(375);
+  const [weightModalUnit, setWeightModalUnit] = useState<'g' | 'kg'>('g');
+  const [weightModalKgInput, setWeightModalKgInput] = useState<string>('0.375');
+  const [weightModalCartIndex, setWeightModalCartIndex] = useState<number | null>(null);
+
+  // --- 3. Active Order / Cart State ---
+  // Initial state has 375g Mysore Pak (₹255.00) matching existing regression test baseline
+  const [cartItems, setCartItems] = useState<SaleItemAllocation[]>(() => {
+    const initialItem = calculateLineItem({
+      product: defaultCatalog[0],
+      quantityInput: 375000,
+      weightInputSource: 'SCALE_AUTO',
+    });
+    return [initialItem];
+  });
+
+  const subtotalTaxablePaise = cartItems.reduce((sum, item) => sum + item.taxable_paise, 0);
+  const totalCgstPaise = cartItems.reduce((sum, item) => sum + item.cgst_paise, 0);
+  const totalSgstPaise = cartItems.reduce((sum, item) => sum + item.sgst_paise, 0);
+  const totalGrossPaise = cartItems.reduce((sum, item) => sum + item.gross_paise, 0);
+
+  // --- 4. Payment Tender Reconciliation State ---
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState<boolean>(false);
+  const [isUpiModalOpen, setIsUpiModalOpen] = useState<boolean>(false);
+  const [upiSimulatedVerified, setUpiSimulatedVerified] = useState<boolean>(false);
+  const [cashTenderedRupees, setCashTenderedRupees] = useState<number>(200);
+  const [cashAllocatedRupees, setCashAllocatedRupees] = useState<number>(155);
+  const [upiAllocatedRupees, setUpiAllocatedRupees] = useState<number>(0);
+  const [upiVerificationSource, setUpiVerificationSource] = useState<PaymentVerificationSource>('GATEWAY_API');
+  const [settlementPolicy, setSettlementPolicy] = useState<SettlementPolicy>(() => {
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('malgudi_settlement_policy') : null;
+    return (saved as SettlementPolicy) || 'STRICT_GATEWAY_ONLY';
+  });
+
+  // Automatically derive cash allocated to bill (No cashier input needed)
+  const derivedCashAllocatedRupees = Math.max(0, Math.round(totalGrossPaise / 100) - upiAllocatedRupees);
+  const changeReturnedPaise = Math.max(0, (cashTenderedRupees - derivedCashAllocatedRupees) * 100);
+
+  // Store settlement policy updater for Owner/Admin Settings
+  const handleUpdateSettlementPolicy = (newPolicy: SettlementPolicy) => {
+    setSettlementPolicy(newPolicy);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('malgudi_settlement_policy', newPolicy);
+    }
+    setAdminActionMessage(`Store settlement policy updated to: ${newPolicy === 'STRICT_GATEWAY_ONLY' ? 'Strict Gateway Only' : 'Soundbox Audio Permitted'}`);
+    setTimeout(() => setAdminActionMessage(null), 4000);
+  };
+
+  // --- 5. Modals & Persistence State ---
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false);
+  const [isFinalizing, setIsFinalizing] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [persistedHistory, setPersistedHistory] = useState<FinalizeSaleResult[]>([]);
+  const [activeReceiptModal, setActiveReceiptModal] = useState<FinalizeSaleResult | null>(null);
+  const [dbInfo, setDbInfo] = useState<{ db_path: string; is_wal_active: boolean; total_sales: number; pending_sync_count: number } | null>(null);
+
+  // Initial Authentication Check
+  useEffect(() => {
+    checkInitialAuthStatus();
+    loadSyncStatus();
+    loadSyncConfig();
+    const syncInterval = setInterval(() => {
+      loadSyncStatus();
+    }, 10000);
+    return () => clearInterval(syncInterval);
+  }, []);
+
+  // Open Payment Modal helper: synchronizes tender with current total
+  const openPaymentModal = () => {
+    const currentTotalRupees = Math.round(totalGrossPaise / 100);
+    setCashAllocatedRupees(currentTotalRupees);
+    setCashTenderedRupees(currentTotalRupees);
+    setUpiAllocatedRupees(0);
+    setIsPaymentModalOpen(true);
+  };
+
+  // Keyboard shortcut: Ctrl+Enter or F4 triggers payment / checkout
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (cartItems.length > 0) {
+          if (isPaymentModalOpen) {
+            handleFinalizeSale();
+          } else if (isUpiModalOpen) {
+            handleQuickUpiFinalize();
+          } else {
+            handleExactCashSale();
+          }
+        }
+      } else if (e.key === 'F4') {
+        e.preventDefault();
+        if (cartItems.length > 0) {
+          openPaymentModal();
+        }
+      } else if (e.key === 'Escape') {
+        if (weightModalProduct) setWeightModalProduct(null);
+        else if (isUpiModalOpen) { setIsUpiModalOpen(false); setUpiSimulatedVerified(false); }
+        else if (isPaymentModalOpen) setIsPaymentModalOpen(false);
+        else if (isHistoryModalOpen) setIsHistoryModalOpen(false);
+        else if (isSwitchModalOpen) setIsSwitchModalOpen(false);
+        else if (activeReceiptModal) setActiveReceiptModal(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPaymentModalOpen, isUpiModalOpen, upiSimulatedVerified, weightModalProduct, isHistoryModalOpen, isSwitchModalOpen, activeReceiptModal, cartItems, totalGrossPaise, settlementPolicy]);
+
+  const checkInitialAuthStatus = async () => {
+    setAuthLoading(true);
+    setAuthError(null);
+    if (isTauriRuntime) {
+      try {
+        const status = await window.__TAURI__!.core.invoke<{ is_provisioned: boolean; active_session?: SessionInfo }>('auth_get_status', {});
+        setIsProvisioned(status.is_provisioned);
+        if (status.active_session) {
+          setCurrentSession(status.active_session);
+          loadSessionData(status.active_session.token);
+        }
+      } catch (err: any) {
+        setAuthError(err.message || String(err));
+      } finally {
+        setAuthLoading(false);
+      }
+    } else {
+      setIsProvisioned(true);
+      setAuthLoading(false);
+    }
+  };
+
+  const loadSessionData = async (token: string) => {
+    if (isTauriRuntime) {
+      try {
+        const sales = await window.__TAURI__!.core.invoke<any[]>('get_recent_sales', { sessionToken: token });
+        if (sales && sales.length > 0) {
+          setPersistedHistory(
+            sales.map(s => ({
+              sale_id: s.id,
+              invoice_number: s.invoice_number,
+              event_id: `evt_persisted_${s.id.substring(0, 8)}`,
+              payload_hash: '',
+              items_count: 1,
+              net_payable_paise: s.net_payable_paise,
+              cash_retained_paise: 0,
+              upi_settled_paise: 0,
+              sale_status: s.sale_status,
+              payment_status: s.payment_status,
+              created_at: s.created_at,
+            }))
+          );
+        }
+        const info = await window.__TAURI__!.core.invoke<any>('get_database_info');
+        setDbInfo(info);
+        await refreshCatalog(token);
+      } catch (err: any) {
+        setErrorMessage('Failed to load session sales: ' + (err.message || String(err)));
+      }
+    }
+  };
+
+  // --- Handlers: Authentication ---
+  const handleProvisionOwner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    if (!provUsername.trim()) {
+      setAuthError('Owner username is required.');
+      return;
+    }
+    if (provPin.length < 4) {
+      setAuthError('Security PIN must be at least 4 digits.');
+      return;
+    }
+    if (provPin !== provConfirmPin) {
+      setAuthError('PIN confirmation does not match.');
+      return;
+    }
+
+    try {
+      if (isTauriRuntime) {
+        const session = await window.__TAURI__!.core.invoke<SessionInfo>('auth_provision_owner', {
+          payload: {
+            username: provUsername.trim(),
+            display_name: provDisplayName.trim() || provUsername.trim(),
+            pin: provPin,
+            branch_id: provBranchId,
+            terminal_id: provTerminalId.trim() || 'T1',
+            counter_id: 'C1',
+            session_id: 'sess_madurai_01',
+          },
+        });
+        setIsProvisioned(true);
+        setCurrentSession(session);
+        loadSessionData(session.token);
+      } else {
+        const simSession: SessionInfo = {
+          token: 'sim_owner_token',
+          user_id: 'usr_owner',
+          username: provUsername.trim(),
+          display_name: provDisplayName.trim() || 'Store Owner',
+          role: 'ADMIN',
+          branch_id: provBranchId,
+          terminal_id: provTerminalId.trim() || 'T1',
+          counter_id: 'C1',
+          session_id: 'sess_madurai_01',
+          permissions: ['billing:finalize_sale', 'billing:reprint_receipt', 'admin:manage_users', 'admin:view_audit_logs', 'admin:create_backup'],
+          expires_at: new Date(Date.now() + 28800000).toISOString(),
+        };
+        setIsProvisioned(true);
+        setCurrentSession(simSession);
+      }
+    } catch (err: any) {
+      setAuthError(err.message || String(err));
+    }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    if (!loginUsername.trim() || !loginPin) {
+      setAuthError('Please enter username and PIN.');
+      return;
+    }
+
+    try {
+      if (isTauriRuntime) {
+        const session = await window.__TAURI__!.core.invoke<SessionInfo>('auth_login', {
+          payload: {
+            username: loginUsername.trim(),
+            pin: loginPin,
+            branch_id: syncConfig?.branch_id || undefined,
+            terminal_id: syncConfig?.terminal_id || undefined,
+            counter_id: syncConfig?.counter_id || undefined,
+            session_id: 'sess_madurai_01',
+          },
+        });
+        setCurrentSession(session);
+        setLoginPin('');
+        loadSessionData(session.token);
+      } else {
+        const role = loginUsername.toLowerCase().includes('admin') || loginUsername.toLowerCase() === 'owner' ? 'ADMIN' : 'CASHIER';
+        const simSession: SessionInfo = {
+          token: `sim_${loginUsername}_token`,
+          user_id: `usr_${loginUsername}`,
+          username: loginUsername,
+          display_name: loginUsername.toUpperCase(),
+          role,
+          branch_id: syncConfig?.branch_id || 'IB',
+          terminal_id: syncConfig?.terminal_id || 'T1',
+          counter_id: syncConfig?.counter_id || 'C1',
+          session_id: 'sess_madurai_01',
+          permissions: ['billing:finalize_sale', 'billing:reprint_receipt'],
+          expires_at: new Date(Date.now() + 28800000).toISOString(),
+        };
+        setCurrentSession(simSession);
+      }
+    } catch (err: any) {
+      setAuthError(err.message || String(err));
+    }
+  };
+
+  const handleLogout = async () => {
+    if (currentSession && isTauriRuntime) {
+      try {
+        await window.__TAURI__!.core.invoke('auth_logout', { sessionToken: currentSession.token });
+      } catch {}
+    }
+    setCurrentSession(null);
+    setActiveTab('billing');
+    setCartItems([]);
+    setErrorMessage(null);
+    setLoginPin('');
+  };
+
+  const handleCashierHandover = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSwitchError(null);
+    if (!switchUsername.trim() || !switchPin) {
+      setSwitchError('Please enter incoming cashier username and PIN.');
+      return;
+    }
+    if (!currentSession) return;
+
+    try {
+      if (isTauriRuntime) {
+        const newSession = await window.__TAURI__!.core.invoke<SessionInfo>('auth_switch_cashier', {
+          payload: {
+            active_token: currentSession.token,
+            incoming_username: switchUsername.trim(),
+            incoming_pin: switchPin,
+          },
+        });
+        setCurrentSession(newSession);
+        setIsSwitchModalOpen(false);
+        setSwitchUsername('');
+        setSwitchPin('');
+        loadSessionData(newSession.token);
+      } else {
+        const simNew: SessionInfo = {
+          token: `sim_${switchUsername}_token`,
+          user_id: `usr_${switchUsername}`,
+          username: switchUsername,
+          display_name: switchUsername.toUpperCase(),
+          role: 'CASHIER',
+          branch_id: currentSession.branch_id,
+          terminal_id: currentSession.terminal_id,
+          counter_id: currentSession.counter_id,
+          session_id: currentSession.session_id,
+          permissions: ['billing:finalize_sale', 'billing:reprint_receipt'],
+          expires_at: new Date(Date.now() + 28800000).toISOString(),
+        };
+        setCurrentSession(simNew);
+        setIsSwitchModalOpen(false);
+      }
+    } catch (err: any) {
+      setSwitchError(err.message || String(err));
+    }
+  };
+
+  // --- Handlers: Admin User Management ---
+  const loadAdminData = async () => {
+    if (!currentSession || currentSession.role !== 'ADMIN' || !isTauriRuntime) return;
+    try {
+      const users = await window.__TAURI__!.core.invoke<UserRecord[]>('auth_list_users', { sessionToken: currentSession.token });
+      setUserList(users);
+      const logs = await window.__TAURI__!.core.invoke<AuditEventRecord[]>('auth_get_security_logs', { sessionToken: currentSession.token });
+      setSecurityLogs(logs);
+      await refreshCatalog(currentSession.token);
+      await loadStockMovements(currentSession.token);
+      await loadSyncStatus();
+      await loadSyncConfig(currentSession.token);
+    } catch (err: any) {
+      setAdminActionError(err.message || String(err));
+    }
+  };
+
+  const loadSyncStatus = async () => {
+    if (!isTauriRuntime) return;
+    try {
+      const status = await window.__TAURI__!.core.invoke<SyncStatusState>('sync_get_status');
+      setSyncStatus(status);
+    } catch (e) {
+      console.error('Failed to get sync status:', e);
+    }
+  };
+
+  const loadSyncConfig = async (token?: string) => {
+    if (!isTauriRuntime) return;
+    try {
+      const cfg = await window.__TAURI__!.core.invoke<BranchConfigState>('sync_get_branch_config', {
+        sessionToken: token || currentSession?.token || null,
+      });
+      setSyncConfig(cfg);
+      setSyncConfigForm(cfg);
+    } catch (e) {
+      console.error('Failed to get branch config:', e);
+    }
+  };
+
+  const handleTriggerSync = async () => {
+    if (!isTauriRuntime || isSyncing) return;
+    setIsSyncing(true);
+    setSyncMessage(null);
+    try {
+      const res = await window.__TAURI__!.core.invoke<any>('sync_trigger_bidirectional', {
+        sessionToken: currentSession?.token,
+      });
+      await loadSyncStatus();
+      await refreshCatalog(currentSession?.token, currentSession?.branch_id);
+      setSyncMessage(res.message);
+    } catch (err: any) {
+      setSyncMessage('Sync failed: ' + (err.message || String(err)));
+      await loadSyncStatus();
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleSaveBranchConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isTauriRuntime || !currentSession || currentSession.role !== 'ADMIN') return;
+    setAdminActionMessage(null);
+    setAdminActionError(null);
+    try {
+      await window.__TAURI__!.core.invoke('sync_set_branch_config', {
+        sessionToken: currentSession.token,
+        config: syncConfigForm,
+      });
+      setAdminActionMessage(`Branch configuration saved successfully! Active Identity: ${syncConfigForm.branch_id} - ${syncConfigForm.branch_name}`);
+      await loadSyncConfig();
+      await loadSyncStatus();
+    } catch (err: any) {
+      setAdminActionError('Failed to save branch config: ' + (err.message || String(err)));
+    }
+  };
+
+  const handleCreateCashier = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentSession) return;
+    setAdminActionMessage(null);
+    setAdminActionError(null);
+    try {
+      if (isTauriRuntime) {
+        const user = await window.__TAURI__!.core.invoke<UserRecord>('auth_create_user', {
+          sessionToken: currentSession.token,
+          payload: {
+            username: newCashierUsername.trim(),
+            display_name: newCashierDisplayName.trim(),
+            role: newCashierRole,
+            pin: newCashierPin,
+          },
+        });
+        setAdminActionMessage(`User '${user.username}' created successfully.`);
+        setNewCashierUsername('');
+        setNewCashierDisplayName('');
+        setNewCashierPin('');
+        loadAdminData();
+      }
+    } catch (err: any) {
+      setAdminActionError(err.message || String(err));
+    }
+  };
+
+  const handleToggleUserStatus = async (user: UserRecord) => {
+    if (!currentSession) return;
+    const targetStatus = user.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
+    setAdminActionMessage(null);
+    setAdminActionError(null);
+    try {
+      if (isTauriRuntime) {
+        await window.__TAURI__!.core.invoke('auth_update_user_status', {
+          sessionToken: currentSession.token,
+          userId: user.id,
+          status: targetStatus,
+        });
+        setAdminActionMessage(`User '${user.username}' status updated to ${targetStatus}.`);
+        loadAdminData();
+      }
+    } catch (err: any) {
+      setAdminActionError(err.message || String(err));
+    }
+  };
+
+  const handleExecutePinReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetPinUserId || resetPinValue.length < 4 || !currentSession) return;
+    setAdminActionMessage(null);
+    setAdminActionError(null);
+    try {
+      if (isTauriRuntime) {
+        await window.__TAURI__!.core.invoke('auth_reset_user_pin', {
+          sessionToken: currentSession.token,
+          userId: resetPinUserId,
+          newPin: resetPinValue,
+        });
+        setAdminActionMessage('User PIN reset successfully.');
+        setResetPinUserId(null);
+        setResetPinValue('');
+        loadAdminData();
+      }
+    } catch (err: any) {
+      setAdminActionError(err.message || String(err));
+    }
+  };
+
+  const handleTriggerBackup = async () => {
+    if (!currentSession || !isTauriRuntime) return;
+    setAdminActionMessage(null);
+    setAdminActionError(null);
+    try {
+      const dest = await window.__TAURI__!.core.invoke<string>('create_backup', { sessionToken: currentSession.token });
+      setAdminActionMessage(`Backup successfully created at: ${dest}`);
+    } catch (err: any) {
+      setAdminActionError('Backup failed: ' + (err.message || String(err)));
+    }
+  };
+
+  // --- Handlers: Product Management & Stock Operations ---
+  const refreshCatalog = async (token?: string, branch?: string) => {
+    if (!isTauriRuntime) return;
+    setCatalogLoading(true);
+    try {
+      const items = await window.__TAURI__!.core.invoke<DBProductRecord[]>('inventory_list_products', {
+        branchId: branch || currentSession?.branch_id || 'IB',
+        includeInactive: currentSession?.role === 'ADMIN',
+      });
+      if (items && items.length > 0) {
+        setCatalog(items);
+      }
+    } catch (err) {
+      console.error('Failed to load products from database:', err);
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
+
+  const loadStockMovements = async (token?: string, productId?: string) => {
+    const activeToken = token || currentSession?.token;
+    if (!isTauriRuntime || !activeToken || currentSession?.role !== 'ADMIN') return;
+    try {
+      const movements = await window.__TAURI__!.core.invoke<StockMovementRecord[]>('inventory_list_movements', {
+        sessionToken: activeToken,
+        productId: productId || null,
+        branchId: currentSession?.branch_id || 'IB',
+        limit: 100,
+      });
+      setStockMovements(movements || []);
+    } catch (err: any) {
+      console.error('Failed to load stock movements:', err);
+    }
+  };
+
+  const handleOpenAddProduct = () => {
+    setEditingProduct(null);
+    setProdFormName('');
+    setProdFormTamilName('');
+    setProdFormSku('');
+    setProdFormBarcode('');
+    setProdFormCategory('cat_sweets');
+    setProdFormPricingUnit('PER_KG');
+    setProdFormInventoryUnit('MG');
+    setProdFormPriceRupees('500');
+    setProdFormGstPercent(5);
+    setProdFormHsn('21069099');
+    setProdFormInitialStock('25');
+    setProdFormError(null);
+    setIsProductModalOpen(true);
+  };
+
+  const handleOpenEditProduct = (prod: DBProductRecord) => {
+    setEditingProduct(prod);
+    setProdFormName(prod.name);
+    setProdFormTamilName(prod.tamil_name);
+    setProdFormSku(prod.sku);
+    setProdFormBarcode(prod.barcode || '');
+    setProdFormCategory(prod.category_id);
+    setProdFormPricingUnit(prod.pricing_unit);
+    setProdFormInventoryUnit(prod.inventory_unit);
+    setProdFormPriceRupees((prod.base_price_paise / 100).toString());
+    setProdFormGstPercent(prod.tax_rate_bps / 100);
+    setProdFormHsn(prod.hsn_code);
+    setProdFormError(null);
+    setIsProductModalOpen(true);
+  };
+
+  const handleSaveProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentSession) return;
+    setProdFormError(null);
+
+    const priceRupees = parseFloat(prodFormPriceRupees);
+    if (isNaN(priceRupees) || priceRupees <= 0) {
+      setProdFormError('Please enter a valid base selling price greater than 0.');
+      return;
+    }
+
+    try {
+      if (isTauriRuntime) {
+        if (editingProduct) {
+          await window.__TAURI__!.core.invoke('inventory_update_product', {
+            sessionToken: currentSession.token,
+            payload: {
+              id: editingProduct.id,
+              name: prodFormName.trim(),
+              tamil_name: prodFormTamilName.trim(),
+              sku: prodFormSku.trim().toUpperCase(),
+              barcode: prodFormBarcode.trim() || null,
+              category_id: prodFormCategory,
+              pricing_unit: prodFormPricingUnit,
+              inventory_unit: prodFormInventoryUnit,
+              base_price_paise: Math.round(priceRupees * 100),
+              piece_price_paise: null,
+              tax_rate_bps: Math.round(prodFormGstPercent * 100),
+              hsn_code: prodFormHsn.trim(),
+              is_active: editingProduct.is_active,
+            },
+          });
+          setAdminActionMessage(`Product '${prodFormName}' updated successfully.`);
+        } else {
+          let initialQtyCanonical = 0;
+          if (prodFormInitialStock) {
+            const rawInit = parseFloat(prodFormInitialStock);
+            if (!isNaN(rawInit) && rawInit > 0) {
+              initialQtyCanonical = prodFormPricingUnit === 'PER_KG' ? Math.round(rawInit * 1000000) : Math.round(rawInit);
+            }
+          }
+
+          await window.__TAURI__!.core.invoke('inventory_create_product', {
+            sessionToken: currentSession.token,
+            payload: {
+              name: prodFormName.trim(),
+              tamil_name: prodFormTamilName.trim(),
+              sku: prodFormSku.trim().toUpperCase(),
+              barcode: prodFormBarcode.trim() || null,
+              category_id: prodFormCategory,
+              pricing_unit: prodFormPricingUnit,
+              inventory_unit: prodFormInventoryUnit,
+              base_price_paise: Math.round(priceRupees * 100),
+              piece_price_paise: null,
+              tax_rate_bps: Math.round(prodFormGstPercent * 100),
+              hsn_code: prodFormHsn.trim(),
+              initial_stock: initialQtyCanonical > 0 ? initialQtyCanonical : null,
+              branch_id: currentSession.branch_id || 'IB',
+            },
+          });
+          setAdminActionMessage(`Product '${prodFormName}' created successfully.`);
+        }
+        setIsProductModalOpen(false);
+        await refreshCatalog(currentSession.token);
+      }
+    } catch (err: any) {
+      setProdFormError(err.message || String(err));
+    }
+  };
+
+  const handleToggleProductStatus = async (prod: DBProductRecord) => {
+    if (!currentSession) return;
+    try {
+      if (isTauriRuntime) {
+        await window.__TAURI__!.core.invoke('inventory_toggle_product_status', {
+          sessionToken: currentSession.token,
+          productId: prod.id,
+          isActive: !prod.is_active,
+        });
+        setAdminActionMessage(`Product '${prod.name}' ${prod.is_active ? 'deactivated' : 'activated'}.`);
+        await refreshCatalog(currentSession.token);
+      }
+    } catch (err: any) {
+      setAdminActionError(err.message || String(err));
+    }
+  };
+
+  const handleOpenStockAdjust = (productId?: string) => {
+    setAdjustProductId(productId || (catalog[0]?.id || ''));
+    setAdjustMovementType('RECEIPT_PRODUCTION');
+    setAdjustQuantity('10');
+    setAdjustReason('');
+    setAdjustReferenceId('');
+    setAdjustError(null);
+    setIsStockAdjustModalOpen(true);
+  };
+
+  const handleAdjustStockSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentSession) return;
+    setAdjustError(null);
+
+    if (!adjustReason.trim()) {
+      setAdjustError('MANDATORY_FIELD: Reason is strictly required for stock audit history.');
+      return;
+    }
+
+    const targetProduct = catalog.find(p => p.id === adjustProductId);
+    if (!targetProduct) {
+      setAdjustError('Selected product not found.');
+      return;
+    }
+
+    const rawQty = parseFloat(adjustQuantity);
+    if (isNaN(rawQty) || rawQty <= 0) {
+      setAdjustError('Please enter a valid quantity greater than 0.');
+      return;
+    }
+
+    const qtyDelta = targetProduct.pricing_unit === 'PER_KG' ? Math.round(rawQty * 1000000) : Math.round(rawQty);
+
+    try {
+      if (isTauriRuntime) {
+        await window.__TAURI__!.core.invoke('inventory_adjust_stock', {
+          sessionToken: currentSession.token,
+          payload: {
+            branch_id: currentSession.branch_id || 'IB',
+            product_id: adjustProductId,
+            movement_type: adjustMovementType,
+            quantity_delta: qtyDelta,
+            unit: targetProduct.inventory_unit,
+            reason: adjustReason.trim(),
+            reference_id: adjustReferenceId.trim() || null,
+          },
+        });
+        setAdminActionMessage(`Stock adjusted successfully for '${targetProduct.name}'.`);
+        setIsStockAdjustModalOpen(false);
+        await refreshCatalog(currentSession.token);
+        await loadStockMovements(currentSession.token);
+      }
+    } catch (err: any) {
+      setAdjustError(err.message || String(err));
+    }
+  };
+
+  const handleVoidSaleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentSession || !voidTargetSale) return;
+    setVoidError(null);
+
+    if (!voidReason.trim()) {
+      setVoidError('MANDATORY_FIELD: Reason is required to cancel or void a bill.');
+      return;
+    }
+
+    try {
+      if (isTauriRuntime) {
+        await window.__TAURI__!.core.invoke('inventory_void_sale', {
+          sessionToken: currentSession.token,
+          payload: {
+            sale_id: voidTargetSale.sale_id,
+            reason: voidReason.trim(),
+          },
+        });
+
+        setPersistedHistory(prev =>
+          prev.map(s => (s.sale_id === voidTargetSale.sale_id ? { ...s, sale_status: 'VOIDED', payment_status: 'REFUNDED' } : s))
+        );
+
+        setAdminActionMessage(`Invoice '${voidTargetSale.invoice_number}' voided successfully. Stock restored to inventory.`);
+        setVoidTargetSale(null);
+        setVoidReason('');
+        await refreshCatalog(currentSession.token);
+        await loadStockMovements(currentSession.token);
+      }
+    } catch (err: any) {
+      setVoidError(err.message || String(err));
+    }
+  };
+
+  // --- Handlers: Sales & GST Financial Reports ---
+  const loadReports = async (start = reportStartDate, end = reportEndDate) => {
+    if (!currentSession || currentSession.role !== 'ADMIN' || !isTauriRuntime) return;
+    setReportsLoading(true);
+    setReportsError(null);
+    try {
+      const data = await window.__TAURI__!.core.invoke<FinancialReportsAggregate>('reports_get_financial_reports', {
+        sessionToken: currentSession.token,
+        filter: {
+          start_date: start || null,
+          end_date: end || null,
+          branch_id: currentSession.branch_id || 'IB',
+        },
+      });
+      setReportsData(data);
+    } catch (err: any) {
+      setReportsError(err.message || String(err));
+    } finally {
+      setReportsLoading(false);
+    }
+  };
+
+  const handleSetDatePreset = (preset: 'today' | 'yesterday' | 'this_month' | 'last_30_days') => {
+    const today = new Date();
+    const toDateStr = (d: Date) => d.toISOString().split('T')[0];
+
+    if (preset === 'today') {
+      const t = toDateStr(today);
+      setReportStartDate(t);
+      setReportEndDate(t);
+      loadReports(t, t);
+    } else if (preset === 'yesterday') {
+      const y = new Date(today);
+      y.setDate(y.getDate() - 1);
+      const yStr = toDateStr(y);
+      setReportStartDate(yStr);
+      setReportEndDate(yStr);
+      loadReports(yStr, yStr);
+    } else if (preset === 'this_month') {
+      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+      const s = toDateStr(firstDay);
+      const e = toDateStr(today);
+      setReportStartDate(s);
+      setReportEndDate(e);
+      loadReports(s, e);
+    } else if (preset === 'last_30_days') {
+      const past30 = new Date(today);
+      past30.setDate(past30.getDate() - 30);
+      const s = toDateStr(past30);
+      const e = toDateStr(today);
+      setReportStartDate(s);
+      setReportEndDate(e);
+      loadReports(s, e);
+    }
+  };
+
+  const exportCsv = (filename: string, headers: string[], rows: (string | number)[][]) => {
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row =>
+        row
+          .map(val => {
+            const str = String(val ?? '');
+            if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+              return `"${str.replace(/"/g, '""')}"`;
+            }
+            return str;
+          })
+          .join(',')
+      ),
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${filename}_${reportStartDate}_to_${reportEndDate}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportCurrentReportCsv = () => {
+    if (!reportsData) return;
+
+    if (activeReportView === 'daily') {
+      const headers = [
+        'Business Date',
+        'Total Bills Recorded',
+        'Active Bills',
+        'Voided Bills',
+        'Taxable Sales (INR)',
+        'Total GST (INR)',
+        'Gross Sales (INR)',
+        'Voided Amount (INR)',
+        'Net Sales (INR)',
+      ];
+      const rows = reportsData.daily_sales.daily_breakdown.map(r => [
+        r.business_date,
+        r.total_bills,
+        r.active_bills,
+        r.voided_bills,
+        (r.taxable_sales_paise / 100).toFixed(2),
+        (r.total_tax_paise / 100).toFixed(2),
+        (r.gross_sales_paise / 100).toFixed(2),
+        (r.voided_amount_paise / 100).toFixed(2),
+        (r.net_sales_paise / 100).toFixed(2),
+      ]);
+      exportCsv('daily_sales_report', headers, rows);
+    } else if (activeReportView === 'payments') {
+      const headers = [
+        'Payment Method',
+        'Active Bills Count',
+        'Gross Collected (INR)',
+        'Refunds (INR)',
+        'Net Collected (INR)',
+      ];
+      const rows = reportsData.payment_summary.methods_breakdown.map(m => [
+        m.payment_method,
+        m.bills_count,
+        (m.total_collected_paise / 100).toFixed(2),
+        (m.refunds_paise / 100).toFixed(2),
+        (m.net_amount_paise / 100).toFixed(2),
+      ]);
+      exportCsv('payment_summary_report', headers, rows);
+    } else if (activeReportView === 'gst') {
+      const headers = [
+        'Invoice Number',
+        'Business Date',
+        'Status',
+        'HSN Codes',
+        'Taxable Value (INR)',
+        'CGST (INR)',
+        'SGST (INR)',
+        'Total GST (INR)',
+        'Round Off (INR)',
+        'Net Payable (INR)',
+      ];
+      const rows = reportsData.gst_report.invoice_details.map(inv => [
+        inv.invoice_number,
+        inv.business_date,
+        inv.sale_status,
+        inv.hsn_summary,
+        (inv.taxable_paise / 100).toFixed(2),
+        (inv.cgst_paise / 100).toFixed(2),
+        (inv.sgst_paise / 100).toFixed(2),
+        (inv.total_tax_paise / 100).toFixed(2),
+        (inv.round_off_paise / 100).toFixed(2),
+        (inv.net_payable_paise / 100).toFixed(2),
+      ]);
+      exportCsv('gst_invoices_report', headers, rows);
+    } else if (activeReportView === 'products') {
+      const headers = [
+        'SKU',
+        'Product Name',
+        'Tamil Name',
+        'Category',
+        'Pricing Unit',
+        'Quantity Sold',
+        'Bills Count',
+        'Taxable Revenue (INR)',
+        'GST (INR)',
+        'Gross Revenue (INR)',
+        'Revenue Share (%)',
+      ];
+      const rows = reportsData.product_sales.products.map(p => [
+        p.sku,
+        p.product_name,
+        p.tamil_name,
+        p.category_id,
+        p.pricing_unit,
+        p.quantity_formatted,
+        p.bills_count,
+        (p.taxable_paise / 100).toFixed(2),
+        (p.tax_paise / 100).toFixed(2),
+        (p.gross_paise / 100).toFixed(2),
+        p.revenue_share_percent,
+      ]);
+      exportCsv('product_sales_report', headers, rows);
+    } else if (activeReportView === 'drawer') {
+      const headers = ['Timestamp', 'Movement Type', 'Direction', 'Reference ID', 'Amount (INR)', 'Session ID'];
+      const rows = reportsData.cash_drawer.movements.map(m => [
+        m.created_at,
+        m.movement_type,
+        m.direction,
+        m.reference_id,
+        (m.amount_paise / 100).toFixed(2),
+        m.session_id,
+      ]);
+      exportCsv('cash_drawer_report', headers, rows);
+    }
+  };
+
+  // --- Handlers: Product Catalog & Cart Operations ---
+  const filteredProducts = useMemo(() => {
+    // Only display active products in the cashier catalog
+    let list = catalog.filter(p => p.is_active);
+    if (selectedCategory !== 'all') {
+      list = list.filter(p => p.category_id === selectedCategory);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter(
+        p =>
+          p.name.toLowerCase().includes(q) ||
+          p.tamil_name.toLowerCase().includes(q) ||
+          p.sku.toLowerCase().includes(q) ||
+          p.id.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [catalog, searchQuery, selectedCategory]);
+
+  const handleProductCardClick = (product: ProductDefinition) => {
+    if (product.pricing_unit === 'PER_KG') {
+      // Open weight entry modal for kg items
+      const existingIdx = cartItems.findIndex(i => i.product_id === product.id);
+      if (existingIdx >= 0) {
+        const g = Math.round(cartItems[existingIdx].quantity_input / 1000);
+        setWeightModalGrams(g);
+        setWeightModalKgInput((g / 1000).toString());
+        setWeightModalCartIndex(existingIdx);
+      } else {
+        setWeightModalGrams(375); // Default convenient sweet box weight
+        setWeightModalKgInput('0.375');
+        setWeightModalCartIndex(null);
+      }
+      setWeightModalProduct(product);
+    } else {
+      // Piece / pack items: fast 1-tap addition
+      addItemWithQuantity(product, 1, 'MANUAL_KEYPAD');
+    }
+  };
+
+  const addItemWithQuantity = (product: ProductDefinition, quantityInput: number, weightSource: WeightInputSource) => {
+    try {
+      const existingIdx = cartItems.findIndex(i => i.product_id === product.id);
+      if (existingIdx >= 0 && product.pricing_unit !== 'PER_KG') {
+        // Increment piece count
+        const updatedQty = cartItems[existingIdx].quantity_input + quantityInput;
+        const updatedItem = calculateLineItem({
+          product,
+          quantityInput: updatedQty,
+          weightInputSource: weightSource,
+        });
+        setCartItems(prev => {
+          const next = [...prev];
+          next[existingIdx] = updatedItem;
+          return next;
+        });
+      } else {
+        const newItem = calculateLineItem({
+          product,
+          quantityInput: product.pricing_unit === 'PER_KG' ? quantityInput * 1000 : quantityInput,
+          weightInputSource: weightSource,
+        });
+        setCartItems(prev => [...prev, newItem]);
+      }
+      setErrorMessage(null);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to add item to cart');
+    }
+  };
+
+  const handleWeightModalSubmit = () => {
+    if (!weightModalProduct || weightModalGrams <= 0) return;
+    try {
+      const newItem = calculateLineItem({
+        product: weightModalProduct,
+        quantityInput: Math.round(weightModalGrams * 1000),
+        weightInputSource: 'SCALE_AUTO',
+      });
+      if (weightModalCartIndex !== null && weightModalCartIndex >= 0) {
+        setCartItems(prev => {
+          const next = [...prev];
+          next[weightModalCartIndex] = newItem;
+          return next;
+        });
+      } else {
+        setCartItems(prev => [...prev, newItem]);
+      }
+      setWeightModalProduct(null);
+      setWeightModalCartIndex(null);
+      setErrorMessage(null);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to calculate line item');
+    }
+  };
+
+  const handleAdjustCartItemQty = (index: number, delta: number) => {
+    const item = cartItems[index];
+    const product = catalog.find(p => p.id === item.product_id);
+    if (!product) return;
+
+    try {
+      if (item.pricing_unit === 'PER_KG') {
+        // Adjust weight by 50g
+        const currentGrams = Math.round(item.quantity_input / 1000);
+        const newGrams = currentGrams + delta * 50;
+        if (newGrams <= 0) {
+          handleRemoveCartItem(index);
+          return;
+        }
+        const updated = calculateLineItem({
+          product,
+          quantityInput: newGrams * 1000,
+          weightInputSource: item.weight_input_source,
+        });
+        setCartItems(prev => prev.map((it, idx) => (idx === index ? updated : it)));
+      } else {
+        // Adjust piece count by 1
+        const newCount = item.quantity_input + delta;
+        if (newCount <= 0) {
+          handleRemoveCartItem(index);
+          return;
+        }
+        const updated = calculateLineItem({
+          product,
+          quantityInput: newCount,
+          weightInputSource: item.weight_input_source,
+        });
+        setCartItems(prev => prev.map((it, idx) => (idx === index ? updated : it)));
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error updating quantity');
+    }
+  };
+
+  const handleDirectWeightChange = (index: number, grams: number) => {
+    const item = cartItems[index];
+    const product = catalog.find(p => p.id === item.product_id);
+    if (!product) return;
+
+    try {
+      if (grams <= 0) {
+        handleRemoveCartItem(index);
+        return;
+      }
+      const updated = calculateLineItem({
+        product,
+        quantityInput: Math.round(grams * 1000),
+        weightInputSource: 'MANUAL_SCALE',
+      });
+      setCartItems(prev => prev.map((it, idx) => (idx === index ? updated : it)));
+      setErrorMessage(null);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error updating weight');
+    }
+  };
+
+  const handleRemoveCartItem = (index: number) => {
+    setCartItems(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleClearCart = () => {
+    if (cartItems.length === 0) return;
+    setCartItems([]);
+  };
+
+  // --- Handlers: Payment & Finalize Sale ---
+  const handleFinalizeSale = async (override?: {
+    cashTendered?: number;
+    cashAllocated?: number;
+    upiAllocated?: number;
+    upiVerificationSource?: PaymentVerificationSource;
+  }) => {
+    if (isFinalizing) return;
+    setErrorMessage(null);
+    setIsFinalizing(true);
+
+    try {
+      if (cartItems.length === 0) {
+        throw new Error('Cart is empty. Add at least one item before checkout.');
+      }
+      if (!currentSession) {
+        throw new Error('UNAUTHENTICATED: No active cashier session. Please log in.');
+      }
+
+      const totalPaise = totalGrossPaise;
+      const totalRupees = Math.round(totalPaise / 100);
+      const payments: PaymentTenderAllocation[] = [];
+
+      let activeCashTendered = override?.cashTendered !== undefined ? override.cashTendered : cashTenderedRupees;
+      let activeUpiAllocated = override?.upiAllocated !== undefined ? override.upiAllocated : upiAllocatedRupees;
+      let activeCashAllocated = override?.cashAllocated !== undefined
+        ? override.cashAllocated
+        : Math.max(0, totalRupees - activeUpiAllocated);
+
+      let activeUpiSource = override?.upiVerificationSource || upiVerificationSource;
+
+      // Auto-reconcile cash if UPI is not used and cash didn't match after cart quantity adjustments
+      if (activeCashAllocated * 100 + activeUpiAllocated * 100 !== totalPaise && activeUpiAllocated === 0) {
+        activeCashAllocated = totalRupees;
+        activeCashTendered = Math.max(activeCashTendered, activeCashAllocated);
+      }
+
+      const activeChangePaise = Math.max(0, (activeCashTendered - activeCashAllocated) * 100);
+
+      if (activeCashAllocated > 0) {
+        payments.push({
+          id: `pay_cash_${Date.now()}`,
+          payment_method: 'CASH',
+          allocated_amount_paise: activeCashAllocated * 100,
+          tendered_paise: activeCashTendered * 100,
+          change_returned_paise: activeChangePaise,
+          net_amount_paise: activeCashAllocated * 100,
+          outcome: 'SUCCESS',
+          verification_source: 'PHYSICAL_CASH_DRAWER',
+        });
+      }
+
+      if (activeUpiAllocated > 0) {
+        const isGatewayConfirmed = activeUpiSource === 'GATEWAY_API';
+        payments.push({
+          id: `pay_upi_${Date.now()}`,
+          payment_method: isGatewayConfirmed ? 'UPI_GATEWAY_DYNAMIC' : 'UPI_MANUAL_RECORDED',
+          allocated_amount_paise: activeUpiAllocated * 100,
+          tendered_paise: activeUpiAllocated * 100,
+          change_returned_paise: 0,
+          net_amount_paise: activeUpiAllocated * 100,
+          outcome: 'SUCCESS',
+          verification_source: activeUpiSource,
+          is_gateway_confirmed: isGatewayConfirmed,
+          reference_note: activeUpiSource === 'GATEWAY_API' ? 'Dynamic QR Webhook Confirmed' : 'Soundbox Audio Confirmed',
+          verified_by_user_id: currentSession.user_id,
+        });
+      }
+
+      const tenderValidation = validateAndReconcileSplitTender(totalPaise, payments);
+      if (!tenderValidation.isValid) {
+        throw new Error(`Split Tender Error: ${tenderValidation.errors.join('; ')}`);
+      }
+
+      const lifecycleEval = evaluateTransactionPaymentLifecycle(totalPaise, payments, settlementPolicy);
+      if (settlementPolicy === 'STRICT_GATEWAY_ONLY' && !lifecycleEval.canFinalizeAndCommit) {
+        throw new Error(`Settlement Blocked: ${lifecycleEval.errors.join('; ')}`);
+      }
+
+      const payload = {
+        branch_id: currentSession.branch_id,
+        counter_id: currentSession.counter_id,
+        terminal_id: currentSession.terminal_id,
+        session_id: currentSession.session_id,
+        business_date: new Date().toISOString().split('T')[0],
+        series_code: 'IB1',
+        financial_year: '2627',
+        tax_policy_version: '2026.1-TN',
+        subtotal_taxable_paise: subtotalTaxablePaise,
+        total_cgst_paise: totalCgstPaise,
+        total_sgst_paise: totalSgstPaise,
+        total_igst_paise: 0,
+        round_off_paise: 0,
+        net_payable_paise: totalGrossPaise,
+        items: cartItems.map(item => ({
+          product_id: item.product_id,
+          quantity_input: item.quantity_input,
+          pricing_unit: item.pricing_unit,
+          weight_input_source: item.weight_input_source,
+          unit_price_paise: item.unit_price_paise,
+          taxable_paise: item.taxable_paise,
+          cgst_paise: item.cgst_paise,
+          sgst_paise: item.sgst_paise,
+          igst_paise: item.igst_paise,
+          total_tax_paise: item.total_tax_paise,
+          gross_paise: item.gross_paise,
+          stock_deduction_delta: item.stock_deduction_delta,
+          stock_unit: item.stock_unit || 'MG',
+        })),
+        payments: payments.map(p => ({
+          payment_method: p.payment_method,
+          allocated_amount_paise: p.allocated_amount_paise,
+          tendered_paise: p.tendered_paise,
+          change_returned_paise: p.change_returned_paise,
+          net_amount_paise: p.net_amount_paise,
+          outcome: p.outcome,
+          reference_note: p.reference_note || null,
+          verified_by_user_id: p.verified_by_user_id || null,
+        })),
+        cashier_id: currentSession.user_id,
+      };
+
+      let committedRecord: FinalizeSaleResult;
+
+      if (isTauriRuntime) {
+        const rawResult = await window.__TAURI__!.core.invoke<any>('finalize_sale', {
+          sessionToken: currentSession.token,
+          payload,
+        });
+
+        committedRecord = {
+          sale_id: rawResult.sale_id,
+          invoice_number: rawResult.invoice_number,
+          event_id: rawResult.event_id,
+          payload_hash: rawResult.payload_hash,
+          items_count: cartItems.length,
+          net_payable_paise: totalGrossPaise,
+          cash_retained_paise: activeCashAllocated * 100,
+          upi_settled_paise: activeUpiAllocated * 100,
+          sale_status: 'COMPLETED',
+          payment_status: lifecycleEval.derivedPaymentStatus,
+          created_at: new Date().toISOString(),
+        };
+      } else {
+        const nextSeq = persistedHistory.length + 101;
+        committedRecord = {
+          sale_id: `dev_sim_${Date.now()}`,
+          invoice_number: `IB1/2627/${String(nextSeq).padStart(6, '0')} [SIM]`,
+          event_id: `evt_dev_${Date.now()}`,
+          payload_hash: `sha256_${Date.now()}`,
+          items_count: cartItems.length,
+          net_payable_paise: totalGrossPaise,
+          cash_retained_paise: activeCashAllocated * 100,
+          upi_settled_paise: activeUpiAllocated * 100,
+          sale_status: 'COMPLETED',
+          payment_status: lifecycleEval.derivedPaymentStatus,
+          created_at: new Date().toISOString(),
+        };
+      }
+
+      setPersistedHistory(prev => [committedRecord, ...prev]);
+      setActiveReceiptModal(committedRecord);
+      setIsPaymentModalOpen(false);
+      setIsUpiModalOpen(false);
+      setUpiSimulatedVerified(false);
+      setCartItems([]);
+      setCashAllocatedRupees(0);
+      setCashTenderedRupees(0);
+      setUpiAllocatedRupees(0);
+      refreshCatalog(currentSession?.token);
+      loadSyncStatus();
+    } catch (err: any) {
+      setErrorMessage(err.message || String(err));
+    } finally {
+      setIsFinalizing(false);
+    }
+  };
+
+  // --- Quick 1-Tap Payment Handlers ---
+  const handleExactCashSale = () => {
+    if (cartItems.length === 0 || isFinalizing) return;
+    const totalRupees = Math.round(totalGrossPaise / 100);
+    handleFinalizeSale({
+      cashTendered: totalRupees,
+      cashAllocated: totalRupees,
+      upiAllocated: 0,
+    });
+  };
+
+  const handleQuickUpiFinalize = () => {
+    if (cartItems.length === 0 || isFinalizing) return;
+    const totalRupees = Math.round(totalGrossPaise / 100);
+    const source: PaymentVerificationSource = settlementPolicy === 'STRICT_GATEWAY_ONLY' ? 'GATEWAY_API' : 'SOUNDBOX_BROADCAST';
+    handleFinalizeSale({
+      cashTendered: 0,
+      cashAllocated: 0,
+      upiAllocated: totalRupees,
+      upiVerificationSource: source,
+    });
+  };
+
+  // --- RENDER 1: Initial Loading ---
+  if (authLoading) {
+    return (
+      <div style={{ backgroundColor: '#F7F7F5', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui, sans-serif' }}>
+        <div style={{ textAlign: 'center', color: '#8B1E2D' }}>
+          <h2 style={{ margin: 0, fontSize: 24 }}>மால்குடி மிட்டாய்ஸ் — Malgudi Mithais POS</h2>
+          <p style={{ color: '#666', marginTop: 8 }}>Initializing native SQLite data layer & security boundaries...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // --- RENDER 2: First-Run Owner Setup ---
+  if (!isProvisioned) {
+    return (
+      <div style={{ backgroundColor: '#F7F7F5', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui, sans-serif', padding: 20 }}>
+        <div style={{ backgroundColor: '#FFF9F0', border: '2px solid #8B1E2D', borderRadius: 12, padding: 32, maxWidth: 480, width: '100%', boxShadow: '0 8px 24px rgba(139,30,45,0.12)' }}>
+          <div style={{ textAlign: 'center', marginBottom: 20 }}>
+            <span style={{ fontSize: 36 }}>🏛️</span>
+            <h1 style={{ color: '#8B1E2D', fontSize: 22, margin: '8px 0 4px 0' }}>Malgudi Mithais POS</h1>
+            <h2 style={{ color: '#6F1623', fontSize: 16, margin: 0, fontWeight: 'normal' }}>First-Run Owner Provisioning</h2>
+            <p style={{ color: '#555', fontSize: 13, marginTop: 8 }}>
+              No user accounts exist in the database. Establish the primary Store Administrator / Owner account to activate this POS terminal.
+            </p>
+          </div>
+
+          {authError && (
+            <div style={{ backgroundColor: '#ffebee', color: '#c62828', padding: '10px 14px', borderRadius: 6, marginBottom: 16, fontSize: 13, border: '1px solid #ef9a9a' }}>
+              <strong>Error:</strong> {authError}
+            </div>
+          )}
+
+          <form onSubmit={handleProvisionOwner}>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', color: '#1F1F1F', marginBottom: 4 }}>
+                Owner Username / ID
+              </label>
+              <input
+                type="text"
+                value={provUsername}
+                onChange={e => setProvUsername(e.target.value)}
+                required
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 14, boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', color: '#1F1F1F', marginBottom: 4 }}>
+                Owner Full Name
+              </label>
+              <input
+                type="text"
+                value={provDisplayName}
+                onChange={e => setProvDisplayName(e.target.value)}
+                required
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 14, boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', color: '#1F1F1F', marginBottom: 4 }}>
+                Security PIN / Password (Min 4 chars)
+              </label>
+              <input
+                type="password"
+                value={provPin}
+                onChange={e => setProvPin(e.target.value)}
+                required
+                placeholder="••••••"
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 16, letterSpacing: 4, boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', color: '#1F1F1F', marginBottom: 4 }}>
+                Confirm Security PIN
+              </label>
+              <input
+                type="password"
+                value={provConfirmPin}
+                onChange={e => setProvConfirmPin(e.target.value)}
+                required
+                placeholder="••••••"
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 16, letterSpacing: 4, boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: 12, marginBottom: 20 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', color: '#1F1F1F', marginBottom: 4 }}>
+                  Assigned Store Branch
+                </label>
+                <select
+                  value={provBranchId}
+                  onChange={e => setProvBranchId(e.target.value)}
+                  style={{ width: '100%', padding: '10px 8px', borderRadius: 6, border: '1px solid #ccc', fontSize: 12, boxSizing: 'border-box', backgroundColor: '#fff' }}
+                >
+                  <option value="IB">IB - Town Hall Main Store</option>
+                  <option value="MN">MN - Mattuthavani Bus Stand Branch</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', color: '#1F1F1F', marginBottom: 4 }}>
+                  Terminal ID
+                </label>
+                <input
+                  type="text"
+                  value={provTerminalId}
+                  onChange={e => setProvTerminalId(e.target.value.toUpperCase())}
+                  required
+                  placeholder="T1"
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 13, boxSizing: 'border-box' }}
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              style={{ width: '100%', padding: '12px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 'bold', fontSize: 15, cursor: 'pointer' }}
+            >
+              Activate POS & Establish Owner Account
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // --- RENDER 3: Terminal Login Screen ---
+  if (!currentSession) {
+    return (
+      <div style={{ backgroundColor: '#F7F7F5', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui, sans-serif', padding: 20 }}>
+        <div style={{ backgroundColor: '#FFF9F0', border: '2px solid #8B1E2D', borderRadius: 12, padding: 32, maxWidth: 420, width: '100%', boxShadow: '0 8px 24px rgba(139,30,45,0.12)' }}>
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
+            <span style={{ fontSize: 32 }}>🏛️</span>
+            <h1 style={{ color: '#8B1E2D', fontSize: 22, margin: '6px 0 2px 0' }}>மால்குடி மிட்டாய்ஸ்</h1>
+            <h2 style={{ color: '#6F1623', fontSize: 15, margin: 0, fontWeight: '600' }}>Malgudi Mithais POS • Sign In</h2>
+            <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+              {syncConfig ? `${syncConfig.branch_name} | Terminal ${syncConfig.terminal_id} | Counter ${syncConfig.counter_id}` : 'Madurai Branch | Terminal T1 | Counter C1'}
+            </div>
+          </div>
+
+          {authError && (
+            <div style={{ backgroundColor: '#ffebee', color: '#c62828', padding: '10px 12px', borderRadius: 6, marginBottom: 16, fontSize: 13, border: '1px solid #ef9a9a' }}>
+              <strong>Login Failed:</strong> {authError}
+            </div>
+          )}
+
+          <form onSubmit={handleLogin}>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', color: '#1F1F1F', marginBottom: 4 }}>
+                Username / Employee ID
+              </label>
+              <input
+                type="text"
+                value={loginUsername}
+                onChange={e => setLoginUsername(e.target.value)}
+                required
+                autoFocus
+                placeholder="e.g. owner or anand"
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 15, boxSizing: 'border-box' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', color: '#1F1F1F', marginBottom: 4 }}>
+                Security PIN / Password
+              </label>
+              <input
+                type="password"
+                value={loginPin}
+                onChange={e => setLoginPin(e.target.value)}
+                required
+                placeholder="••••••"
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 16, letterSpacing: 4, boxSizing: 'border-box' }}
+              />
+            </div>
+
+            {/* Touch Keypad */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 16 }}>
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map(k => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => {
+                    if (k === 'C') setLoginPin('');
+                    else if (k === '⌫') setLoginPin(p => p.slice(0, -1));
+                    else setLoginPin(p => p + k);
+                  }}
+                  style={{ padding: '8px', fontSize: 14, fontWeight: 'bold', backgroundColor: '#f0f0f0', border: '1px solid #ddd', borderRadius: 4, cursor: 'pointer' }}
+                >
+                  {k}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="submit"
+              style={{ width: '100%', padding: '12px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 'bold', fontSize: 16, cursor: 'pointer' }}
+            >
+              Sign In to Terminal
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // --- RENDER 4: Authenticated POS Application ---
+  return (
+    <div style={{ fontFamily: 'system-ui, -apple-system, sans-serif', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#F7F7F5', color: '#1F1F1F', overflow: 'hidden' }}>
+      {/* 1. Compact Professional Application Header */}
+      <header
+        style={{
+          height: 54,
+          padding: '0 16px',
+          backgroundColor: '#FFF9F0',
+          borderBottom: '2px solid #8B1E2D',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexShrink: 0,
+          boxShadow: '0 2px 4px rgba(0,0,0,0.04)',
+          zIndex: 10,
+        }}
+      >
+        {/* Brand & Context */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 22 }}>🏛️</span>
+            <span style={{ color: '#8B1E2D', fontWeight: 800, fontSize: 17, letterSpacing: -0.2 }}>
+              மால்குடி மிட்டாய்ஸ் <span style={{ fontWeight: 400, color: '#6F1623', fontSize: 14 }}>— Malgudi Mithais POS</span>
+            </span>
+          </div>
+
+          <div style={{ height: 20, width: 1, backgroundColor: '#ddd' }} />
+
+          <div style={{ fontSize: 12, color: '#555', display: 'flex', gap: 10, alignItems: 'center' }}>
+            <span>
+              📍 Branch: <strong style={{ color: '#8B1E2D' }}>{syncConfig?.branch_id || currentSession.branch_id}</strong>
+              {' '}<span style={{ color: '#777', fontSize: 11 }}>({syncConfig?.terminal_id || currentSession.terminal_id || 'T1'})</span>
+            </span>
+            <span>•</span>
+            <span>💰 Shift: <strong>{currentSession.session_id}</strong></span>
+          </div>
+        </div>
+
+        {/* User Identity, Sync Status & Actions */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ fontSize: 12, color: '#444', display: 'flex', alignItems: 'center', gap: 6, backgroundColor: '#FFFDF9', padding: '4px 10px', borderRadius: 20, border: '1px solid #EAD8C7' }}>
+            <span>👤 Cashier: <strong style={{ color: '#8B1E2D' }}>{currentSession.display_name}</strong> ({currentSession.role})</span>
+          </div>
+
+          {/* Real-time Cloud Synchronization Badge & Quick Sync Button */}
+          <div
+            title={
+              syncStatus?.last_sync_error
+                ? `Sync Alert: ${syncStatus.last_sync_error}`
+                : syncStatus?.last_sync_timestamp
+                ? `Last Successful Sync: ${new Date(syncStatus.last_sync_timestamp).toLocaleTimeString()}`
+                : 'No sync recorded yet'
+            }
+            style={{
+              fontSize: 11,
+              padding: '3px 8px',
+              borderRadius: 4,
+              backgroundColor:
+                syncStatus?.last_sync_status === 'OFFLINE'
+                  ? '#FFEBEE'
+                  : syncStatus && syncStatus.pending_count > 0
+                  ? '#FFF8E1'
+                  : '#E8F5E9',
+              color:
+                syncStatus?.last_sync_status === 'OFFLINE'
+                  ? '#C62828'
+                  : syncStatus && syncStatus.pending_count > 0
+                  ? '#F57F17'
+                  : '#2E7D32',
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              border: `1px solid ${
+                syncStatus?.last_sync_status === 'OFFLINE'
+                  ? '#FFCDD2'
+                  : syncStatus && syncStatus.pending_count > 0
+                  ? '#FFE082'
+                  : '#C8E6C9'
+              }`,
+            }}
+          >
+            <span>
+              {syncStatus?.last_sync_status === 'OFFLINE'
+                ? '🔴'
+                : syncStatus && syncStatus.pending_count > 0
+                ? '🟡'
+                : '🟢'}
+            </span>
+            <span>
+              {syncStatus?.last_sync_status === 'OFFLINE'
+                ? `Offline (${syncStatus?.pending_count || 0} Pending)`
+                : syncStatus && syncStatus.pending_count > 0
+                ? `${syncStatus.pending_count} Pending Sync`
+                : 'Cloud Synced'}
+            </span>
+            <button
+              onClick={handleTriggerSync}
+              disabled={isSyncing}
+              title="Synchronize offline outbox events to central cloud server"
+              style={{
+                marginLeft: 4,
+                padding: '1px 7px',
+                fontSize: 10,
+                backgroundColor: '#fff',
+                border: '1px solid #ccc',
+                borderRadius: 3,
+                cursor: isSyncing ? 'not-allowed' : 'pointer',
+                fontWeight: 700,
+                color: '#333',
+              }}
+            >
+              {isSyncing ? '⏳ Syncing...' : '⚡ Sync'}
+            </button>
+          </div>
+
+          {currentSession.role === 'ADMIN' && (
+            <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden', border: '1px solid #8B1E2D' }}>
+              <button
+                onClick={() => setActiveTab('billing')}
+                style={{
+                  padding: '5px 10px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  border: 'none',
+                  backgroundColor: activeTab === 'billing' ? '#8B1E2D' : '#FFF9F0',
+                  color: activeTab === 'billing' ? '#fff' : '#8B1E2D',
+                  cursor: 'pointer',
+                }}
+              >
+                🛒 Billing
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab('owner_panel');
+                  loadAdminData();
+                }}
+                style={{
+                  padding: '5px 10px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  border: 'none',
+                  backgroundColor: activeTab === 'owner_panel' ? '#8B1E2D' : '#FFF9F0',
+                  color: activeTab === 'owner_panel' ? '#fff' : '#8B1E2D',
+                  cursor: 'pointer',
+                }}
+              >
+                ⚙️ Owner Panel
+              </button>
+            </div>
+          )}
+
+          <button
+            onClick={() => setIsHistoryModalOpen(true)}
+            style={{
+              padding: '5px 10px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: '#fff',
+              color: '#333',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              cursor: 'pointer',
+            }}
+          >
+            📜 Invoices & Reprints
+          </button>
+
+          <button
+            onClick={() => setIsSwitchModalOpen(true)}
+            title="Hand over register to next shift cashier"
+            style={{
+              padding: '5px 10px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: '#FFF9F0',
+              color: '#6F1623',
+              border: '1px solid #6F1623',
+              borderRadius: 4,
+              cursor: 'pointer',
+            }}
+          >
+            🔄 Shift Handover
+          </button>
+
+          <button
+            onClick={handleLogout}
+            style={{
+              padding: '5px 10px',
+              fontSize: 12,
+              fontWeight: 600,
+              backgroundColor: '#eee',
+              color: '#333',
+              border: '1px solid #ddd',
+              borderRadius: 4,
+              cursor: 'pointer',
+            }}
+          >
+            🚪 Logout
+          </button>
+        </div>
+      </header>
+
+      {/* 2. Owner Management Panel (When in Owner Tab) */}
+      {activeTab === 'owner_panel' && currentSession.role === 'ADMIN' && (
+        <div style={{ flex: 1, overflowY: 'auto', padding: 20, backgroundColor: '#F7F7F5' }}>
+          <div style={{ maxWidth: 1140, margin: '0 auto', backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: 24, boxShadow: '0 2px 6px rgba(0,0,0,0.04)' }}>
+            
+            {/* Header & Subtabs */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: 12, marginBottom: 16 }}>
+              <div>
+                <h2 style={{ color: '#8B1E2D', fontSize: 18, margin: 0, fontWeight: 800 }}>
+                  ⚙️ Store Administration & Inventory Management
+                </h2>
+                <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                  Branch: <strong style={{ color: '#8B1E2D' }}>Madurai Central Store (IB)</strong> | Multi-Branch Synchronized | Owner/Admin Security
+                </div>
+              </div>
+
+              {/* Subtabs Bar */}
+              <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid #8B1E2D' }}>
+                <button
+                  onClick={() => setOwnerSubTab('products')}
+                  style={{
+                    padding: '7px 16px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    border: 'none',
+                    backgroundColor: ownerSubTab === 'products' ? '#8B1E2D' : '#FFF9F0',
+                    color: ownerSubTab === 'products' ? '#fff' : '#8B1E2D',
+                    cursor: 'pointer',
+                  }}
+                >
+                  📦 Products & Pricing
+                </button>
+                <button
+                  onClick={() => {
+                    setOwnerSubTab('stock');
+                    loadStockMovements();
+                  }}
+                  style={{
+                    padding: '7px 16px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    border: 'none',
+                    borderLeft: '1px solid #8B1E2D',
+                    borderRight: '1px solid #8B1E2D',
+                    backgroundColor: ownerSubTab === 'stock' ? '#8B1E2D' : '#FFF9F0',
+                    color: ownerSubTab === 'stock' ? '#fff' : '#8B1E2D',
+                    cursor: 'pointer',
+                  }}
+                >
+                  📊 Stock & Inventory
+                </button>
+                <button
+                  onClick={() => {
+                    setOwnerSubTab('reports');
+                    loadReports();
+                  }}
+                  style={{
+                    padding: '7px 16px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    border: 'none',
+                    borderRight: '1px solid #8B1E2D',
+                    backgroundColor: ownerSubTab === 'reports' ? '#8B1E2D' : '#FFF9F0',
+                    color: ownerSubTab === 'reports' ? '#fff' : '#8B1E2D',
+                    cursor: 'pointer',
+                  }}
+                >
+                  📈 Sales & GST Reports
+                </button>
+                <button
+                  onClick={() => setOwnerSubTab('users_security')}
+                  style={{
+                    padding: '7px 16px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    border: 'none',
+                    borderRight: '1px solid #8B1E2D',
+                    backgroundColor: ownerSubTab === 'users_security' ? '#8B1E2D' : '#FFF9F0',
+                    color: ownerSubTab === 'users_security' ? '#fff' : '#8B1E2D',
+                    cursor: 'pointer',
+                  }}
+                >
+                  👥 Staff & Security
+                </button>
+                <button
+                  onClick={() => {
+                    setOwnerSubTab('cloud_sync');
+                    loadSyncConfig(currentSession?.token);
+                    loadSyncStatus();
+                  }}
+                  style={{
+                    padding: '7px 16px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    border: 'none',
+                    backgroundColor: ownerSubTab === 'cloud_sync' ? '#8B1E2D' : '#FFF9F0',
+                    color: ownerSubTab === 'cloud_sync' ? '#fff' : '#8B1E2D',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ☁️ Cloud Sync & Branches
+                </button>
+              </div>
+            </div>
+
+            {adminActionMessage && (
+              <div style={{ backgroundColor: '#e8f5e9', color: '#2e7d32', padding: '10px 14px', borderRadius: 4, marginBottom: 16, fontSize: 13, border: '1px solid #c8e6c9' }}>
+                ✓ {adminActionMessage}
+              </div>
+            )}
+            {adminActionError && (
+              <div style={{ backgroundColor: '#ffebee', color: '#c62828', padding: '10px 14px', borderRadius: 4, marginBottom: 16, fontSize: 13, border: '1px solid #ffcdd2' }}>
+                ⚠️ {adminActionError}
+              </div>
+            )}
+
+            {/* TAB 1: PRODUCTS & PRICING */}
+            {ownerSubTab === 'products' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', gap: 10, flex: 1, minWidth: 320 }}>
+                    <input
+                      type="text"
+                      placeholder="🔍 Search name, Tamil, SKU, barcode..."
+                      value={ownerProductSearch}
+                      onChange={e => setOwnerProductSearch(e.target.value)}
+                      style={{ flex: 1, padding: '8px 12px', border: '1px solid #ccc', borderRadius: 6, fontSize: 13 }}
+                    />
+                    <select
+                      value={ownerCategoryFilter}
+                      onChange={e => setOwnerCategoryFilter(e.target.value)}
+                      style={{ padding: '8px 10px', border: '1px solid #ccc', borderRadius: 6, fontSize: 13 }}
+                    >
+                      <option value="all">All Categories</option>
+                      <option value="cat_sweets">Sweets (இனிப்புகள்)</option>
+                      <option value="cat_savories">Savouries (கார வகைகள்)</option>
+                      <option value="cat_bakery">Bakery (பேக்கரி)</option>
+                      <option value="cat_beverages">Drinks & Dairy (பானங்கள்)</option>
+                    </select>
+                    <select
+                      value={ownerStatusFilter}
+                      onChange={e => setOwnerStatusFilter(e.target.value as any)}
+                      style={{ padding: '8px 10px', border: '1px solid #ccc', borderRadius: 6, fontSize: 13 }}
+                    >
+                      <option value="all">All Status</option>
+                      <option value="active">Active Only</option>
+                      <option value="inactive">Disabled Only</option>
+                    </select>
+                  </div>
+
+                  <button
+                    onClick={handleOpenAddProduct}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: '#8B1E2D',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 6,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    <span>➕ Add New Product</span>
+                  </button>
+                </div>
+
+                <div style={{ overflowX: 'auto', border: '1px solid #E5E5DF', borderRadius: 6 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#F9F9F7', textAlign: 'left', borderBottom: '2px solid #E0E0DA' }}>
+                        <th style={{ padding: '10px 12px' }}>SKU / Barcode</th>
+                        <th style={{ padding: '10px 12px' }}>Product Name & Tamil</th>
+                        <th style={{ padding: '10px 12px' }}>Category</th>
+                        <th style={{ padding: '10px 12px' }}>Selling Price</th>
+                        <th style={{ padding: '10px 12px' }}>GST Rate</th>
+                        <th style={{ padding: '10px 12px' }}>HSN</th>
+                        <th style={{ padding: '10px 12px' }}>Branch Stock</th>
+                        <th style={{ padding: '10px 12px' }}>Status</th>
+                        <th style={{ padding: '10px 12px', textAlign: 'right' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {catalog
+                        .filter(p => {
+                          if (ownerCategoryFilter !== 'all' && p.category_id !== ownerCategoryFilter) return false;
+                          if (ownerStatusFilter === 'active' && !p.is_active) return false;
+                          if (ownerStatusFilter === 'inactive' && p.is_active) return false;
+                          if (ownerProductSearch.trim()) {
+                            const q = ownerProductSearch.trim().toLowerCase();
+                            return (
+                              p.name.toLowerCase().includes(q) ||
+                              p.tamil_name.toLowerCase().includes(q) ||
+                              p.sku.toLowerCase().includes(q) ||
+                              (p.barcode && p.barcode.toLowerCase().includes(q))
+                            );
+                          }
+                          return true;
+                        })
+                        .map(prod => {
+                          const stockFormatted = prod.pricing_unit === 'PER_KG'
+                            ? `${(prod.current_stock / 1000000).toFixed(2)} kg`
+                            : `${prod.current_stock} ${prod.stock_unit.toLowerCase()}`;
+
+                          return (
+                            <tr key={prod.id} style={{ borderBottom: '1px solid #eee', backgroundColor: prod.is_active ? '#fff' : '#FAF9F8' }}>
+                              <td style={{ padding: '10px 12px' }}>
+                                <div style={{ fontWeight: 700, fontFamily: 'monospace', color: '#333' }}>{prod.sku}</div>
+                                {prod.barcode && <div style={{ fontSize: 11, color: '#777', fontFamily: 'monospace' }}>{prod.barcode}</div>}
+                              </td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <div style={{ fontWeight: 600, color: prod.is_active ? '#1F1F1F' : '#888' }}>{prod.name}</div>
+                                <div style={{ fontSize: 12, color: '#777' }}>{prod.tamil_name}</div>
+                              </td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, backgroundColor: '#F0F0EA', color: '#444', fontWeight: 600 }}>
+                                  {prod.category_id.replace('cat_', '').toUpperCase()}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <strong style={{ color: '#8B1E2D' }}>₹{(prod.base_price_paise / 100).toFixed(2)}</strong>
+                                <span style={{ fontSize: 11, color: '#666' }}>/{prod.pricing_unit === 'PER_KG' ? 'kg' : prod.pricing_unit.replace('PER_', '').toLowerCase()}</span>
+                              </td>
+                              <td style={{ padding: '10px 12px' }}>{prod.tax_rate_bps / 100}%</td>
+                              <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontSize: 12, color: '#555' }}>{prod.hsn_code}</td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <span style={{ fontWeight: 700, color: prod.current_stock <= 0 ? '#C62828' : '#2E7D32' }}>
+                                  {stockFormatted}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <span style={{
+                                  fontSize: 11,
+                                  padding: '2px 8px',
+                                  borderRadius: 4,
+                                  fontWeight: 700,
+                                  backgroundColor: prod.is_active ? '#E8F5E9' : '#ECEFF1',
+                                  color: prod.is_active ? '#2E7D32' : '#546E7A',
+                                }}>
+                                  {prod.is_active ? 'ACTIVE' : 'DISABLED'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                <button
+                                  onClick={() => handleOpenEditProduct(prod)}
+                                  style={{
+                                    padding: '4px 10px',
+                                    fontSize: 12,
+                                    backgroundColor: '#FFF9F0',
+                                    color: '#8B1E2D',
+                                    border: '1px solid #8B1E2D',
+                                    borderRadius: 4,
+                                    cursor: 'pointer',
+                                    fontWeight: 600,
+                                    marginRight: 6,
+                                  }}
+                                >
+                                  ✏️ Edit
+                                </button>
+                                <button
+                                  onClick={() => handleToggleProductStatus(prod)}
+                                  style={{
+                                    padding: '4px 8px',
+                                    fontSize: 12,
+                                    backgroundColor: prod.is_active ? '#FFF3E0' : '#E8F5E9',
+                                    color: prod.is_active ? '#E65100' : '#2E7D32',
+                                    border: prod.is_active ? '1px solid #FFE0B2' : '1px solid #C8E6C9',
+                                    borderRadius: 4,
+                                    cursor: 'pointer',
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  {prod.is_active ? 'Deactivate' : 'Activate'}
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: STOCK & INVENTORY OPERATIONS */}
+            {ownerSubTab === 'stock' && (
+              <div>
+                {/* KPI Cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
+                  <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 14 }}>
+                    <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', fontWeight: 700 }}>Store Location</div>
+                    <div style={{ fontSize: 17, fontWeight: 800, color: '#8B1E2D', marginTop: 4 }}>Madurai Branch (IB)</div>
+                    <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>Terminal T1 / Counter C1</div>
+                  </div>
+                  <div style={{ backgroundColor: '#F9FBF9', border: '1px solid #D5E8D4', borderRadius: 8, padding: 14 }}>
+                    <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', fontWeight: 700 }}>Active Tracked Products</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: '#2E7D32', marginTop: 4 }}>
+                      {catalog.filter(p => p.is_active).length} items
+                    </div>
+                    <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>Physical inventory sync active</div>
+                  </div>
+                  <div style={{ backgroundColor: '#FFFBF5', border: '1px solid #FFE0B2', borderRadius: 8, padding: 14 }}>
+                    <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', fontWeight: 700 }}>Low Stock Alerts (&lt; 5kg / 10pc)</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: '#E65100', marginTop: 4 }}>
+                      {catalog.filter(p => p.is_active && (p.pricing_unit === 'PER_KG' ? p.current_stock < 5000000 : p.current_stock < 10)).length} items
+                    </div>
+                    <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>Requires production/procurement</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <button
+                      onClick={() => handleOpenStockAdjust()}
+                      style={{
+                        width: '100%',
+                        padding: '12px 16px',
+                        backgroundColor: '#8B1E2D',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 8,
+                        fontWeight: 800,
+                        cursor: 'pointer',
+                        fontSize: 13,
+                        boxShadow: '0 2px 6px rgba(139,30,45,0.2)',
+                      }}
+                    >
+                      ⚖️ Record Stock Movement
+                    </button>
+                  </div>
+                </div>
+
+                {/* Stock Balances Summary */}
+                <div style={{ marginBottom: 24 }}>
+                  <h3 style={{ fontSize: 14, color: '#333', margin: '0 0 10px 0' }}>Current Store Balances & Quick Adjust</h3>
+                  <div style={{ maxHeight: 240, overflowY: 'auto', border: '1px solid #E5E5DF', borderRadius: 6 }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#F9F9F7', textAlign: 'left', borderBottom: '1px solid #ddd' }}>
+                          <th style={{ padding: '8px 10px' }}>SKU</th>
+                          <th style={{ padding: '8px 10px' }}>Product</th>
+                          <th style={{ padding: '8px 10px' }}>Current Stock</th>
+                          <th style={{ padding: '8px 10px' }}>Unit</th>
+                          <th style={{ padding: '8px 10px', textAlign: 'right' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {catalog.map(prod => (
+                          <tr key={prod.id} style={{ borderBottom: '1px solid #eee' }}>
+                            <td style={{ padding: '8px 10px', fontFamily: 'monospace', fontWeight: 'bold' }}>{prod.sku}</td>
+                            <td style={{ padding: '8px 10px' }}>
+                              <strong>{prod.name}</strong> <span style={{ color: '#777' }}>({prod.tamil_name})</span>
+                            </td>
+                            <td style={{ padding: '8px 10px', fontWeight: 700, color: prod.current_stock <= 0 ? '#C62828' : '#2E7D32' }}>
+                              {prod.pricing_unit === 'PER_KG' ? `${(prod.current_stock / 1000000).toFixed(2)} kg` : `${prod.current_stock} pcs`}
+                            </td>
+                            <td style={{ padding: '8px 10px' }}>{prod.inventory_unit}</td>
+                            <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                              <button
+                                onClick={() => handleOpenStockAdjust(prod.id)}
+                                style={{
+                                  padding: '3px 8px',
+                                  fontSize: 11,
+                                  backgroundColor: '#8B1E2D',
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: 4,
+                                  cursor: 'pointer',
+                                  fontWeight: 600,
+                                }}
+                              >
+                                Adjust
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Audit Trail: Stock Movements Log */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h3 style={{ fontSize: 14, color: '#333', margin: 0 }}>📋 Inventory Movement Audit Log (Mandatory Reasons)</h3>
+                    <button
+                      onClick={() => loadStockMovements()}
+                      style={{ padding: '4px 8px', fontSize: 11, backgroundColor: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer' }}
+                    >
+                      🔄 Refresh Log
+                    </button>
+                  </div>
+                  <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #E5E5DF', borderRadius: 6 }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#F9F9F7', textAlign: 'left', borderBottom: '1px solid #ddd' }}>
+                          <th style={{ padding: '8px 10px' }}>Type</th>
+                          <th style={{ padding: '8px 10px' }}>Product</th>
+                          <th style={{ padding: '8px 10px' }}>Delta</th>
+                          <th style={{ padding: '8px 10px' }}>Mandatory Audit Reason</th>
+                          <th style={{ padding: '8px 10px' }}>Actor</th>
+                          <th style={{ padding: '8px 10px' }}>Reference</th>
+                          <th style={{ padding: '8px 10px' }}>Timestamp</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {stockMovements.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} style={{ textAlign: 'center', padding: 20, color: '#888' }}>
+                              No stock movements recorded yet. Click 'Record Stock Movement' to adjust stock.
+                            </td>
+                          </tr>
+                        ) : (
+                          stockMovements.map(sm => {
+                            const prod = catalog.find(p => p.id === sm.product_id);
+                            const prodName = prod ? prod.name : sm.product_id;
+                            const isPositive = sm.quantity_delta > 0;
+                            const displayDelta = prod?.pricing_unit === 'PER_KG'
+                              ? `${(sm.quantity_delta / 1000000).toFixed(2)} kg`
+                              : `${sm.quantity_delta} ${sm.unit.toLowerCase()}`;
+
+                            return (
+                              <tr key={sm.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                                <td style={{ padding: '8px 10px', fontWeight: 700 }}>
+                                  <span style={{
+                                    fontSize: 10,
+                                    padding: '2px 6px',
+                                    borderRadius: 4,
+                                    backgroundColor: sm.movement_type.includes('RECEIPT') || sm.movement_type === 'OPENING_STOCK' || sm.movement_type === 'VOID_STOCK_REVERSAL' ? '#E8F5E9' : '#FFEBEE',
+                                    color: sm.movement_type.includes('RECEIPT') || sm.movement_type === 'OPENING_STOCK' || sm.movement_type === 'VOID_STOCK_REVERSAL' ? '#2E7D32' : '#C62828',
+                                  }}>
+                                    {sm.movement_type}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '8px 10px' }}>{prodName}</td>
+                                <td style={{ padding: '8px 10px', fontWeight: 700, color: isPositive ? '#2E7D32' : '#C62828' }}>
+                                  {isPositive ? `+${displayDelta}` : displayDelta}
+                                </td>
+                                <td style={{ padding: '8px 10px', color: '#333' }}>{sm.reason || '—'}</td>
+                                <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>{sm.actor_id || 'system'}</td>
+                                <td style={{ padding: '8px 10px', color: '#666', fontSize: 11 }}>{sm.reference_id}</td>
+                                <td style={{ padding: '8px 10px', color: '#666' }}>{sm.created_at}</td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: SALES & GST FINANCIAL REPORTS */}
+            {ownerSubTab === 'reports' && (
+              <div>
+                {/* Reports Header & Global Date Filters */}
+                <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 16, marginBottom: 20 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
+                    <div>
+                      <h3 style={{ fontSize: 16, margin: 0, color: '#8B1E2D', fontWeight: 800 }}>
+                        📈 Sales, GST & Financial Reconciliation Reports
+                      </h3>
+                      <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                        Branch: <strong>Madurai Central Store (IB)</strong> • Authoritative SQLite Transaction Data
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button
+                        onClick={handleExportCurrentReportCsv}
+                        disabled={!reportsData}
+                        style={{
+                          padding: '7px 14px',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          backgroundColor: '#2E7D32',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: 6,
+                          cursor: reportsData ? 'pointer' : 'not-allowed',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          opacity: reportsData ? 1 : 0.6,
+                        }}
+                      >
+                        📥 Export {activeReportView.toUpperCase()} (CSV)
+                      </button>
+
+                      <button
+                        onClick={() => loadReports()}
+                        disabled={reportsLoading}
+                        style={{
+                          padding: '7px 14px',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          backgroundColor: '#8B1E2D',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: 6,
+                          cursor: reportsLoading ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {reportsLoading ? '⏳ Loading...' : '🔄 Refresh'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Date Filter & Presets Row */}
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', paddingTop: 10, borderTop: '1px solid #F0E6DD' }}>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {(['today', 'yesterday', 'this_month', 'last_30_days'] as const).map(p => (
+                        <button
+                          key={p}
+                          onClick={() => handleSetDatePreset(p)}
+                          style={{
+                            padding: '4px 10px',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            backgroundColor: '#fff',
+                            border: '1px solid #D0C0B0',
+                            borderRadius: 4,
+                            cursor: 'pointer',
+                            color: '#444',
+                            textTransform: 'capitalize',
+                          }}
+                        >
+                          {p.replace('_', ' ')}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginLeft: 'auto' }}>
+                      <span style={{ fontWeight: 600, color: '#555' }}>Date Range:</span>
+                      <input
+                        type="date"
+                        value={reportStartDate}
+                        onChange={e => {
+                          setReportStartDate(e.target.value);
+                          loadReports(e.target.value, reportEndDate);
+                        }}
+                        style={{ padding: '4px 8px', fontSize: 12, border: '1px solid #ccc', borderRadius: 4 }}
+                      />
+                      <span>to</span>
+                      <input
+                        type="date"
+                        value={reportEndDate}
+                        onChange={e => {
+                          setReportEndDate(e.target.value);
+                          loadReports(reportStartDate, e.target.value);
+                        }}
+                        style={{ padding: '4px 8px', fontSize: 12, border: '1px solid #ccc', borderRadius: 4 }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {reportsError && (
+                  <div style={{ backgroundColor: '#FFEBEE', color: '#C62828', padding: '10px 14px', borderRadius: 6, marginBottom: 16, fontSize: 13, border: '1px solid #FFCDD2' }}>
+                    ⚠️ {reportsError}
+                  </div>
+                )}
+
+                {/* Sub-view Selector Pills */}
+                <div style={{ display: 'flex', gap: 8, marginBottom: 20, borderBottom: '2px solid #EAD8C7', paddingBottom: 10 }}>
+                  {[
+                    { id: 'daily', label: '📅 Daily Sales Summary' },
+                    { id: 'payments', label: '💳 Payment Summary' },
+                    { id: 'gst', label: '🧾 GST Tax Slabs & Invoices' },
+                    { id: 'products', label: '🏷️ Product & Category Sales' },
+                    { id: 'drawer', label: '🗄️ Cash Drawer & Movements' },
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveReportView(tab.id as any)}
+                      style={{
+                        padding: '8px 16px',
+                        fontSize: 13,
+                        fontWeight: 700,
+                        border: 'none',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        backgroundColor: activeReportView === tab.id ? '#8B1E2D' : '#F0EBE5',
+                        color: activeReportView === tab.id ? '#fff' : '#555',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* VIEW 1: DAILY SALES SUMMARY */}
+                {activeReportView === 'daily' && reportsData && (
+                  <div>
+                    {/* KPI Cards */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
+                      <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', fontWeight: 700 }}>Active Net Revenue</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, color: '#8B1E2D', marginTop: 4 }}>
+                          ₹{(reportsData.daily_sales.net_sales_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#2E7D32', marginTop: 2 }}>Excludes voided/refunded bills</div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#F9FBF9', border: '1px solid #D5E8D4', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', fontWeight: 700 }}>Invoices Generated</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, color: '#2E7D32', marginTop: 4 }}>
+                          {reportsData.daily_sales.active_bills_count} bills
+                        </div>
+                        <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                          Total recorded: {reportsData.daily_sales.total_bills_recorded}
+                        </div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#F0F4F8', border: '1px solid #D0E0EE', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', fontWeight: 700 }}>Taxable Value & GST</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: '#1565C0', marginTop: 4 }}>
+                          ₹{(reportsData.daily_sales.taxable_sales_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                          + GST: ₹{(reportsData.daily_sales.total_tax_paise / 100).toFixed(2)}
+                        </div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#FFF5F5', border: '1px solid #FFCDD2', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', fontWeight: 700 }}>Voided Bills & Returns</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, color: '#C62828', marginTop: 4 }}>
+                          {reportsData.daily_sales.voided_bills_count} bills
+                        </div>
+                        <div style={{ fontSize: 11, color: '#C62828', marginTop: 2 }}>
+                          Refunded: ₹{(reportsData.daily_sales.voided_amount_paise / 100).toFixed(2)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Daily Breakdown Table */}
+                    <div style={{ overflowX: 'auto', border: '1px solid #E5E5DF', borderRadius: 8, backgroundColor: '#fff' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#F9F9F7', textAlign: 'left', borderBottom: '2px solid #E0E0DA' }}>
+                            <th style={{ padding: '10px 12px' }}>Business Date</th>
+                            <th style={{ padding: '10px 12px' }}>Total Bills</th>
+                            <th style={{ padding: '10px 12px' }}>Active</th>
+                            <th style={{ padding: '10px 12px' }}>Voided</th>
+                            <th style={{ padding: '10px 12px' }}>Taxable Sales (₹)</th>
+                            <th style={{ padding: '10px 12px' }}>Total GST (₹)</th>
+                            <th style={{ padding: '10px 12px' }}>Gross Sales (₹)</th>
+                            <th style={{ padding: '10px 12px' }}>Voided Amount (₹)</th>
+                            <th style={{ padding: '10px 12px', textAlign: 'right' }}>Net Sales (₹)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reportsData.daily_sales.daily_breakdown.length === 0 ? (
+                            <tr>
+                              <td colSpan={9} style={{ textAlign: 'center', padding: 24, color: '#888' }}>
+                                No transactions recorded for the selected date range.
+                              </td>
+                            </tr>
+                          ) : (
+                            reportsData.daily_sales.daily_breakdown.map((row, idx) => (
+                              <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                                <td style={{ padding: '10px 12px', fontWeight: 700 }}>{row.business_date}</td>
+                                <td style={{ padding: '10px 12px' }}>{row.total_bills}</td>
+                                <td style={{ padding: '10px 12px', color: '#2E7D32', fontWeight: 600 }}>{row.active_bills}</td>
+                                <td style={{ padding: '10px 12px', color: row.voided_bills > 0 ? '#C62828' : '#888', fontWeight: 600 }}>{row.voided_bills}</td>
+                                <td style={{ padding: '10px 12px' }}>₹{(row.taxable_sales_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '10px 12px' }}>₹{(row.total_tax_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '10px 12px' }}>₹{(row.gross_sales_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '10px 12px', color: row.voided_amount_paise > 0 ? '#C62828' : '#888' }}>
+                                  ₹{(row.voided_amount_paise / 100).toFixed(2)}
+                                </td>
+                                <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 800, color: '#8B1E2D' }}>
+                                  ₹{(row.net_sales_paise / 100).toFixed(2)}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                        {reportsData.daily_sales.daily_breakdown.length > 0 && (
+                          <tfoot>
+                            <tr style={{ backgroundColor: '#FFFDF9', fontWeight: 800, borderTop: '2px solid #8B1E2D' }}>
+                              <td style={{ padding: '10px 12px' }}>TOTAL</td>
+                              <td style={{ padding: '10px 12px' }}>{reportsData.daily_sales.total_bills_recorded}</td>
+                              <td style={{ padding: '10px 12px', color: '#2E7D32' }}>{reportsData.daily_sales.active_bills_count}</td>
+                              <td style={{ padding: '10px 12px', color: '#C62828' }}>{reportsData.daily_sales.voided_bills_count}</td>
+                              <td style={{ padding: '10px 12px' }}>₹{(reportsData.daily_sales.taxable_sales_paise / 100).toFixed(2)}</td>
+                              <td style={{ padding: '10px 12px' }}>₹{(reportsData.daily_sales.total_tax_paise / 100).toFixed(2)}</td>
+                              <td style={{ padding: '10px 12px' }}>₹{(reportsData.daily_sales.gross_sales_paise / 100).toFixed(2)}</td>
+                              <td style={{ padding: '10px 12px', color: '#C62828' }}>₹{(reportsData.daily_sales.voided_amount_paise / 100).toFixed(2)}</td>
+                              <td style={{ padding: '10px 12px', textAlign: 'right', color: '#8B1E2D' }}>₹{(reportsData.daily_sales.net_sales_paise / 100).toFixed(2)}</td>
+                            </tr>
+                          </tfoot>
+                        )}
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* VIEW 2: PAYMENT SUMMARY */}
+                {activeReportView === 'payments' && reportsData && (
+                  <div>
+                    {/* Payment KPI Cards */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
+                      <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', fontWeight: 700 }}>💵 Net Cash Realized</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, color: '#8B1E2D', marginTop: 4 }}>
+                          ₹{(reportsData.payment_summary.net_cash_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                          Gross: ₹{(reportsData.payment_summary.total_cash_collected_paise / 100).toFixed(2)} | Ref: ₹{(reportsData.payment_summary.cash_refunds_paise / 100).toFixed(2)}
+                        </div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#EDE7F6', border: '1px solid #D1C4E9', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#5E35B1', textTransform: 'uppercase', fontWeight: 700 }}>📱 Net UPI Realized</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, color: '#4527A0', marginTop: 4 }}>
+                          ₹{(reportsData.payment_summary.net_upi_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                          Gross: ₹{(reportsData.payment_summary.total_upi_collected_paise / 100).toFixed(2)} | Ref: ₹{(reportsData.payment_summary.upi_refunds_paise / 100).toFixed(2)}
+                        </div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#E8F5E9', border: '1px solid #C8E6C9', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#2E7D32', textTransform: 'uppercase', fontWeight: 700 }}>⚡ Split Tender Transactions</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, color: '#1B5E20', marginTop: 4 }}>
+                          {reportsData.payment_summary.total_split_bills_count} bills
+                        </div>
+                        <div style={{ fontSize: 11, color: '#2E7D32', marginTop: 2 }}>
+                          Total volume: ₹{(reportsData.payment_summary.total_split_amount_paise / 100).toFixed(2)}
+                        </div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#F0F4F8', border: '1px solid #CFD8DC', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#455A64', textTransform: 'uppercase', fontWeight: 700 }}>Total Collections Realized</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, color: '#263238', marginTop: 4 }}>
+                          ₹{(reportsData.payment_summary.total_net_collected_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>Cash + UPI Net Inflow</div>
+                      </div>
+                    </div>
+
+                    {/* Cash Tender Reconciliation Banner */}
+                    <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 14, marginBottom: 20 }}>
+                      <h4 style={{ margin: '0 0 6px 0', fontSize: 13, color: '#8B1E2D' }}>
+                        ⚖️ Cash Drawer Tender & Change Reconciliation
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, fontSize: 12 }}>
+                        <div>
+                          <span style={{ color: '#666' }}>Total Customer Tendered Cash:</span>
+                          <div style={{ fontWeight: 800, fontSize: 16, color: '#1F1F1F', marginTop: 2 }}>
+                            ₹{(reportsData.payment_summary.total_cash_tendered_paise / 100).toFixed(2)}
+                          </div>
+                        </div>
+                        <div>
+                          <span style={{ color: '#666' }}>Change Returned to Customers:</span>
+                          <div style={{ fontWeight: 800, fontSize: 16, color: '#D32F2F', marginTop: 2 }}>
+                            ₹{(reportsData.payment_summary.total_change_returned_paise / 100).toFixed(2)}
+                          </div>
+                        </div>
+                        <div>
+                          <span style={{ color: '#666' }}>Net Physical Cash Deposited in Drawer:</span>
+                          <div style={{ fontWeight: 800, fontSize: 16, color: '#2E7D32', marginTop: 2 }}>
+                            ₹{(reportsData.payment_summary.total_cash_collected_paise / 100).toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Payment Methods Table */}
+                    <div style={{ overflowX: 'auto', border: '1px solid #E5E5DF', borderRadius: 8, backgroundColor: '#fff' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#F9F9F7', textAlign: 'left', borderBottom: '2px solid #E0E0DA' }}>
+                            <th style={{ padding: '10px 12px' }}>Payment Method</th>
+                            <th style={{ padding: '10px 12px' }}>Billed Invoices</th>
+                            <th style={{ padding: '10px 12px' }}>Gross Collected (₹)</th>
+                            <th style={{ padding: '10px 12px' }}>Refunds / Reversals (₹)</th>
+                            <th style={{ padding: '10px 12px' }}>Net Realized (₹)</th>
+                            <th style={{ padding: '10px 12px', textAlign: 'right' }}>% Share</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reportsData.payment_summary.methods_breakdown.map((row, idx) => {
+                            const share = reportsData.payment_summary.total_net_collected_paise > 0
+                              ? ((row.net_amount_paise / reportsData.payment_summary.total_net_collected_paise) * 100).toFixed(1)
+                              : '0.0';
+                            return (
+                              <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                                <td style={{ padding: '10px 12px', fontWeight: 700 }}>
+                                  {row.payment_method === 'CASH' ? '💵 Cash Tender' : '📱 UPI / QR Gateway'}
+                                </td>
+                                <td style={{ padding: '10px 12px' }}>{row.bills_count}</td>
+                                <td style={{ padding: '10px 12px' }}>₹{(row.total_collected_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '10px 12px', color: row.refunds_paise > 0 ? '#C62828' : '#888' }}>
+                                  ₹{(row.refunds_paise / 100).toFixed(2)}
+                                </td>
+                                <td style={{ padding: '10px 12px', fontWeight: 800, color: '#8B1E2D' }}>
+                                  ₹{(row.net_amount_paise / 100).toFixed(2)}
+                                </td>
+                                <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700 }}>
+                                  {share}%
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* VIEW 3: GST TAX REPORT */}
+                {activeReportView === 'gst' && reportsData && (
+                  <div>
+                    {/* GST KPI Cards */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 20 }}>
+                      <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#777', textTransform: 'uppercase', fontWeight: 700 }}>Total Taxable Base</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, color: '#8B1E2D', marginTop: 4 }}>
+                          ₹{(reportsData.gst_report.total_taxable_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>Net taxable turnover</div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#E3F2FD', border: '1px solid #90CAF9', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#1565C0', textTransform: 'uppercase', fontWeight: 700 }}>Central GST (CGST)</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, color: '#0D47A1', marginTop: 4 }}>
+                          ₹{(reportsData.gst_report.total_cgst_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#1565C0', marginTop: 2 }}>2.5% on standard sweets</div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#E8F5E9', border: '1px solid #A5D6A7', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#2E7D32', textTransform: 'uppercase', fontWeight: 700 }}>State GST (SGST)</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, color: '#1B5E20', marginTop: 4 }}>
+                          ₹{(reportsData.gst_report.total_sgst_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#2E7D32', marginTop: 2 }}>Tamil Nadu SGST (33)</div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#FFF8E1', border: '1px solid #FFE082', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, color: '#F57F17', textTransform: 'uppercase', fontWeight: 700 }}>Total GST Inflow</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, color: '#E65100', marginTop: 4 }}>
+                          ₹{(reportsData.gst_report.total_gst_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#F57F17', marginTop: 2 }}>CGST + SGST combined</div>
+                      </div>
+                    </div>
+
+                    {/* Slab-wise GST Table */}
+                    <div style={{ marginBottom: 20 }}>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: 14, color: '#333' }}>
+                        📊 GST Slab-wise Tax Breakdown (For GSTR-1 / GSTR-3B Filings)
+                      </h4>
+                      <div style={{ overflowX: 'auto', border: '1px solid #E5E5DF', borderRadius: 8, backgroundColor: '#fff' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                          <thead>
+                            <tr style={{ backgroundColor: '#F9F9F7', textAlign: 'left', borderBottom: '2px solid #E0E0DA' }}>
+                              <th style={{ padding: '10px 12px' }}>Tax Slab Rate</th>
+                              <th style={{ padding: '10px 12px' }}>Taxable Turnover (₹)</th>
+                              <th style={{ padding: '10px 12px' }}>CGST (₹)</th>
+                              <th style={{ padding: '10px 12px' }}>SGST (₹)</th>
+                              <th style={{ padding: '10px 12px' }}>Total GST (₹)</th>
+                              <th style={{ padding: '10px 12px', textAlign: 'right' }}>Total Invoice Value (₹)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reportsData.gst_report.slabs_breakdown.map((slab, idx) => (
+                              <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                                <td style={{ padding: '10px 12px', fontWeight: 700 }}>
+                                  <span style={{ padding: '3px 8px', borderRadius: 4, backgroundColor: '#FFF3E0', color: '#E65100', fontWeight: 800 }}>
+                                    {slab.tax_rate_percent.toFixed(1)}% GST
+                                  </span>
+                                </td>
+                                <td style={{ padding: '10px 12px' }}>₹{(slab.taxable_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '10px 12px' }}>₹{(slab.cgst_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '10px 12px' }}>₹{(slab.sgst_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '10px 12px', fontWeight: 700, color: '#E65100' }}>
+                                  ₹{(slab.total_tax_paise / 100).toFixed(2)}
+                                </td>
+                                <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 800, color: '#8B1E2D' }}>
+                                  ₹{(slab.total_gross_paise / 100).toFixed(2)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Detailed Invoice-Level GST Table */}
+                    <div>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: 14, color: '#333' }}>
+                        📋 Invoice-Level GST Audit Trail
+                      </h4>
+                      <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid #E5E5DF', borderRadius: 8, backgroundColor: '#fff' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                          <thead>
+                            <tr style={{ backgroundColor: '#F9F9F7', textAlign: 'left', borderBottom: '2px solid #E0E0DA', position: 'sticky', top: 0 }}>
+                              <th style={{ padding: '8px 10px' }}>Invoice #</th>
+                              <th style={{ padding: '8px 10px' }}>Date</th>
+                              <th style={{ padding: '8px 10px' }}>Status</th>
+                              <th style={{ padding: '8px 10px' }}>HSN Codes</th>
+                              <th style={{ padding: '8px 10px' }}>Taxable (₹)</th>
+                              <th style={{ padding: '8px 10px' }}>CGST (₹)</th>
+                              <th style={{ padding: '8px 10px' }}>SGST (₹)</th>
+                              <th style={{ padding: '8px 10px' }}>Total GST (₹)</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'right' }}>Net Payable (₹)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reportsData.gst_report.invoice_details.map((inv, idx) => (
+                              <tr key={idx} style={{ borderBottom: '1px solid #eee', backgroundColor: inv.sale_status === 'VOIDED' ? '#FFEBEE' : '#fff' }}>
+                                <td style={{ padding: '8px 10px', fontWeight: 700, fontFamily: 'monospace' }}>{inv.invoice_number}</td>
+                                <td style={{ padding: '8px 10px', color: '#666' }}>{inv.business_date}</td>
+                                <td style={{ padding: '8px 10px' }}>
+                                  <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, fontWeight: 700, backgroundColor: inv.sale_status === 'VOIDED' ? '#FFCDD2' : '#E8F5E9', color: inv.sale_status === 'VOIDED' ? '#C62828' : '#2E7D32' }}>
+                                    {inv.sale_status}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: '#555' }}>{inv.hsn_summary}</td>
+                                <td style={{ padding: '8px 10px' }}>₹{(inv.taxable_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '8px 10px' }}>₹{(inv.cgst_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '8px 10px' }}>₹{(inv.sgst_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '8px 10px', fontWeight: 600 }}>₹{(inv.total_tax_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, color: '#8B1E2D' }}>
+                                  ₹{(inv.net_payable_paise / 100).toFixed(2)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* VIEW 4: PRODUCT SALES REPORT */}
+                {activeReportView === 'products' && reportsData && (
+                  <div>
+                    {/* Top Selling Products Banner */}
+                    <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 14, marginBottom: 20 }}>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: 14, color: '#8B1E2D', fontWeight: 800 }}>
+                        🏆 Top 5 Best-Selling Delicacies
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
+                        {reportsData.product_sales.top_selling.map((item, idx) => (
+                          <div key={idx} style={{ backgroundColor: '#fff', border: '1px solid #E0D0C0', borderRadius: 6, padding: 10, position: 'relative' }}>
+                            <div style={{ position: 'absolute', top: 6, right: 6, fontSize: 10, fontWeight: 800, backgroundColor: '#8B1E2D', color: '#fff', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              #{idx + 1}
+                            </div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: '#1F1F1F', marginBottom: 2, paddingRight: 20 }}>
+                              {item.product_name}
+                            </div>
+                            <div style={{ fontSize: 11, color: '#777', marginBottom: 6 }}>{item.tamil_name}</div>
+                            <div style={{ fontSize: 14, fontWeight: 900, color: '#8B1E2D' }}>
+                              ₹{(item.gross_paise / 100).toFixed(2)}
+                            </div>
+                            <div style={{ fontSize: 11, color: '#2E7D32', fontWeight: 600 }}>
+                              {item.quantity_formatted} sold
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Category-wise Breakdown Table */}
+                    <div style={{ marginBottom: 20 }}>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: 14, color: '#333' }}>
+                        📂 Category Revenue Contribution
+                      </h4>
+                      <div style={{ overflowX: 'auto', border: '1px solid #E5E5DF', borderRadius: 8, backgroundColor: '#fff' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                          <thead>
+                            <tr style={{ backgroundColor: '#F9F9F7', textAlign: 'left', borderBottom: '2px solid #E0E0DA' }}>
+                              <th style={{ padding: '10px 12px' }}>Category Name</th>
+                              <th style={{ padding: '10px 12px' }}>Unique Items Sold</th>
+                              <th style={{ padding: '10px 12px' }}>Taxable Sales (₹)</th>
+                              <th style={{ padding: '10px 12px' }}>GST Tax (₹)</th>
+                              <th style={{ padding: '10px 12px' }}>Gross Revenue (₹)</th>
+                              <th style={{ padding: '10px 12px', textAlign: 'right' }}>% Revenue Share</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reportsData.product_sales.categories.map((cat, idx) => (
+                              <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                                <td style={{ padding: '10px 12px', fontWeight: 700, color: '#8B1E2D' }}>{cat.category_name}</td>
+                                <td style={{ padding: '10px 12px' }}>{cat.items_count}</td>
+                                <td style={{ padding: '10px 12px' }}>₹{(cat.taxable_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '10px 12px' }}>₹{(cat.tax_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '10px 12px', fontWeight: 700 }}>₹{(cat.gross_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 800 }}>{cat.revenue_share_percent}%</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Detailed Product Sales Table */}
+                    <div>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: 14, color: '#333' }}>
+                        📋 Individual Product Sales Performance
+                      </h4>
+                      <div style={{ overflowX: 'auto', border: '1px solid #E5E5DF', borderRadius: 8, backgroundColor: '#fff' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                          <thead>
+                            <tr style={{ backgroundColor: '#F9F9F7', textAlign: 'left', borderBottom: '2px solid #E0E0DA' }}>
+                              <th style={{ padding: '10px 12px' }}>SKU</th>
+                              <th style={{ padding: '10px 12px' }}>Product & Tamil Name</th>
+                              <th style={{ padding: '10px 12px' }}>Category</th>
+                              <th style={{ padding: '10px 12px' }}>Quantity Sold</th>
+                              <th style={{ padding: '10px 12px' }}>Bills Count</th>
+                              <th style={{ padding: '10px 12px' }}>Taxable (₹)</th>
+                              <th style={{ padding: '10px 12px' }}>GST (₹)</th>
+                              <th style={{ padding: '10px 12px' }}>Gross Revenue (₹)</th>
+                              <th style={{ padding: '10px 12px', textAlign: 'right' }}>Revenue Share</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reportsData.product_sales.products.map((p, idx) => (
+                              <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                                <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontWeight: 600 }}>{p.sku}</td>
+                                <td style={{ padding: '10px 12px' }}>
+                                  <div style={{ fontWeight: 600 }}>{p.product_name}</div>
+                                  <div style={{ fontSize: 11, color: '#777' }}>{p.tamil_name}</div>
+                                </td>
+                                <td style={{ padding: '10px 12px' }}>
+                                  <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: '#F0F0EA', color: '#444' }}>
+                                    {p.category_id.replace('cat_', '').toUpperCase()}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '10px 12px', fontWeight: 700, color: '#2E7D32' }}>{p.quantity_formatted}</td>
+                                <td style={{ padding: '10px 12px' }}>{p.bills_count}</td>
+                                <td style={{ padding: '10px 12px' }}>₹{(p.taxable_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '10px 12px' }}>₹{(p.tax_paise / 100).toFixed(2)}</td>
+                                <td style={{ padding: '10px 12px', fontWeight: 800, color: '#8B1E2D' }}>
+                                  ₹{(p.gross_paise / 100).toFixed(2)}
+                                </td>
+                                <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700 }}>{p.revenue_share_percent}%</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* VIEW 5: CASH DRAWER REPORT */}
+                {activeReportView === 'drawer' && reportsData && (
+                  <div>
+                    {/* Cash Drawer KPI Cards */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 20 }}>
+                      <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 12 }}>
+                        <div style={{ fontSize: 10, color: '#777', textTransform: 'uppercase', fontWeight: 700 }}>Opening Float</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: '#8B1E2D', marginTop: 4 }}>
+                          ₹{(reportsData.cash_drawer.opening_float_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>Session start balance</div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#E8F5E9', border: '1px solid #C8E6C9', borderRadius: 8, padding: 12 }}>
+                        <div style={{ fontSize: 10, color: '#2E7D32', textTransform: 'uppercase', fontWeight: 700 }}>Cash Sales (IN)</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: '#1B5E20', marginTop: 4 }}>
+                          +₹{(reportsData.cash_drawer.cash_sales_inflow_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#2E7D32', marginTop: 2 }}>From billing sales</div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#FFEBEE', border: '1px solid #FFCDD2', borderRadius: 8, padding: 12 }}>
+                        <div style={{ fontSize: 10, color: '#C62828', textTransform: 'uppercase', fontWeight: 700 }}>Cash Refunds (OUT)</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: '#B71C1C', marginTop: 4 }}>
+                          -₹{(reportsData.cash_drawer.cash_refunds_outflow_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#C62828', marginTop: 2 }}>Voided sales payouts</div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#F0F4F8', border: '1px solid #CFD8DC', borderRadius: 8, padding: 12 }}>
+                        <div style={{ fontSize: 10, color: '#455A64', textTransform: 'uppercase', fontWeight: 700 }}>Net Cash Inflow</div>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: '#263238', marginTop: 4 }}>
+                          ₹{(reportsData.cash_drawer.net_cash_change_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>Sales - Refunds</div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#FFF9C4', border: '1px solid #FFF59D', borderRadius: 8, padding: 12 }}>
+                        <div style={{ fontSize: 10, color: '#F57F17', textTransform: 'uppercase', fontWeight: 700 }}>Expected Closing Cash</div>
+                        <div style={{ fontSize: 20, fontWeight: 900, color: '#E65100', marginTop: 4 }}>
+                          ₹{(reportsData.cash_drawer.expected_closing_cash_paise / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#F57F17', marginTop: 2 }}>Drawer total to verify</div>
+                      </div>
+                    </div>
+
+                    {/* Cash Movement Ledger Table */}
+                    <div>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: 14, color: '#333' }}>
+                        📜 Cash Drawer Movement Ledger
+                      </h4>
+                      <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid #E5E5DF', borderRadius: 8, backgroundColor: '#fff' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                          <thead>
+                            <tr style={{ backgroundColor: '#F9F9F7', textAlign: 'left', borderBottom: '2px solid #E0E0DA', position: 'sticky', top: 0 }}>
+                              <th style={{ padding: '8px 10px' }}>Timestamp</th>
+                              <th style={{ padding: '8px 10px' }}>Movement Type</th>
+                              <th style={{ padding: '8px 10px' }}>Direction</th>
+                              <th style={{ padding: '8px 10px' }}>Reference / Invoice</th>
+                              <th style={{ padding: '8px 10px' }}>Session ID</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'right' }}>Amount (₹)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reportsData.cash_drawer.movements.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} style={{ textAlign: 'center', padding: 20, color: '#888' }}>
+                                  No cash movements found in the selected range.
+                                </td>
+                              </tr>
+                            ) : (
+                              reportsData.cash_drawer.movements.map((mov, idx) => (
+                                <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                                  <td style={{ padding: '8px 10px', color: '#666' }}>{mov.created_at}</td>
+                                  <td style={{ padding: '8px 10px', fontWeight: 600 }}>{mov.movement_type}</td>
+                                  <td style={{ padding: '8px 10px' }}>
+                                    <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, fontWeight: 700, backgroundColor: mov.direction === 'IN' ? '#E8F5E9' : '#FFEBEE', color: mov.direction === 'IN' ? '#2E7D32' : '#C62828' }}>
+                                      {mov.direction}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>{mov.reference_id}</td>
+                                  <td style={{ padding: '8px 10px', color: '#666' }}>{mov.session_id}</td>
+                                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, color: mov.direction === 'IN' ? '#2E7D32' : '#C62828' }}>
+                                    {mov.direction === 'IN' ? '+' : '-'}₹{(mov.amount_paise / 100).toFixed(2)}
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 4: STAFF & SECURITY SETTINGS */}
+            {ownerSubTab === 'users_security' && (
+              <div>
+                {/* Store Terminal & Settlement Policy Configuration */}
+            <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 16, marginBottom: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <h3 style={{ fontSize: 14, margin: 0, color: '#8B1E2D', fontWeight: 800 }}>
+                  ⚙️ Terminal Payment & Settlement Policy (Owner Configuration)
+                </h3>
+                <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 12, backgroundColor: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#EDE7F6' : '#E8F5E9', color: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#4527A0' : '#2E7D32', fontWeight: 'bold' }}>
+                  Active: {settlementPolicy === 'STRICT_GATEWAY_ONLY' ? 'Strict Gateway Webhook' : 'Soundbox Audio Permitted'}
+                </span>
+              </div>
+              <p style={{ fontSize: 12, color: '#666', margin: '0 0 12px 0', lineHeight: 1.4 }}>
+                Enforce how this terminal verifies UPI settlements. Cashiers at the billing screen cannot override this security policy.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: 12, backgroundColor: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#FBF4F5' : '#fff', border: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '1.5px solid #8B1E2D' : '1px solid #ddd', borderRadius: 6, cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="ownerSettlementPolicy"
+                    checked={settlementPolicy === 'STRICT_GATEWAY_ONLY'}
+                    onChange={() => handleUpdateSettlementPolicy('STRICT_GATEWAY_ONLY')}
+                    style={{ marginTop: 2 }}
+                  />
+                  <div>
+                    <strong style={{ fontSize: 13, color: '#1F1F1F', display: 'block' }}>Strict Gateway Only (QR Webhook)</strong>
+                    <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                      Maximum security. Requires automated gateway webhook confirmation directly from the bank. Cashiers cannot manually confirm without webhook.
+                    </div>
+                  </div>
+                </label>
+
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: 12, backgroundColor: settlementPolicy === 'CASHIER_ASSERTION_PERMITTED' ? '#FBF4F5' : '#fff', border: settlementPolicy === 'CASHIER_ASSERTION_PERMITTED' ? '1.5px solid #8B1E2D' : '1px solid #ddd', borderRadius: 6, cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="ownerSettlementPolicy"
+                    checked={settlementPolicy === 'CASHIER_ASSERTION_PERMITTED'}
+                    onChange={() => handleUpdateSettlementPolicy('CASHIER_ASSERTION_PERMITTED')}
+                    style={{ marginTop: 2 }}
+                  />
+                  <div>
+                    <strong style={{ fontSize: 13, color: '#1F1F1F', display: 'block' }}>Cashier Assertion (Soundbox Audio)</strong>
+                    <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                      Retail speed. Permits cashiers to confirm UPI payments after hearing the physical shop soundbox speaker (e.g. PhonePe / Paytm voice alert).
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 24, marginBottom: 24 }}>
+              {/* Users List */}
+              <div>
+                <h3 style={{ fontSize: 14, margin: '0 0 10px 0', color: '#333' }}>Staff & Cashier Accounts</h3>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#f9f9f9', textAlign: 'left', borderBottom: '2px solid #eee' }}>
+                      <th style={{ padding: 8 }}>Username</th>
+                      <th style={{ padding: 8 }}>Name</th>
+                      <th style={{ padding: 8 }}>Role</th>
+                      <th style={{ padding: 8 }}>Status</th>
+                      <th style={{ padding: 8 }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {userList.map(u => (
+                      <tr key={u.id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: 8, fontWeight: 'bold' }}>{u.username}</td>
+                        <td style={{ padding: 8 }}>{u.display_name}</td>
+                        <td style={{ padding: 8 }}>
+                          <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: u.role === 'ADMIN' ? '#ede7f6' : '#e0f2f1', color: u.role === 'ADMIN' ? '#4527a0' : '#00695c', fontWeight: 'bold' }}>
+                            {u.role}
+                          </span>
+                        </td>
+                        <td style={{ padding: 8 }}>
+                          <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: u.status === 'ACTIVE' ? '#e8f5e9' : '#ffebee', color: u.status === 'ACTIVE' ? '#2e7d32' : '#c62828', fontWeight: 'bold' }}>
+                            {u.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: 8 }}>
+                          <button
+                            onClick={() => handleToggleUserStatus(u)}
+                            style={{ padding: '3px 8px', fontSize: 11, marginRight: 6, backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: 3, cursor: 'pointer' }}
+                          >
+                            {u.status === 'ACTIVE' ? 'Disable' : 'Enable'}
+                          </button>
+                          <button
+                            onClick={() => { setResetPinUserId(u.id); setResetPinValue(''); }}
+                            style={{ padding: '3px 8px', fontSize: 11, backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: 3, cursor: 'pointer' }}
+                          >
+                            Reset PIN
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {resetPinUserId && (
+                  <form onSubmit={handleExecutePinReset} style={{ marginTop: 14, padding: 12, backgroundColor: '#FFF9F0', border: '1px solid #8B1E2D', borderRadius: 6 }}>
+                    <h4 style={{ margin: '0 0 8px 0', fontSize: 13, color: '#8B1E2D' }}>Reset PIN for User</h4>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <input
+                        type="password"
+                        placeholder="New 4-6 digit PIN"
+                        value={resetPinValue}
+                        onChange={e => setResetPinValue(e.target.value)}
+                        required
+                        style={{ padding: 6, fontSize: 13, flex: 1 }}
+                      />
+                      <button type="submit" style={{ padding: '6px 12px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, fontWeight: 'bold', cursor: 'pointer' }}>
+                        Save New PIN
+                      </button>
+                      <button type="button" onClick={() => setResetPinUserId(null)} style={{ padding: '6px 10px', backgroundColor: '#ccc', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+
+              {/* Create User Form */}
+              <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 16 }}>
+                <h3 style={{ fontSize: 14, margin: '0 0 12px 0', color: '#8B1E2D' }}>+ Create New Staff Account</h3>
+                <form onSubmit={handleCreateCashier}>
+                  <div style={{ marginBottom: 8 }}>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 'bold' }}>Username / ID</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. anand_m"
+                      value={newCashierUsername}
+                      onChange={e => setNewCashierUsername(e.target.value)}
+                      required
+                      style={{ width: '100%', padding: 6, fontSize: 13, boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 'bold' }}>Display Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Anand M"
+                      value={newCashierDisplayName}
+                      onChange={e => setNewCashierDisplayName(e.target.value)}
+                      required
+                      style={{ width: '100%', padding: 6, fontSize: 13, boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 'bold' }}>Role</label>
+                    <select
+                      value={newCashierRole}
+                      onChange={e => setNewCashierRole(e.target.value as any)}
+                      style={{ width: '100%', padding: 6, fontSize: 13 }}
+                    >
+                      <option value="CASHIER">Cashier (Billing & Reprints Only)</option>
+                      <option value="ADMIN">Administrator / Owner</option>
+                    </select>
+                  </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 'bold' }}>Initial Security PIN</label>
+                    <input
+                      type="password"
+                      placeholder="••••••"
+                      value={newCashierPin}
+                      onChange={e => setNewCashierPin(e.target.value)}
+                      required
+                      style={{ width: '100%', padding: 6, fontSize: 14, letterSpacing: 2, boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    style={{ width: '100%', padding: 8, backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, fontWeight: 'bold', cursor: 'pointer' }}
+                  >
+                    Create Staff Account
+                  </button>
+                </form>
+
+                <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px dashed #ccc' }}>
+                  <h4 style={{ margin: '0 0 6px 0', fontSize: 13, color: '#333' }}>Database Operations</h4>
+                  <button
+                    onClick={handleTriggerBackup}
+                    style={{ width: '100%', padding: 8, backgroundColor: '#333', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
+                  >
+                    📦 Create Hot Consistency Backup
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Audit Logs */}
+            <div>
+              <h3 style={{ fontSize: 14, margin: '0 0 8px 0', color: '#333' }}>Recent Security Audit Events</h3>
+              <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid #eee', borderRadius: 4 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#f9f9f9', textAlign: 'left', borderBottom: '1px solid #ddd' }}>
+                      <th style={{ padding: 6 }}>Action</th>
+                      <th style={{ padding: 6 }}>Entity</th>
+                      <th style={{ padding: 6 }}>Actor</th>
+                      <th style={{ padding: 6 }}>Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {securityLogs.map(log => (
+                      <tr key={log.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                        <td style={{ padding: 6, fontWeight: 'bold', color: log.action.includes('FAIL') || log.action.includes('BLOCKED') ? '#c62828' : '#2e7d32' }}>
+                          {log.action}
+                        </td>
+                        <td style={{ padding: 6 }}>{log.entity_type}: {log.entity_id}</td>
+                        <td style={{ padding: 6 }}>{log.actor_id}</td>
+                        <td style={{ padding: 6, color: '#666' }}>{new Date(parseInt(log.created_at) * 1000 || Date.now()).toLocaleTimeString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: CLOUD SYNC & MULTI-BRANCH CONFIGURATION */}
+        {ownerSubTab === 'cloud_sync' && (
+          <div>
+            {/* 1. Header & Live Synchronization Metrics */}
+            <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 20, marginBottom: 24 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div>
+                  <h3 style={{ fontSize: 16, margin: 0, color: '#8B1E2D', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>☁️</span> Offline Outbox Queue & Central Cloud Synchronization
+                  </h3>
+                  <p style={{ fontSize: 12, color: '#666', margin: '4px 0 0 0' }}>
+                    Durable offline queue ensures local POS billing continues with 100% reliability during internet outages. Records upload automatically upon reconnection.
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleTriggerSync}
+                  disabled={isSyncing}
+                  style={{
+                    padding: '10px 18px',
+                    backgroundColor: '#8B1E2D',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: isSyncing ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    boxShadow: '0 2px 6px rgba(139,30,45,0.25)',
+                  }}
+                >
+                  <span>{isSyncing ? '⏳' : '⚡'}</span>
+                  <span>{isSyncing ? 'Synchronizing (Outbox & Inbound)...' : 'Synchronize Now (Bidirectional)'}</span>
+                </button>
+              </div>
+
+              {syncMessage && (
+                <div style={{ backgroundColor: syncMessage.includes('fail') || syncMessage.includes('Error') ? '#FFEBEE' : '#E8F5E9', color: syncMessage.includes('fail') || syncMessage.includes('Error') ? '#C62828' : '#2E7D32', padding: '10px 14px', borderRadius: 6, marginBottom: 16, fontSize: 13, border: '1px solid #C8E6C9' }}>
+                  {syncMessage.includes('fail') ? '⚠️' : '✓'} {syncMessage}
+                </div>
+              )}
+
+              {(syncStatus?.last_sync_error || syncStatus?.last_inbound_sync_error) && (
+                <div style={{ backgroundColor: '#FFF3E0', border: '1px solid #FFE0B2', color: '#E65100', padding: '12px 16px', borderRadius: 6, marginBottom: 16, fontSize: 13 }}>
+                  <div style={{ fontWeight: 800, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>⚠️</span> Actionable Error Recovery Alert
+                  </div>
+                  <div>{syncStatus?.last_sync_error || syncStatus?.last_inbound_sync_error}</div>
+                  <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                    Billing continues uninterrupted in offline mode. Changes are safely queued in local SQLite outbox.
+                  </div>
+                </div>
+              )}
+
+              {/* 6 Comprehensive Dashboard Metric Tiles */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
+                <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Outbox Pending</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: syncStatus && syncStatus.pending_count > 0 ? '#F57F17' : '#2E7D32', marginTop: 4 }}>
+                    {syncStatus ? syncStatus.pending_count : 0}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Queued locally</div>
+                </div>
+
+                <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Outbox Synced</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: '#2E7D32', marginTop: 4 }}>
+                    {syncStatus ? syncStatus.synced_count : 0}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Server acknowledged</div>
+                </div>
+
+                <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Catalog Version</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: '#1565C0', marginTop: 4 }}>
+                    v{syncStatus?.last_inbound_catalog_version || 1}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Incremental sequence</div>
+                </div>
+
+                <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Inbound Catalog</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: syncStatus?.last_inbound_sync_status === 'ONLINE' ? '#2E7D32' : '#F57F17', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span>{syncStatus?.last_inbound_sync_status === 'ONLINE' ? '🟢' : '🟡'}</span>
+                    <span>{syncStatus?.last_inbound_sync_status || 'ONLINE'}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+                    {syncStatus?.last_inbound_sync_timestamp ? new Date(syncStatus.last_inbound_sync_timestamp).toLocaleTimeString() : 'Up to date'}
+                  </div>
+                </div>
+
+                <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Auto-Sync Worker</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: syncStatus?.auto_sync_worker_active !== false ? '#2E7D32' : '#999', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span>{syncStatus?.auto_sync_worker_active !== false ? '⚡' : '⏸️'}</span>
+                    <span>{syncStatus?.auto_sync_worker_active !== false ? 'Active (20s)' : 'Paused'}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Automatic daemon</div>
+                </div>
+
+                <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
+                  <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Network Connection</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: syncStatus?.last_sync_status === 'OFFLINE' ? '#C62828' : '#2E7D32', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span>{syncStatus?.last_sync_status === 'OFFLINE' ? '🔴' : '🟢'}</span>
+                    <span>{syncStatus?.last_sync_status === 'OFFLINE' ? 'Offline' : 'Connected'}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+                    {syncStatus?.last_sync_timestamp ? `Last: ${new Date(syncStatus.last_sync_timestamp).toLocaleTimeString()}` : 'No sync recorded'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Branch Identity Configuration Form */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 24, marginBottom: 24 }}>
+              <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 20 }}>
+                <h3 style={{ fontSize: 14, margin: '0 0 12px 0', color: '#8B1E2D', fontWeight: 800 }}>
+                  🏢 Persistent Branch & Terminal Identity Configuration
+                </h3>
+                <p style={{ fontSize: 12, color: '#666', margin: '0 0 16px 0' }}>
+                  Configure this Windows POS machine's unique identity. Do not configure two branch locations with the same branch ID.
+                </p>
+
+                <form onSubmit={handleSaveBranchConfig}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+                        Branch ID Code *
+                      </label>
+                      <input
+                        type="text"
+                        value={syncConfigForm.branch_id}
+                        onChange={e => setSyncConfigForm({ ...syncConfigForm, branch_id: e.target.value.toUpperCase() })}
+                        required
+                        placeholder="e.g. IB or MN"
+                        style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontWeight: 700 }}
+                      />
+                      <span style={{ fontSize: 11, color: '#777' }}>IB = Town Hall, MN = Mattuthavani</span>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+                        Terminal ID *
+                      </label>
+                      <input
+                        type="text"
+                        value={syncConfigForm.terminal_id}
+                        onChange={e => setSyncConfigForm({ ...syncConfigForm, terminal_id: e.target.value.toUpperCase() })}
+                        required
+                        placeholder="e.g. T1 or T2"
+                        style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                      />
+                      <span style={{ fontSize: 11, color: '#777' }}>Physical POS machine identifier</span>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+                      Branch Store Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={syncConfigForm.branch_name}
+                      onChange={e => setSyncConfigForm({ ...syncConfigForm, branch_name: e.target.value })}
+                      required
+                      placeholder="e.g. Madurai Town Hall Main Store"
+                      style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14, marginBottom: 14 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+                        Central Cloud API Endpoint *
+                      </label>
+                      <input
+                        type="text"
+                        value={syncConfigForm.cloud_api_url}
+                        onChange={e => setSyncConfigForm({ ...syncConfigForm, cloud_api_url: e.target.value })}
+                        required
+                        placeholder="http://127.0.0.1:3000"
+                        style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+                        Counter Code
+                      </label>
+                      <input
+                        type="text"
+                        value={syncConfigForm.counter_id}
+                        onChange={e => setSyncConfigForm({ ...syncConfigForm, counter_id: e.target.value })}
+                        required
+                        placeholder="C1"
+                        style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+                      Cloud API Authorization Key *
+                    </label>
+                    <input
+                      type="password"
+                      value={syncConfigForm.cloud_api_key}
+                      onChange={e => setSyncConfigForm({ ...syncConfigForm, cloud_api_key: e.target.value })}
+                      required
+                      style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}
+                    />
+                    <span style={{ fontSize: 11, color: '#777' }}>Bearer token for authenticating batch uploads</span>
+                  </div>
+
+                  <div style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      id="auto_sync_cb"
+                      checked={syncConfigForm.auto_sync_enabled}
+                      onChange={e => setSyncConfigForm({ ...syncConfigForm, auto_sync_enabled: e.target.checked })}
+                      style={{ width: 16, height: 16, cursor: 'pointer' }}
+                    />
+                    <label htmlFor="auto_sync_cb" style={{ fontSize: 13, color: '#333', fontWeight: 600, cursor: 'pointer' }}>
+                      Enable automated periodic sync in background (every 30s)
+                    </label>
+                  </div>
+
+                  <button
+                    type="submit"
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: '#8B1E2D',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 6,
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    💾 Save Branch Identity Configuration
+                  </button>
+                </form>
+              </div>
+
+              {/* 3. Architectural Safeguards Info Panel */}
+              <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 20 }}>
+                <h3 style={{ fontSize: 14, margin: '0 0 12px 0', color: '#6F1623', fontWeight: 800 }}>
+                  🛡️ Malgudi Multi-Branch Isolation Safeguards
+                </h3>
+                
+                <div style={{ fontSize: 12, color: '#444', lineHeight: 1.6 }}>
+                  <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid #EFE4D8' }}>
+                    <strong style={{ color: '#8B1E2D' }}>1. Sovereign Offline Operation:</strong><br/>
+                    Each branch maintains a local SQLite database with write-ahead logging (WAL). Sales, GST invoices, and stock reductions never stall when broadband drops.
+                  </div>
+
+                  <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid #EFE4D8' }}>
+                    <strong style={{ color: '#8B1E2D' }}>2. Partitioned Series Sequences:</strong><br/>
+                    Branch <strong>IB</strong> issues series <code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>IB1/2627/000001</code> while Branch <strong>MN</strong> issues <code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>MN1/2627/000001</code>. Sequence collisions are mathematically impossible.
+                  </div>
+
+                  <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid #EFE4D8' }}>
+                    <strong style={{ color: '#8B1E2D' }}>3. Durable Outbox & Restart Safety:</strong><br/>
+                    Every transaction writes to <code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>sync_outbox</code> within the same ACID commit as the sale. If the Windows PC reboots or crashes, unacknowledged records remain pending.
+                  </div>
+
+                  <div>
+                    <strong style={{ color: '#8B1E2D' }}>4. Idempotency & Tamper Protection:</strong><br/>
+                    Central API computes SHA-256 payload hashes. Replaying lost ACKs is completely safe, while payload tampering triggers automatic HTTP 409 conflict rejection.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )}
+
+      {/* 3. Main Desktop-First Two-Column POS Billing Screen */}
+      {activeTab === 'billing' && (
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          {/* ========================================================= */}
+          {/* LEFT PANEL — PRODUCT CATALOG (~62% width)               */}
+          {/* ========================================================= */}
+          <div
+            style={{
+              flex: 1.6,
+              display: 'flex',
+              flexDirection: 'column',
+              backgroundColor: '#F7F7F5',
+              padding: '12px 16px',
+              overflow: 'hidden',
+              borderRight: '1px solid #E2E2DC',
+            }}
+          >
+            {/* Top Search Bar */}
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+              <div style={{ flex: 1, position: 'relative' }}>
+                <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 14, color: '#888' }}>
+                  🔍
+                </span>
+                <input
+                  type="text"
+                  placeholder="Search sweet, savory, SKU, or Tamil name (e.g. Mysore, லட்டு, MP-001)..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 36px 10px 36px',
+                    fontSize: 14,
+                    border: '1px solid #D0D0CA',
+                    borderRadius: 8,
+                    backgroundColor: '#fff',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                    boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.03)',
+                  }}
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    style={{
+                      position: 'absolute',
+                      right: 10,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      border: 'none',
+                      background: 'none',
+                      color: '#888',
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      fontWeight: 'bold',
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              <div style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap', fontWeight: 500 }}>
+                Showing <strong>{filteredProducts.length}</strong> items
+              </div>
+            </div>
+
+            {/* Horizontal Category Filter Pills */}
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                overflowX: 'auto',
+                paddingBottom: 8,
+                marginBottom: 8,
+                flexShrink: 0,
+              }}
+            >
+              {catalogCategories.map(cat => {
+                const isActive = selectedCategory === cat.id;
+                const count = cat.id === 'all' ? catalog.filter(p => p.is_active).length : catalog.filter(p => p.is_active && p.category_id === cat.id).length;
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => setSelectedCategory(cat.id)}
+                    style={{
+                      padding: '8px 14px',
+                      borderRadius: 20,
+                      border: isActive ? '1px solid #8B1E2D' : '1px solid #D8D8D2',
+                      backgroundColor: isActive ? '#8B1E2D' : '#FFFDF9',
+                      color: isActive ? '#FFF9F0' : '#333',
+                      fontSize: 13,
+                      fontWeight: isActive ? 700 : 500,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      whiteSpace: 'nowrap',
+                      boxShadow: isActive ? '0 2px 6px rgba(139,30,45,0.2)' : 'none',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <span>{cat.icon}</span>
+                    <span>{cat.name}</span>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        padding: '1px 6px',
+                        borderRadius: 10,
+                        backgroundColor: isActive ? '#6F1623' : '#EAEAE4',
+                        color: isActive ? '#FFF9F0' : '#555',
+                      }}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Responsive Product Cards Grid */}
+            <div
+              style={{
+                flex: 1,
+                overflowY: 'auto',
+                paddingRight: 4,
+              }}
+            >
+              {filteredProducts.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px 20px', color: '#666' }}>
+                  <span style={{ fontSize: 36, display: 'block', marginBottom: 8 }}>🔍</span>
+                  <div style={{ fontSize: 16, fontWeight: 600 }}>No products found</div>
+                  <div style={{ fontSize: 13, marginTop: 4 }}>No items match "{searchQuery}" in this category.</div>
+                  <button
+                    onClick={() => {
+                      setSearchQuery('');
+                      setSelectedCategory('all');
+                    }}
+                    style={{
+                      marginTop: 14,
+                      padding: '8px 16px',
+                      backgroundColor: '#8B1E2D',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 6,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Clear Search & Filters
+                  </button>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                    gap: 12,
+                    paddingBottom: 16,
+                  }}
+                >
+                  {filteredProducts.map(product => {
+                    const cartItem = cartItems.find(i => i.product_id === product.id);
+                    const isInCart = !!cartItem;
+
+                    return (
+                      <div
+                        key={product.id}
+                        onClick={() => handleProductCardClick(product)}
+                        style={{
+                          backgroundColor: '#FFFDF9',
+                          border: isInCart ? '2px solid #8B1E2D' : '1px solid #DEDEDA',
+                          borderRadius: 10,
+                          padding: 12,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between',
+                          boxShadow: isInCart ? '0 4px 12px rgba(139,30,45,0.1)' : '0 2px 4px rgba(0,0,0,0.03)',
+                          transition: 'transform 0.1s ease, box-shadow 0.1s ease',
+                          position: 'relative',
+                        }}
+                      >
+                        {/* Top: SKU & Badge (No Emoji) */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: '#888', letterSpacing: 0.5, fontFamily: 'monospace' }}>
+                            {product.sku}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              padding: '2px 6px',
+                              borderRadius: 4,
+                              backgroundColor: product.pricing_unit === 'PER_KG' ? '#FFF3E0' : '#E8F5E9',
+                              color: product.pricing_unit === 'PER_KG' ? '#E65100' : '#2E7D32',
+                              letterSpacing: 0.3,
+                            }}
+                          >
+                            {product.pricing_unit === 'PER_KG' ? 'SCALE / WT' : 'UNIT / PC'}
+                          </span>
+                        </div>
+
+                        {/* Name & Tamil Name */}
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: 14, color: '#1F1F1F', lineHeight: 1.25, marginBottom: 2 }}>
+                            {product.name}
+                          </div>
+                          <div style={{ fontSize: 12, color: '#777', marginBottom: 8, fontStyle: 'normal' }}>
+                            {product.tamil_name}
+                          </div>
+                        </div>
+
+                        {/* Bottom: Price, Tax & Live Stock Indicator */}
+                        <div style={{ borderTop: '1px dashed #E5E5DF', paddingTop: 8, marginTop: 'auto' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                            <span style={{ fontSize: 16, fontWeight: 800, color: '#8B1E2D' }}>
+                              ₹{(product.base_price_paise / 100).toFixed(0)}
+                              <span style={{ fontSize: 11, fontWeight: 500, color: '#666' }}>
+                                /{product.pricing_unit === 'PER_KG' ? 'kg' : 'pc'}
+                              </span>
+                            </span>
+                            <span style={{ fontSize: 10, color: '#888' }}>
+                              {product.tax_rate_bps / 100}% GST
+                            </span>
+                          </div>
+
+                          {/* Live Branch Stock Indicator */}
+                          <div style={{ marginTop: 4, display: 'flex', alignItems: 'center' }}>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 600,
+                                color: product.current_stock <= 0 ? '#C62828' : (product.pricing_unit === 'PER_KG' ? product.current_stock < 5000000 : product.current_stock < 10) ? '#E65100' : '#2E7D32',
+                              }}
+                            >
+                              {product.current_stock <= 0
+                                ? '● Out of stock'
+                                : product.pricing_unit === 'PER_KG'
+                                ? `● ${(product.current_stock / 1000000).toFixed(2)} kg in stock`
+                                : `● ${product.current_stock} ${product.stock_unit.toLowerCase()} in stock`}
+                            </span>
+                          </div>
+
+                          {/* In-Cart Indicator */}
+                          {isInCart && (
+                            <div
+                              style={{
+                                marginTop: 6,
+                                padding: '3px 6px',
+                                backgroundColor: '#8B1E2D',
+                                color: '#FFF9F0',
+                                borderRadius: 4,
+                                fontSize: 11,
+                                fontWeight: 700,
+                                textAlign: 'center',
+                              }}
+                            >
+                              ✓ In Cart ({cartItem.pricing_unit === 'PER_KG' ? `${(cartItem.quantity_input / 1000).toFixed(0)}g` : `${cartItem.quantity_input} pcs`})
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ========================================================= */}
+          {/* RIGHT PANEL — CURRENT ORDER / CART (~38% width)          */}
+          {/* ========================================================= */}
+          <div
+            style={{
+              width: 440,
+              backgroundColor: '#FFFDF9',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '-2px 0 8px rgba(0,0,0,0.03)',
+              overflow: 'hidden',
+            }}
+          >
+            {/* Order Header */}
+            <div
+              style={{
+                padding: '12px 16px',
+                borderBottom: '1px solid #EBEBE6',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                backgroundColor: '#FFFDF9',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 18 }}>🛒</span>
+                <span style={{ fontWeight: 800, fontSize: 15, color: '#1F1F1F' }}>
+                  Current Order
+                </span>
+                <span
+                  style={{
+                    backgroundColor: '#8B1E2D',
+                    color: '#fff',
+                    borderRadius: 12,
+                    padding: '1px 8px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                  }}
+                >
+                  {cartItems.length}
+                </span>
+              </div>
+
+              {cartItems.length > 0 && (
+                <button
+                  onClick={handleClearCart}
+                  style={{
+                    border: 'none',
+                    background: 'none',
+                    color: '#c62828',
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                  }}
+                >
+                  Clear Order
+                </button>
+              )}
+            </div>
+
+            {/* Scrollable Cart Items List */}
+            <div
+              style={{
+                flex: 1,
+                overflowY: 'auto',
+                padding: '8px 12px',
+              }}
+            >
+              {cartItems.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '60px 20px', color: '#888' }}>
+                  <span style={{ fontSize: 42, display: 'block', marginBottom: 10 }}>🛍️</span>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: '#444' }}>Cart is empty</div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>Tap any sweet, savory, or bakery item on the left to add to bill.</div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {cartItems.map((item, idx) => {
+                    const prod = catalog.find(p => p.id === item.product_id);
+                    const name = prod?.name || item.product_id;
+                    const tamilName = prod?.tamil_name || '';
+
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          backgroundColor: '#fff',
+                          border: '1px solid #EAEAEA',
+                          borderRadius: 8,
+                          padding: 10,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 6,
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+                        }}
+                      >
+                        {/* Title & Delete */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: 13, color: '#1F1F1F' }}>
+                              {name}
+                            </div>
+                            {tamilName && (
+                              <div style={{ fontSize: 11, color: '#777' }}>
+                                {tamilName}
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => handleRemoveCartItem(idx)}
+                            style={{
+                              border: 'none',
+                              background: 'none',
+                              color: '#999',
+                              fontSize: 14,
+                              cursor: 'pointer',
+                              padding: '2px 4px',
+                            }}
+                            title="Remove item"
+                          >
+                            ✕
+                          </button>
+                        </div>
+
+                        {/* Quantity / Weight Stepper & Line Price */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
+                          {/* Stepper & Weight Input */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, backgroundColor: '#F5F5F0', padding: '3px 6px', borderRadius: 6 }}>
+                            <button
+                              onClick={() => handleAdjustCartItemQty(idx, -1)}
+                              title="Decrease"
+                              style={{
+                                width: 24,
+                                height: 24,
+                                borderRadius: 4,
+                                border: '1px solid #ccc',
+                                backgroundColor: '#fff',
+                                fontWeight: 'bold',
+                                fontSize: 14,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              -
+                            </button>
+
+                            {item.pricing_unit === 'PER_KG' ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                <input
+                                  type="number"
+                                  value={Math.round(item.quantity_input / 1000)}
+                                  onChange={e => handleDirectWeightChange(idx, Number(e.target.value))}
+                                  min={1}
+                                  step={25}
+                                  title="Directly edit grams using keyboard"
+                                  style={{
+                                    width: 52,
+                                    padding: '2px 4px',
+                                    fontSize: 12,
+                                    fontWeight: 700,
+                                    textAlign: 'center',
+                                    border: '1px solid #ccc',
+                                    borderRadius: 4,
+                                    backgroundColor: '#fff',
+                                    color: '#1F1F1F',
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (prod && prod.pricing_unit === 'PER_KG') {
+                                      setWeightModalProduct(prod);
+                                      const g = Math.round(item.quantity_input / 1000);
+                                      setWeightModalGrams(g);
+                                      setWeightModalKgInput((g / 1000).toString());
+                                      setWeightModalCartIndex(idx);
+                                    }
+                                  }}
+                                  style={{
+                                    border: 'none',
+                                    background: 'none',
+                                    fontWeight: 700,
+                                    fontSize: 11,
+                                    color: '#8B1E2D',
+                                    cursor: 'pointer',
+                                    padding: '0 2px',
+                                  }}
+                                  title="Click to open weight keypad / presets (Switch g / kg)"
+                                >
+                                  g ⚖️
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  if (prod && prod.pricing_unit === 'PER_KG') {
+                                    setWeightModalProduct(prod);
+                                    setWeightModalGrams(Math.round(item.quantity_input / 1000));
+                                    setWeightModalCartIndex(idx);
+                                  }
+                                }}
+                                style={{
+                                  border: 'none',
+                                  background: 'none',
+                                  fontWeight: 700,
+                                  fontSize: 12,
+                                  color: '#1F1F1F',
+                                  minWidth: 56,
+                                  textAlign: 'center',
+                                  cursor: 'default',
+                                }}
+                              >
+                                {item.quantity_input} {item.pricing_unit === 'PER_PACK' ? 'pack' : 'pc'}
+                              </button>
+                            )}
+
+                            <button
+                              onClick={() => handleAdjustCartItemQty(idx, 1)}
+                              title="Increase"
+                              style={{
+                                width: 24,
+                                height: 24,
+                                borderRadius: 4,
+                                border: '1px solid #ccc',
+                                backgroundColor: '#fff',
+                                fontWeight: 'bold',
+                                fontSize: 14,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          {/* Line Gross Total */}
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D' }}>
+                              ₹{(item.gross_paise / 100).toFixed(2)}
+                            </div>
+                            <div style={{ fontSize: 10, color: '#888' }}>
+                              ₹{(item.unit_price_paise / 100).toFixed(0)}/{item.pricing_unit === 'PER_KG' ? 'kg' : 'pc'}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Cart Error Notification */}
+            {errorMessage && (
+              <div style={{ margin: '0 12px 6px 12px', padding: '8px 10px', backgroundColor: '#ffebee', color: '#c62828', borderRadius: 6, fontSize: 12 }}>
+                ⚠ {errorMessage}
+              </div>
+            )}
+
+            {/* Bill Summary & Payment Trigger Footer */}
+            <div
+              style={{
+                backgroundColor: '#FFF9F0',
+                borderTop: '2px solid #EAD8C7',
+                padding: '12px 16px',
+                flexShrink: 0,
+              }}
+            >
+              {/* Financial Totals */}
+              <div style={{ fontSize: 12, color: '#666', display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Taxable Subtotal:</span>
+                  <span>₹{(subtotalTaxablePaise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>CGST (2.5%) + SGST (2.5%):</span>
+                  <span>₹{((totalCgstPaise + totalSgstPaise) / 100).toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Total Payable Box */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'baseline',
+                  borderTop: '1px solid #E5D5C5',
+                  paddingTop: 8,
+                  marginBottom: 12,
+                }}
+              >
+                <span style={{ fontSize: 14, fontWeight: 700, color: '#1F1F1F' }}>
+                  Total Net Payable:
+                </span>
+                <span style={{ fontSize: 24, fontWeight: 900, color: '#8B1E2D' }}>
+                  ₹{(totalGrossPaise / 100).toFixed(2)}
+                </span>
+              </div>
+
+              {/* Action Buttons: Fast Retail Checkout */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {/* Two Prominent Quick-Payment Buttons */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  {/* 💵 Exact Cash */}
+                  <button
+                    onClick={handleExactCashSale}
+                    disabled={cartItems.length === 0 || isFinalizing}
+                    style={{
+                      padding: '11px 8px',
+                      backgroundColor: cartItems.length === 0 || isFinalizing ? '#ccc' : '#2E7D32',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 8,
+                      fontWeight: 800,
+                      cursor: cartItems.length === 0 || isFinalizing ? 'not-allowed' : 'pointer',
+                      boxShadow: cartItems.length > 0 && !isFinalizing ? '0 4px 10px rgba(46,125,50,0.25)' : 'none',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 2,
+                    }}
+                    title="1-Tap Instant Exact Cash Checkout (Enter)"
+                  >
+                    <span style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 }}>💵 Exact Cash</span>
+                    <span style={{ fontSize: 13, fontWeight: 900 }}>₹{(totalGrossPaise / 100).toFixed(2)}</span>
+                  </button>
+
+                  {/* 📱 UPI / QR */}
+                  <button
+                    onClick={() => {
+                      setUpiSimulatedVerified(false);
+                      setIsUpiModalOpen(true);
+                    }}
+                    disabled={cartItems.length === 0 || isFinalizing}
+                    style={{
+                      padding: '11px 8px',
+                      backgroundColor: cartItems.length === 0 || isFinalizing ? '#ccc' : '#1565C0',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 8,
+                      fontWeight: 800,
+                      cursor: cartItems.length === 0 || isFinalizing ? 'not-allowed' : 'pointer',
+                      boxShadow: cartItems.length > 0 && !isFinalizing ? '0 4px 10px rgba(21,101,192,0.25)' : 'none',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 2,
+                    }}
+                    title="Instant UPI Dynamic QR Payment"
+                  >
+                    <span style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 }}>📱 UPI / QR</span>
+                    <span style={{ fontSize: 13, fontWeight: 900 }}>₹{(totalGrossPaise / 100).toFixed(2)}</span>
+                  </button>
+                </div>
+
+                {/* Secondary Option: Split Payment / Change Calculator */}
+                <button
+                  onClick={openPaymentModal}
+                  disabled={cartItems.length === 0 || isFinalizing}
+                  style={{
+                    padding: '10px 12px',
+                    backgroundColor: '#fff',
+                    color: '#8B1E2D',
+                    border: '1.5px solid #8B1E2D',
+                    borderRadius: 8,
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: cartItems.length === 0 || isFinalizing ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                  }}
+                  title="Proceed to Payment & Split Tender or calculate change for custom cash note (F4)"
+                >
+                  <span>⚡ Proceed to Payment / Split</span>
+                  <span>➜</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 1: Weight Entry Keypad Dialog (PER_KG items)        */}
+      {/* ========================================================= */}
+      {weightModalProduct && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1200,
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: '#FFF9F0',
+              border: '2px solid #8B1E2D',
+              borderRadius: 12,
+              padding: 24,
+              maxWidth: 420,
+              width: '100%',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 18 }}>{weightModalProduct.name}</h3>
+                <div style={{ fontSize: 12, color: '#666' }}>{weightModalProduct.tamil_name} • ₹{(weightModalProduct.base_price_paise / 100).toFixed(0)}/kg</div>
+              </div>
+              <button
+                onClick={() => setWeightModalProduct(null)}
+                style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Unit Selector Toggle (g vs kg) */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, backgroundColor: '#FFFDF9', padding: '6px 12px', borderRadius: 8, border: '1px solid #EAD8C7' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#6F1623' }}>Select Unit:</span>
+              <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1.5px solid #8B1E2D' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWeightModalUnit('g');
+                  }}
+                  style={{
+                    padding: '5px 14px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    border: 'none',
+                    backgroundColor: weightModalUnit === 'g' ? '#8B1E2D' : '#FFF9F0',
+                    color: weightModalUnit === 'g' ? '#fff' : '#8B1E2D',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Grams (g)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWeightModalUnit('kg');
+                    setWeightModalKgInput((weightModalGrams / 1000).toString());
+                  }}
+                  style={{
+                    padding: '5px 14px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    border: 'none',
+                    backgroundColor: weightModalUnit === 'kg' ? '#8B1E2D' : '#FFF9F0',
+                    color: weightModalUnit === 'kg' ? '#fff' : '#8B1E2D',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Kilograms (kg)
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Weight Chips */}
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 'bold', color: '#555', marginBottom: 6 }}>QUICK WEIGHT PRESETS</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+                {(weightModalUnit === 'kg'
+                  ? [
+                      { label: '0.1 kg (100g)', g: 100, kg: '0.1' },
+                      { label: '0.25 kg (250g)', g: 250, kg: '0.25' },
+                      { label: '0.5 kg (500g)', g: 500, kg: '0.5' },
+                      { label: '0.75 kg (750g)', g: 750, kg: '0.75' },
+                      { label: '1.0 kg', g: 1000, kg: '1' },
+                      { label: '2.0 kg', g: 2000, kg: '2' },
+                    ]
+                  : [
+                      { label: '100 g', g: 100, kg: '0.1' },
+                      { label: '250 g', g: 250, kg: '0.25' },
+                      { label: '375 g', g: 375, kg: '0.375' },
+                      { label: '500 g', g: 500, kg: '0.5' },
+                      { label: '750 g', g: 750, kg: '0.75' },
+                      { label: '1000 g (1kg)', g: 1000, kg: '1' },
+                    ]
+                ).map(p => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => {
+                      setWeightModalGrams(p.g);
+                      setWeightModalKgInput(p.kg);
+                    }}
+                    style={{
+                      padding: '8px 4px',
+                      borderRadius: 6,
+                      border: weightModalGrams === p.g ? '2px solid #8B1E2D' : '1px solid #ccc',
+                      backgroundColor: weightModalGrams === p.g ? '#8B1E2D' : '#fff',
+                      color: weightModalGrams === p.g ? '#fff' : '#1F1F1F',
+                      fontWeight: 'bold',
+                      fontSize: 12,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Weight Display & Live Calculated Total */}
+            <div
+              style={{
+                backgroundColor: '#fff',
+                border: '1.5px solid #8B1E2D',
+                borderRadius: 8,
+                padding: '10px 14px',
+                marginBottom: 14,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div>
+                <span style={{ fontSize: 11, color: '#666', display: 'block', fontWeight: 600 }}>
+                  {weightModalUnit === 'kg' ? 'WEIGHT (TYPE IN KG)' : 'WEIGHT (TYPE IN GRAMS)'}
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                  {weightModalUnit === 'kg' ? (
+                    <input
+                      type="number"
+                      step="0.001"
+                      value={weightModalKgInput}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setWeightModalKgInput(val);
+                        const num = parseFloat(val) || 0;
+                        setWeightModalGrams(Math.round(num * 1000));
+                      }}
+                      autoFocus
+                      placeholder="0.0"
+                      style={{
+                        width: 110,
+                        padding: '4px 8px',
+                        fontSize: 20,
+                        fontWeight: 900,
+                        color: '#1F1F1F',
+                        border: '1.5px solid #8B1E2D',
+                        borderRadius: 6,
+                      }}
+                    />
+                  ) : (
+                    <input
+                      type="number"
+                      step="1"
+                      value={weightModalGrams || ''}
+                      onChange={e => {
+                        const g = Math.max(0, parseInt(e.target.value, 10) || 0);
+                        setWeightModalGrams(g);
+                        setWeightModalKgInput((g / 1000).toString());
+                      }}
+                      autoFocus
+                      placeholder="0"
+                      style={{
+                        width: 110,
+                        padding: '4px 8px',
+                        fontSize: 20,
+                        fontWeight: 900,
+                        color: '#1F1F1F',
+                        border: '1.5px solid #8B1E2D',
+                        borderRadius: 6,
+                      }}
+                    />
+                  )}
+                  <span style={{ fontSize: 16, fontWeight: 800, color: '#8B1E2D' }}>
+                    {weightModalUnit === 'kg' ? 'kg' : 'grams'}
+                  </span>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontSize: 11, color: '#666', display: 'block' }}>LINE TOTAL</span>
+                <span style={{ fontSize: 20, fontWeight: 900, color: '#8B1E2D' }}>
+                  ₹{((weightModalProduct.base_price_paise * (weightModalGrams / 1000)) / 100).toFixed(2)}
+                </span>
+                <span style={{ fontSize: 11, color: '#888', display: 'block' }}>
+                  {weightModalUnit === 'kg' ? `${weightModalGrams} g` : `${(weightModalGrams / 1000).toFixed(3)} kg`}
+                </span>
+              </div>
+            </div>
+
+            {/* Numeric Keypad for Custom Weight */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 16 }}>
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9', weightModalUnit === 'kg' ? '.' : 'C', '0', '⌫'].map(k => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => {
+                    if (k === 'C') {
+                      setWeightModalGrams(0);
+                      setWeightModalKgInput('0');
+                    } else if (k === '⌫') {
+                      if (weightModalUnit === 'kg') {
+                        const next = weightModalKgInput.length > 1 ? weightModalKgInput.slice(0, -1) : '0';
+                        setWeightModalKgInput(next);
+                        setWeightModalGrams(Math.round((parseFloat(next) || 0) * 1000));
+                      } else {
+                        const g = Math.floor(weightModalGrams / 10);
+                        setWeightModalGrams(g);
+                        setWeightModalKgInput((g / 1000).toString());
+                      }
+                    } else if (k === '.') {
+                      if (weightModalUnit === 'kg' && !weightModalKgInput.includes('.')) {
+                        setWeightModalKgInput(prev => (prev === '0' || prev === '' ? '0.' : prev + '.'));
+                      }
+                    } else {
+                      // Digit
+                      if (weightModalUnit === 'kg') {
+                        const next = weightModalKgInput === '0' ? k : weightModalKgInput + k;
+                        setWeightModalKgInput(next);
+                        setWeightModalGrams(Math.round((parseFloat(next) || 0) * 1000));
+                      } else {
+                        const g = parseInt(`${weightModalGrams}${k}`, 10) || parseInt(k, 10);
+                        setWeightModalGrams(g);
+                        setWeightModalKgInput((g / 1000).toString());
+                      }
+                    }
+                  }}
+                  style={{
+                    padding: '10px',
+                    fontSize: 16,
+                    fontWeight: 'bold',
+                    backgroundColor: '#fff',
+                    border: '1px solid #ddd',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {k}
+                </button>
+              ))}
+            </div>
+
+            {/* Modal Actions */}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                type="button"
+                onClick={handleWeightModalSubmit}
+                disabled={weightModalGrams <= 0}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  backgroundColor: weightModalGrams > 0 ? '#8B1E2D' : '#ccc',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 6,
+                  fontWeight: 'bold',
+                  fontSize: 15,
+                  cursor: weightModalGrams > 0 ? 'pointer' : 'not-allowed',
+                }}
+              >
+                {weightModalCartIndex !== null ? 'Update Weight' : '+ Add to Order'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setWeightModalProduct(null)}
+                style={{
+                  padding: '12px 18px',
+                  backgroundColor: '#ddd',
+                  border: 'none',
+                  borderRadius: 6,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 2: Focused Payment & Tender Reconciliation Modal    */}
+      {/* ========================================================= */}
+      {isPaymentModalOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1100,
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              border: '2px solid #8B1E2D',
+              borderRadius: 12,
+              padding: 24,
+              maxWidth: 540,
+              width: '100%',
+              boxShadow: '0 12px 36px rgba(0,0,0,0.25)',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+            }}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, borderBottom: '1px solid #eee', paddingBottom: 10 }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 18 }}>
+                  ⚡ Split Payment & Change Calculator
+                </h3>
+                <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
+                  Terminal {currentSession.branch_id}/{currentSession.terminal_id} • Counter {currentSession.counter_id}
+                </div>
+              </div>
+              <button
+                onClick={() => setIsPaymentModalOpen(false)}
+                style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Bill Net Payable Banner */}
+            <div
+              style={{
+                backgroundColor: '#FFF9F0',
+                border: '1px solid #EAD8C7',
+                borderRadius: 8,
+                padding: '12px 16px',
+                marginBottom: 16,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div>
+                <span style={{ fontSize: 12, color: '#666', display: 'block' }}>ITEMS IN CART: {cartItems.length}</span>
+                <span style={{ fontSize: 11, color: '#888' }}>
+                  Subtotal: ₹{(subtotalTaxablePaise / 100).toFixed(2)} | GST: ₹{((totalCgstPaise + totalSgstPaise) / 100).toFixed(2)}
+                </span>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontSize: 11, color: '#8B1E2D', fontWeight: 'bold' }}>NET PAYABLE</span>
+                <div style={{ fontSize: 26, fontWeight: 900, color: '#8B1E2D' }}>
+                  ₹{(totalGrossPaise / 100).toFixed(2)}
+                </div>
+              </div>
+            </div>
+
+            {/* Cash Received Input & Automatic Change Calculation */}
+            <div style={{ backgroundColor: '#FDFDFD', border: '1px solid #E5E5E0', borderRadius: 8, padding: 14, marginBottom: 14 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', marginBottom: 6, color: '#1F1F1F' }}>
+                💵 Cash Received from Customer (₹)
+              </label>
+              <input
+                type="number"
+                value={cashTenderedRupees}
+                onChange={e => setCashTenderedRupees(Number(e.target.value))}
+                style={{ width: '100%', padding: '10px 12px', fontSize: 18, fontWeight: 'bold', borderRadius: 6, border: '1.5px solid #8B1E2D', boxSizing: 'border-box', marginBottom: 8 }}
+              />
+
+              {/* Quick Cash Note Presets */}
+              <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+                {[
+                  { label: `Exact ₹${(totalGrossPaise / 100).toFixed(0)}`, val: Math.round(totalGrossPaise / 100) },
+                  { label: '₹100', val: 100 },
+                  { label: '₹200', val: 200 },
+                  { label: '₹500', val: 500 },
+                  { label: '₹2000', val: 2000 },
+                ].map(p => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => setCashTenderedRupees(p.val)}
+                    style={{ padding: '4px 10px', fontSize: 12, fontWeight: 600, backgroundColor: cashTenderedRupees === p.val ? '#FFF9F0' : '#f0f0f0', border: cashTenderedRupees === p.val ? '1.5px solid #8B1E2D' : '1px solid #ccc', color: cashTenderedRupees === p.val ? '#8B1E2D' : '#333', borderRadius: 4, cursor: 'pointer' }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Automatic Change & Drawer Status */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, backgroundColor: '#FFF9F0', border: '1px solid #EAD8C7', padding: '10px 12px', borderRadius: 6 }}>
+                <span>Change to Return: <strong style={{ color: changeReturnedPaise > 0 ? '#2E7D32' : '#666', fontSize: 14 }}>₹{(changeReturnedPaise / 100).toFixed(2)}</strong></span>
+                <span>Physical Cash In Drawer: <strong style={{ color: '#8B1E2D' }}>₹{derivedCashAllocatedRupees.toFixed(2)}</strong></span>
+              </div>
+            </div>
+
+            {/* Optional UPI Split Allocation */}
+            <div style={{ backgroundColor: '#FDFDFD', border: '1px solid #E5E5E0', borderRadius: 8, padding: 14, marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <span style={{ fontWeight: 'bold', fontSize: 12, color: '#333' }}>
+                  📱 UPI Amount (Optional for Split Payment)
+                </span>
+                <span style={{ fontSize: 11, color: '#666', backgroundColor: '#f0f0f0', padding: '2px 6px', borderRadius: 4 }}>
+                  Policy: {settlementPolicy === 'STRICT_GATEWAY_ONLY' ? 'Gateway Webhook' : 'Soundbox Audio'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="number"
+                  placeholder="0"
+                  value={upiAllocatedRupees}
+                  onChange={e => setUpiAllocatedRupees(Number(e.target.value))}
+                  style={{ flex: 1, padding: '8px 10px', fontSize: 15, fontWeight: 'bold', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setUpiAllocatedRupees(0)}
+                  style={{ padding: '8px 12px', fontSize: 12, backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: 6, cursor: 'pointer' }}
+                >
+                  Clear UPI
+                </button>
+              </div>
+            </div>
+
+            {/* Split Tender Balance Status */}
+            {(() => {
+              const allocatedTotal = derivedCashAllocatedRupees * 100 + upiAllocatedRupees * 100;
+              const diff = totalGrossPaise - allocatedTotal;
+              const isBalanced = diff === 0;
+
+              return (
+                <div
+                  style={{
+                    padding: 8,
+                    borderRadius: 6,
+                    marginBottom: 16,
+                    fontSize: 12,
+                    fontWeight: 'bold',
+                    backgroundColor: isBalanced ? '#E8F5E9' : '#FFEBEE',
+                    color: isBalanced ? '#2E7D32' : '#C62828',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <span>{isBalanced ? '✓ Tender Fully Reconciled' : diff > 0 ? `⚠ Remaining to Allocate: ₹${(diff / 100).toFixed(2)}` : `⚠ Over-allocated by ₹${(Math.abs(diff) / 100).toFixed(2)}`}</span>
+                  <span>Total Allocated: ₹{(allocatedTotal / 100).toFixed(2)}</span>
+                </div>
+              );
+            })()}
+
+            {/* Modal Actions */}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => handleFinalizeSale()}
+                disabled={isFinalizing || cartItems.length === 0}
+                style={{
+                  flex: 1,
+                  padding: '14px',
+                  backgroundColor: isFinalizing ? '#999' : '#8B1E2D',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 6,
+                  fontWeight: 'bold',
+                  fontSize: 16,
+                  cursor: isFinalizing ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 4px 12px rgba(139,30,45,0.2)',
+                }}
+              >
+                {isFinalizing ? 'Committing Atomic SQLite Transaction...' : 'Finalize Sale & Commit (Ctrl+Enter)'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsPaymentModalOpen(false)}
+                style={{
+                  padding: '14px 20px',
+                  backgroundColor: '#eee',
+                  border: '1px solid #ccc',
+                  borderRadius: 6,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Back to Cart
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 5. Quick UPI / QR Payment Modal */}
+      {/* ========================================================= */}
+      {isUpiModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1150 }}>
+          <div style={{ backgroundColor: '#fff', borderRadius: 12, padding: 24, width: 420, maxWidth: '90%', boxShadow: '0 12px 32px rgba(0,0,0,0.25)', border: '2px solid #1565C0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 18, color: '#1565C0', fontWeight: 800 }}>
+                  📱 UPI / QR Quick Payment
+                </h3>
+                <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
+                  Terminal {currentSession.branch_id}/{currentSession.terminal_id} • Counter {currentSession.counter_id}
+                </div>
+              </div>
+              <button
+                onClick={() => { setIsUpiModalOpen(false); setUpiSimulatedVerified(false); }}
+                style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Bill Amount Display */}
+            <div style={{ backgroundColor: '#E3F2FD', border: '1px solid #BBDEFB', borderRadius: 8, padding: '14px 16px', textAlign: 'center', marginBottom: 16 }}>
+              <span style={{ fontSize: 12, color: '#1565C0', fontWeight: 'bold', display: 'block' }}>TOTAL AMOUNT TO PAY</span>
+              <div style={{ fontSize: 32, fontWeight: 900, color: '#0D47A1', marginTop: 2 }}>
+                ₹{(totalGrossPaise / 100).toFixed(2)}
+              </div>
+              <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>
+                Items: {cartItems.length} | GST Inclusive (5%)
+              </div>
+            </div>
+
+            {/* Dynamic QR Display Graphic */}
+            <div style={{ textAlign: 'center', padding: '16px 0', border: '1px dashed #B0BEC5', borderRadius: 8, backgroundColor: '#FAFAFA', marginBottom: 16 }}>
+              <div style={{ fontSize: 44, marginBottom: 4 }}>📲</div>
+              <div style={{ fontWeight: 'bold', fontSize: 14, color: '#37474F' }}>Scan with GPay / PhonePe / Paytm</div>
+              <div style={{ fontSize: 12, color: '#78909C', marginTop: 2 }}>UPI ID: malgudi.mithais@icici</div>
+            </div>
+
+            {/* Security Policy Badge */}
+            <div style={{ padding: 10, borderRadius: 6, marginBottom: 16, fontSize: 12, backgroundColor: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#EDE7F6' : '#E8F5E9', border: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '1px solid #D1C4E9' : '1px solid #C8E6C9', color: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#4527A0' : '#2E7D32' }}>
+              <strong>Enforced Policy:</strong> {settlementPolicy === 'STRICT_GATEWAY_ONLY' ? 'Strict Gateway Only (Dynamic Webhook)' : 'Soundbox Audio Permitted'}
+              <div style={{ fontSize: 11, marginTop: 2, opacity: 0.9 }}>
+                {settlementPolicy === 'STRICT_GATEWAY_ONLY'
+                  ? (upiSimulatedVerified ? '✓ Gateway webhook confirmed from bank' : 'Waiting for incoming payment webhook...')
+                  : 'Listen for Soundbox voice alert before confirming'}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {settlementPolicy === 'STRICT_GATEWAY_ONLY' ? (
+                <>
+                  {!upiSimulatedVerified && (
+                    <button
+                      type="button"
+                      onClick={() => setUpiSimulatedVerified(true)}
+                      style={{ padding: '10px', backgroundColor: '#EDE7F6', color: '#4527A0', border: '1px dashed #7E57C2', borderRadius: 6, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
+                    >
+                      ⚡ Receive Bank Gateway Webhook Signal
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleQuickUpiFinalize}
+                    disabled={isFinalizing || !upiSimulatedVerified}
+                    style={{
+                      padding: '14px',
+                      backgroundColor: isFinalizing || !upiSimulatedVerified ? '#999' : '#1565C0',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 6,
+                      fontWeight: 'bold',
+                      fontSize: 15,
+                      cursor: isFinalizing || !upiSimulatedVerified ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {isFinalizing ? 'Committing Sale...' : upiSimulatedVerified ? '✓ Finalize Sale (Gateway Verified)' : 'Awaiting Gateway Confirmation...'}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleQuickUpiFinalize}
+                  disabled={isFinalizing}
+                  style={{
+                    padding: '14px',
+                    backgroundColor: isFinalizing ? '#999' : '#2E7D32',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontWeight: 'bold',
+                    fontSize: 15,
+                    cursor: isFinalizing ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {isFinalizing ? 'Committing Sale...' : '✓ Soundbox Audio Confirmed — Finalize Sale'}
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => { setIsUpiModalOpen(false); setUpiSimulatedVerified(false); }}
+                style={{ padding: '10px', backgroundColor: '#eee', border: '1px solid #ccc', borderRadius: 6, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}
+              >
+                Cancel & Back to Cart
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 3: Invoices & Reprints History Drawer/Modal         */}
+      {/* ========================================================= */}
+      {isHistoryModalOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1100,
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              border: '2px solid #8B1E2D',
+              borderRadius: 12,
+              padding: 24,
+              maxWidth: 640,
+              width: '100%',
+              maxHeight: '80vh',
+              overflowY: 'auto',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 18 }}>Recent Invoices & Reprints</h3>
+              <button
+                onClick={() => setIsHistoryModalOpen(false)}
+                style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {persistedHistory.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px 0', color: '#666' }}>
+                No invoices recorded yet in this session.
+              </div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f9f9f9', textAlign: 'left', borderBottom: '2px solid #ddd' }}>
+                    <th style={{ padding: 8 }}>Invoice #</th>
+                    <th style={{ padding: 8 }}>Amount</th>
+                    <th style={{ padding: 8 }}>Status</th>
+                    <th style={{ padding: 8 }}>Date/Time</th>
+                    <th style={{ padding: 8, textAlign: 'right' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {persistedHistory.map((s, idx) => (
+                    <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                      <td style={{ padding: 8, fontWeight: 'bold' }}>{s.invoice_number}</td>
+                      <td style={{ padding: 8 }}>₹{(s.net_payable_paise / 100).toFixed(2)}</td>
+                      <td style={{ padding: 8 }}>
+                        {s.sale_status === 'VOIDED' ? (
+                          <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: '#FFEBEE', color: '#C62828', fontWeight: 'bold' }}>
+                            VOIDED / REFUNDED
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: '#E8F5E9', color: '#2E7D32', fontWeight: 'bold' }}>
+                            {s.payment_status}
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: 8, color: '#666' }}>{new Date(s.created_at).toLocaleTimeString()}</td>
+                      <td style={{ padding: 8, textAlign: 'right' }}>
+                        <button
+                          onClick={() => {
+                            setActiveReceiptModal(s);
+                            setIsHistoryModalOpen(false);
+                          }}
+                          style={{
+                            padding: '4px 10px',
+                            fontSize: 12,
+                            backgroundColor: '#8B1E2D',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: 4,
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                          }}
+                        >
+                          Reprint
+                        </button>
+                        {s.sale_status !== 'VOIDED' && currentSession?.role === 'ADMIN' && (
+                          <button
+                            onClick={() => {
+                              setVoidTargetSale(s);
+                              setVoidReason('');
+                              setVoidError(null);
+                            }}
+                            style={{
+                              padding: '4px 8px',
+                              fontSize: 12,
+                              backgroundColor: '#FFF3E0',
+                              color: '#C62828',
+                              border: '1px solid #FFCDD2',
+                              borderRadius: 4,
+                              cursor: 'pointer',
+                              fontWeight: 600,
+                              marginLeft: 6,
+                            }}
+                          >
+                            Void / Return
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 4: Cashier Handover Modal                           */}
+      {/* ========================================================= */}
+      {isSwitchModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1200 }}>
+          <div style={{ backgroundColor: '#FFF9F0', border: '2px solid #8B1E2D', padding: 24, borderRadius: 10, width: 380, boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ color: '#8B1E2D', margin: '0 0 6px 0', fontSize: 18 }}>🔄 Cashier Handover</h3>
+            <p style={{ fontSize: 12, color: '#555', margin: '0 0 16px 0' }}>
+              The current cash session (<strong>{currentSession.session_id}</strong>) and drawer balance will remain active and attributed to the incoming cashier.
+            </p>
+
+            {switchError && (
+              <div style={{ backgroundColor: '#ffebee', color: '#c62828', padding: '8px', borderRadius: 4, marginBottom: 12, fontSize: 12 }}>
+                ⚠ {switchError}
+              </div>
+            )}
+
+            <form onSubmit={handleCashierHandover}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', marginBottom: 4 }}>Incoming Cashier Username</label>
+                <input
+                  type="text"
+                  placeholder="e.g. kavitha"
+                  value={switchUsername}
+                  onChange={e => setSwitchUsername(e.target.value)}
+                  required
+                  autoFocus
+                  style={{ width: '100%', padding: '8px', fontSize: 14, boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', marginBottom: 4 }}>Security PIN</label>
+                <input
+                  type="password"
+                  placeholder="••••••"
+                  value={switchPin}
+                  onChange={e => setSwitchPin(e.target.value)}
+                  required
+                  style={{ width: '100%', padding: '8px', fontSize: 14, letterSpacing: 3, boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="submit"
+                  style={{ flex: 1, padding: '10px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, fontWeight: 'bold', cursor: 'pointer' }}
+                >
+                  Verify & Switch
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsSwitchModalOpen(false)}
+                  style={{ padding: '10px 14px', backgroundColor: '#ddd', border: 'none', borderRadius: 4, cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 5: Tax Invoice Receipt Modal                        */}
+      {/* ========================================================= */}
+      {activeReceiptModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1300 }}>
+          <div style={{ backgroundColor: '#fff', padding: 24, borderRadius: 8, width: 380, fontFamily: 'monospace', fontSize: 13, boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>
+            <div style={{ textAlign: 'center', borderBottom: '1px dashed #000', paddingBottom: 8, marginBottom: 8 }}>
+              <div style={{ fontWeight: 'bold', fontSize: 16 }}>MALGUDI MITHAIS</div>
+              <div>West Veli Street, Madurai - 625001</div>
+              <div>GSTIN: 33AAAAA0000A1Z5</div>
+            </div>
+
+            <div style={{ marginBottom: 8 }}>
+              <div><strong>Invoice:</strong> {activeReceiptModal.invoice_number}</div>
+              <div><strong>Cashier:</strong> {currentSession.display_name}</div>
+              <div><strong>Terminal:</strong> {currentSession.branch_id}/{currentSession.terminal_id}</div>
+              <div><strong>Date:</strong> {new Date(activeReceiptModal.created_at).toLocaleString()}</div>
+              <div><strong>Status:</strong> {activeReceiptModal.payment_status}</div>
+            </div>
+
+            <div style={{ borderBottom: '1px dashed #000', borderTop: '1px dashed #000', padding: '6px 0', marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
+                <span>Total Net Payable:</span>
+                <span>₹{(activeReceiptModal.net_payable_paise / 100).toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 4 }}>
+                <span>Net Cash Inflow:</span>
+                <span>₹{(activeReceiptModal.cash_retained_paise / 100).toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                <span>UPI Payment:</span>
+                <span>₹{(activeReceiptModal.upi_settled_paise / 100).toFixed(2)}</span>
+              </div>
+            </div>
+
+            <div style={{ textAlign: 'center', fontSize: 11, color: '#666', marginBottom: 12 }}>
+              Outbox Event: {activeReceiptModal.event_id}<br />
+              Reprinting is safe and never finalizes twice.
+            </div>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => window.print()}
+                style={{ flex: 1, padding: 8, backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                Send to Printer
+              </button>
+              <button
+                onClick={() => setActiveReceiptModal(null)}
+                style={{ padding: 8, backgroundColor: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 6: Product Add / Edit Dialog                         */}
+      {/* ========================================================= */}
+      {isProductModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1250, padding: 16 }}>
+          <div style={{ backgroundColor: '#fff', border: '2px solid #8B1E2D', borderRadius: 10, width: 560, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', padding: 24, boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: 10, marginBottom: 16 }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 17, fontWeight: 800 }}>
+                  {editingProduct ? `✏️ Edit Product: ${editingProduct.name}` : '➕ Add New Catalog Product'}
+                </h3>
+                <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                  Database-backed inventory item • Branch Madurai (IB)
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsProductModalOpen(false)}
+                style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {prodFormError && (
+              <div style={{ backgroundColor: '#FFEBEE', color: '#C62828', padding: '10px 12px', borderRadius: 6, marginBottom: 14, fontSize: 12, border: '1px solid #FFCDD2' }}>
+                ⚠️ {prodFormError}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveProduct}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                    Product Name (English) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Special Ghee Mysore Pak"
+                    value={prodFormName}
+                    onChange={e => setProdFormName(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                    Tamil Name (தமிழ் பெயர்) *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. நெய் மைசூர் பாகு"
+                    value={prodFormTamilName}
+                    onChange={e => setProdFormTamilName(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                    SKU Code *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. SWT-MP-001"
+                    value={prodFormSku}
+                    onChange={e => setProdFormSku(e.target.value.toUpperCase())}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                    Barcode (EAN/UPC - Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 8901234567890"
+                    value={prodFormBarcode}
+                    onChange={e => setProdFormBarcode(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                    Category *
+                  </label>
+                  <select
+                    value={prodFormCategory}
+                    onChange={e => setProdFormCategory(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', backgroundColor: '#fff' }}
+                  >
+                    <option value="cat_sweets">Sweets (இனிப்புகள்)</option>
+                    <option value="cat_savories">Savouries (கார வகைகள்)</option>
+                    <option value="cat_bakery">Bakery (பேக்கரி)</option>
+                    <option value="cat_beverages">Drinks & Dairy (பானங்கள்)</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                    Pricing Unit *
+                  </label>
+                  <select
+                    value={prodFormPricingUnit}
+                    onChange={e => {
+                      const pu = e.target.value as PricingUnit;
+                      setProdFormPricingUnit(pu);
+                      setProdFormInventoryUnit(pu === 'PER_KG' ? 'MG' : (pu.replace('PER_', '') as InventoryUnit));
+                    }}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', backgroundColor: '#fff' }}
+                  >
+                    <option value="PER_KG">Per Kilogram (Kg / Weight based)</option>
+                    <option value="PER_PIECE">Per Piece (Single Item)</option>
+                    <option value="PER_PACK">Per Pack (Packet)</option>
+                    <option value="PER_BOX">Per Box (Gift / Standard Box)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 14 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                    Selling Price (₹) *
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="1"
+                    required
+                    placeholder="e.g. 680"
+                    value={prodFormPriceRupees}
+                    onChange={e => setProdFormPriceRupees(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: 14, fontWeight: 700, border: '1.5px solid #8B1E2D', borderRadius: 6, boxSizing: 'border-box' }}
+                  />
+                  <span style={{ fontSize: 10, color: '#777' }}>Tax-inclusive price</span>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                    GST Rate (%) *
+                  </label>
+                  <select
+                    value={prodFormGstPercent}
+                    onChange={e => setProdFormGstPercent(Number(e.target.value))}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', backgroundColor: '#fff' }}
+                  >
+                    <option value={5}>5% (Standard Sweets / Savouries / Bakery)</option>
+                    <option value={12}>12% (Packaged / Specialty)</option>
+                    <option value={18}>18% (Commercial / Other)</option>
+                  </select>
+                  <span style={{ fontSize: 10, color: '#777' }}>CGST + SGST</span>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                    HSN Code *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. 21069099"
+                    value={prodFormHsn}
+                    onChange={e => setProdFormHsn(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}
+                  />
+                </div>
+              </div>
+
+              {!editingProduct && (
+                <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 6, padding: 12, marginBottom: 14 }}>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#8B1E2D' }}>
+                    Initial Opening Physical Stock ({prodFormPricingUnit === 'PER_KG' ? 'kg' : 'units'})
+                  </label>
+                  <input
+                    type="number"
+                    step={prodFormPricingUnit === 'PER_KG' ? '0.25' : '1'}
+                    min="0"
+                    placeholder={prodFormPricingUnit === 'PER_KG' ? 'e.g. 25.0' : 'e.g. 50'}
+                    value={prodFormInitialStock}
+                    onChange={e => setProdFormInitialStock(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                  />
+                  <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+                    Creates an initial OPENING_STOCK movement in branch Madurai (IB).
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+                <button
+                  type="submit"
+                  style={{
+                    flex: 1,
+                    padding: '10px 16px',
+                    backgroundColor: '#8B1E2D',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    fontSize: 14,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {editingProduct ? '✓ Save Product Changes' : '✓ Create & Add Product'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsProductModalOpen(false)}
+                  style={{
+                    padding: '10px 16px',
+                    backgroundColor: '#eee',
+                    border: '1px solid #ccc',
+                    borderRadius: 6,
+                    fontWeight: 600,
+                    fontSize: 13,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 7: Stock Movement & Adjustment Dialog                */}
+      {/* ========================================================= */}
+      {isStockAdjustModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1250, padding: 16 }}>
+          <div style={{ backgroundColor: '#fff', border: '2px solid #8B1E2D', borderRadius: 10, width: 500, maxWidth: '95vw', padding: 24, boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: 10, marginBottom: 16 }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 17, fontWeight: 800 }}>
+                  📊 Record Stock Movement / Adjustment
+                </h3>
+                <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                  Branch: Madurai Central Store (IB) • Mandatory Reason Audited
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsStockAdjustModalOpen(false)}
+                style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {adjustError && (
+              <div style={{ backgroundColor: '#FFEBEE', color: '#C62828', padding: '10px 12px', borderRadius: 6, marginBottom: 14, fontSize: 12, border: '1px solid #FFCDD2' }}>
+                ⚠️ {adjustError}
+              </div>
+            )}
+
+            <form onSubmit={handleAdjustStockSubmit}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                  Select Product *
+                </label>
+                <select
+                  value={adjustProductId}
+                  onChange={e => setAdjustProductId(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', backgroundColor: '#fff' }}
+                >
+                  {catalog.map(p => {
+                    const stockStr = p.pricing_unit === 'PER_KG'
+                      ? `${(p.current_stock / 1000000).toFixed(2)} kg`
+                      : `${p.current_stock} ${p.stock_unit.toLowerCase()}`;
+                    return (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.sku}) — Stock: {stockStr}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12, marginBottom: 12 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                    Movement Type *
+                  </label>
+                  <select
+                    value={adjustMovementType}
+                    onChange={e => setAdjustMovementType(e.target.value)}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', backgroundColor: '#fff' }}
+                  >
+                    <option value="RECEIPT_PRODUCTION">Kitchen Batch Receipt (+ In)</option>
+                    <option value="RECEIPT_SUPPLIER">Supplier Delivery (+ In)</option>
+                    <option value="WASTAGE_DAMAGE">Damaged / Dropped Goods (- Out)</option>
+                    <option value="WASTAGE_EXPIRED">Expired / Shelf Life (- Out)</option>
+                    <option value="RECONCILIATION_ADJUSTMENT">Physical Audit Discrepancy</option>
+                    <option value="OPENING_STOCK">Opening Stock Provisioning (+ In)</option>
+                  </select>
+                </div>
+                <div>
+                  {(() => {
+                    const curProd = catalog.find(p => p.id === adjustProductId);
+                    const unitLabel = curProd?.pricing_unit === 'PER_KG' ? 'Quantity in Kg *' : 'Quantity in Units *';
+                    return (
+                      <>
+                        <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                          {unitLabel}
+                        </label>
+                        <input
+                          type="number"
+                          step={curProd?.pricing_unit === 'PER_KG' ? '0.1' : '1'}
+                          min="0.01"
+                          required
+                          placeholder="e.g. 10"
+                          value={adjustQuantity}
+                          onChange={e => setAdjustQuantity(e.target.value)}
+                          style={{ width: '100%', padding: '8px 10px', fontSize: 14, fontWeight: 700, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                        />
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#8B1E2D' }}>
+                  Mandatory Audit Reason *
+                </label>
+                <textarea
+                  required
+                  rows={2}
+                  placeholder="Required: State clearly why stock is being modified (e.g. Fresh morning production batch received from kitchen; Tray dropped during display setup; Monthly physical count reconciliation)..."
+                  value={adjustReason}
+                  onChange={e => setAdjustReason(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1.5px solid #8B1E2D', borderRadius: 6, boxSizing: 'border-box', resize: 'vertical' }}
+                />
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                  Reference / Batch ID (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. BATCH-20261012-01 or PO-9842"
+                  value={adjustReferenceId}
+                  onChange={e => setAdjustReferenceId(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="submit"
+                  style={{
+                    flex: 1,
+                    padding: '10px 16px',
+                    backgroundColor: '#8B1E2D',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    fontSize: 14,
+                    cursor: 'pointer',
+                  }}
+                >
+                  ✓ Apply Stock Movement
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsStockAdjustModalOpen(false)}
+                  style={{
+                    padding: '10px 16px',
+                    backgroundColor: '#eee',
+                    border: '1px solid #ccc',
+                    borderRadius: 6,
+                    fontWeight: 600,
+                    fontSize: 13,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 8: Void Sale / Return Confirmation Dialog           */}
+      {/* ========================================================= */}
+      {voidTargetSale && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1350, padding: 16 }}>
+          <div style={{ backgroundColor: '#fff', border: '2px solid #C62828', borderRadius: 10, width: 480, maxWidth: '95vw', padding: 24, boxShadow: '0 12px 32px rgba(0,0,0,0.3)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: 10, marginBottom: 14 }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#C62828', fontSize: 17, fontWeight: 800 }}>
+                  ⚠️ Void / Cancel Completed Invoice
+                </h3>
+                <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                  Admin Authorization • Inventory Restored to Stock
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setVoidTargetSale(null)}
+                style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {voidError && (
+              <div style={{ backgroundColor: '#FFEBEE', color: '#C62828', padding: '10px 12px', borderRadius: 6, marginBottom: 14, fontSize: 12, border: '1px solid #FFCDD2' }}>
+                ⚠️ {voidError}
+              </div>
+            )}
+
+            <div style={{ backgroundColor: '#FFF5F5', border: '1px solid #FFCDD2', borderRadius: 6, padding: 12, marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: 12, color: '#666' }}>Invoice Number:</span>
+                <strong style={{ fontSize: 13, fontFamily: 'monospace' }}>{voidTargetSale.invoice_number}</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: 12, color: '#666' }}>Net Payable Amount:</span>
+                <strong style={{ fontSize: 14, color: '#C62828' }}>₹{(voidTargetSale.net_payable_paise / 100).toFixed(2)}</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 12, color: '#666' }}>Sale Timestamp:</span>
+                <span style={{ fontSize: 12, color: '#444' }}>{new Date(voidTargetSale.created_at).toLocaleString()}</span>
+              </div>
+            </div>
+
+            <div style={{ fontSize: 12, color: '#555', marginBottom: 14, lineHeight: 1.4 }}>
+              <strong>Inventory & Cash Reversal Policy:</strong>
+              <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
+                <li>Physical stock for all items will be automatically returned to store inventory.</li>
+                <li>Audit records will be created with movement type <code style={{ color: '#2E7D32' }}>VOID_STOCK_REVERSAL</code>.</li>
+                <li>Invoice status will become <strong>VOIDED</strong>; payment status becomes <strong>REFUNDED</strong>.</li>
+              </ul>
+            </div>
+
+            <form onSubmit={handleVoidSaleSubmit}>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#C62828' }}>
+                  Mandatory Cancellation / Return Reason *
+                </label>
+                <textarea
+                  required
+                  rows={2}
+                  placeholder="State the reason for voiding this invoice (e.g. Customer changed mind before leaving counter; Incorrect item billed; Returned due to quality complaint)..."
+                  value={voidReason}
+                  onChange={e => setVoidReason(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1.5px solid #C62828', borderRadius: 6, boxSizing: 'border-box', resize: 'vertical' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="submit"
+                  style={{
+                    flex: 1,
+                    padding: '10px 16px',
+                    backgroundColor: '#C62828',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    fontSize: 14,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Confirm Void & Reverse Inventory
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVoidTargetSale(null)}
+                  style={{
+                    padding: '10px 16px',
+                    backgroundColor: '#eee',
+                    border: '1px solid #ccc',
+                    borderRadius: 6,
+                    fontWeight: 600,
+                    fontSize: 13,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

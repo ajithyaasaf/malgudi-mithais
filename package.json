@@ -1,0 +1,23 @@
+{
+  "name": "malgudi-pos-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Malgudi Mithais Multi-Branch Retail POS and Management System",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "test:poc": "pnpm --filter @malgudi/domain run test:poc",
+    "start:api": "pnpm --filter @malgudi/api start",
+    "dev:pos": "powershell -ExecutionPolicy Bypass -File ./launch_pos_dev.ps1",
+    "lint": "pnpm -r run lint"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=22.11.0",
+    "pnpm": ">=10.0.0"
+  }
+}

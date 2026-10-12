@@ -1,0 +1,13 @@
+{
+  "name": "@malgudi/contracts",
+  "version": "1.0.0",
+  "description": "Shared contracts, types and enums for Malgudi Mithais POS",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

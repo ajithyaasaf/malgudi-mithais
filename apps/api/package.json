@@ -1,0 +1,22 @@
+{
+  "name": "@malgudi/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types src/index.ts",
+    "dev": "node --experimental-strip-types src/index.ts",
+    "test": "vitest run --reporter=verbose",
+    "build": "echo 'api build complete'"
+  },
+  "dependencies": {
+    "@malgudi/contracts": "workspace:*",
+    "@malgudi/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  }
+}
