@@ -12,6 +12,7 @@
     "./tender.js": "./src/tender.ts",
     "./reversals": "./src/reversals.ts",
     "./aggregate": "./src/aggregate.ts",
+    "./aggregate.js": "./src/aggregate.ts",
     "./reservations": "./src/reservations.ts",
     "./sync": "./src/sync.ts",
     "./lease": "./src/lease.ts"

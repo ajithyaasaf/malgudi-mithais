@@ -3,7 +3,9 @@ use malgudi_pos_native::db::DatabaseManager;
 use malgudi_pos_native::inventory::{
     self, AdjustStockPayload, CreateProductPayload, UpdateProductPayload, VoidSalePayload,
 };
-use malgudi_pos_native::transaction::{finalize_sale_atomic, FinalizeSalePayload, SaleItemInput, SalePaymentInput};
+use malgudi_pos_native::transaction::{
+    derive_indian_financial_year, finalize_sale_atomic, FinalizeSalePayload, SaleItemInput, SalePaymentInput,
+};
 use rusqlite::Connection;
 use std::fs;
 use std::path::Path;
@@ -344,4 +346,94 @@ fn test_billing_stock_deduction_and_void_reversal() {
     let dup_void_res = inventory::void_or_refund_sale(&mut conn, &admin_session.token, &void_payload);
     assert!(dup_void_res.is_err());
     assert!(dup_void_res.unwrap_err().contains("already voided"));
+}
+
+#[test]
+fn test_multi_branch_stock_initialization_and_isolation() {
+    let db_path = Path::new("target/test_multi_branch_stock.db");
+    let conn = setup_inventory_test_db(db_path);
+
+    // 1. IB products should have initialized pilot quantities
+    let ib_products = inventory::list_products(&conn, "IB", false).expect("Failed to list IB products");
+    assert_eq!(ib_products.len(), 12);
+    let ib_mp = ib_products.iter().find(|p| p.sku == "MP-001").unwrap();
+    assert_eq!(ib_mp.current_stock, 25_000_000); // 25 kg
+
+    // 2. MN products must have baseline 0 quantity without fictitious inventory
+    let mn_products = inventory::list_products(&conn, "MN", false).expect("Failed to list MN products");
+    assert_eq!(mn_products.len(), 12);
+    let mn_mp = mn_products.iter().find(|p| p.sku == "MP-001").unwrap();
+    assert_eq!(mn_mp.current_stock, 0); // 0 stock baseline
+
+    // 3. Verify stock balances exist in table for both branches
+    let ib_balance_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM stock_balances WHERE branch_id = 'IB';",
+        [],
+        |r| r.get(0),
+    ).unwrap();
+    assert_eq!(ib_balance_count, 12);
+
+    let mn_balance_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM stock_balances WHERE branch_id = 'MN';",
+        [],
+        |r| r.get(0),
+    ).unwrap();
+    assert_eq!(mn_balance_count, 12);
+
+    // 4. Stock isolation: Adjusting IB does not alter MN
+    conn.execute(
+        "UPDATE stock_balances SET current_quantity = 18000000 WHERE branch_id = 'IB' AND product_id = 'prod_mysore_pak';",
+        [],
+    ).unwrap();
+
+    let mn_mp_after: i64 = conn.query_row(
+        "SELECT current_quantity FROM stock_balances WHERE branch_id = 'MN' AND product_id = 'prod_mysore_pak';",
+        [],
+        |r| r.get(0),
+    ).unwrap();
+    assert_eq!(mn_mp_after, 0);
+}
+
+#[test]
+fn test_repeated_initialization_idempotence() {
+    let db_path = Path::new("target/test_repeated_init.db");
+    let conn = setup_inventory_test_db(db_path);
+
+    // Modify IB stock to simulate active sales / inventory movement
+    conn.execute(
+        "UPDATE stock_balances SET current_quantity = 15000000 WHERE branch_id = 'IB' AND product_id = 'prod_mysore_pak';",
+        [],
+    ).unwrap();
+
+    // Re-run initialization for both branches 5 times
+    for _ in 0..5 {
+        DatabaseManager::initialize_branch_stock_if_missing(&conn, "IB").expect("Re-init IB failed");
+        DatabaseManager::initialize_branch_stock_if_missing(&conn, "MN").expect("Re-init MN failed");
+    }
+
+    // Existing modified stock must NOT be overwritten!
+    let ib_qty: i64 = conn.query_row(
+        "SELECT current_quantity FROM stock_balances WHERE branch_id = 'IB' AND product_id = 'prod_mysore_pak';",
+        [],
+        |r| r.get(0),
+    ).unwrap();
+    assert_eq!(ib_qty, 15_000_000, "Existing stock was unexpectedly overwritten on re-initialization");
+}
+
+#[test]
+fn test_indian_financial_year_derivation_boundaries() {
+    // 2026-2027 fiscal year boundaries
+    assert_eq!(derive_indian_financial_year("2026-04-01"), "2627");
+    assert_eq!(derive_indian_financial_year("2026-10-13"), "2627");
+    assert_eq!(derive_indian_financial_year("2027-03-31"), "2627");
+
+    // March 31 vs April 1 boundary transitions
+    assert_eq!(derive_indian_financial_year("2026-03-31"), "2526");
+    assert_eq!(derive_indian_financial_year("2027-04-01"), "2728");
+    assert_eq!(derive_indian_financial_year("2028-03-31"), "2728");
+    assert_eq!(derive_indian_financial_year("2028-04-01"), "2829");
+
+    // ISO timestamp parsing
+    assert_eq!(derive_indian_financial_year("2026-04-01T10:30:00.000Z"), "2627");
+    assert_eq!(derive_indian_financial_year("2027-03-31T23:59:59.999Z"), "2627");
 }

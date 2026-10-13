@@ -15,7 +15,9 @@ use malgudi_pos_native::reports::{
     PaymentSummaryReport, ProductSalesReport, ReportFilterPayload,
 };
 use malgudi_pos_native::sync;
-use malgudi_pos_native::transaction::{finalize_sale_atomic, FinalizeSalePayload, FinalizeSaleResult};
+use malgudi_pos_native::transaction::{
+    self, finalize_sale_atomic, FinalizeSalePayload, FinalizeSaleResult,
+};
 use rusqlite::Connection;
 
 pub struct AppState {
@@ -169,6 +171,11 @@ fn finalize_sale(
     // Dynamically assign series code matching the branch if default is used
     if payload.series_code.is_empty() || payload.series_code == "IB1" {
         payload.series_code = format!("{}1", session.branch_id);
+    }
+
+    // Dynamically assign financial year matching the business date
+    if payload.financial_year.is_empty() || payload.financial_year == "2627" {
+        payload.financial_year = transaction::derive_indian_financial_year(&payload.business_date);
     }
 
     finalize_sale_atomic(&mut conn, &payload, None)

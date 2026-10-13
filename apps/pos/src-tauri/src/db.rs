@@ -330,6 +330,10 @@ impl DatabaseManager {
         // Seed initial products if products table is empty
         Self::seed_initial_products_if_empty(conn)?;
 
+        // Ensure baseline stock is safely initialized for both branches (IB & MN)
+        Self::initialize_branch_stock_if_missing(conn, "IB")?;
+        Self::initialize_branch_stock_if_missing(conn, "MN")?;
+
         Ok(())
     }
 
@@ -340,26 +344,25 @@ impl DatabaseManager {
         }
 
         let now = "2026-10-12T00:00:00Z";
-        let branch = "IB";
 
         let default_items = [
-            ("prod_mysore_pak", "Special Ghee Mysore Pak", "நெய் மைசூர் பாகு", "MP-001", "cat_sweets", "PER_KG", "MG", 68000, 500, "21069099", 25_000_000i64, "MG"),
-            ("prod_laddu", "Madurai Nei Laddu", "மதுரை நெய் லட்டு", "SW-NL-002", "cat_sweets", "PER_KG", "MG", 44000, 500, "21069099", 30_000_000i64, "MG"),
-            ("prod_kaju_katli", "Royal Kaju Katli", "காஜூ கத்திலி", "SW-KK-003", "cat_sweets", "PER_KG", "MG", 95000, 500, "21069099", 15_000_000i64, "MG"),
-            ("prod_wheat_halwa", "Tirunelveli Wheat Halwa", "திருநெல்வேலி கோதுமை அல்வா", "SW-TH-004", "cat_sweets", "PER_KG", "MG", 48000, 500, "21069099", 20_000_000i64, "MG"),
-            ("prod_ribbon_pakoda", "Madurai Ribbon Pakoda", "ரிப்பன் பகோடா", "SAV-RP-005", "cat_savories", "PER_KG", "MG", 38000, 500, "21069099", 25_000_000i64, "MG"),
-            ("prod_kara_sev", "Sattur Spicy Kara Sev", "சாத்தூர் காராசேவ்", "SAV-KS-006", "cat_savories", "PER_KG", "MG", 36000, 500, "21069099", 25_000_000i64, "MG"),
-            ("prod_butter_murukku", "Traditional Butter Murukku", "வெண்ணெய் முறுக்கு", "SAV-BM-007", "cat_savories", "PER_KG", "MG", 42000, 500, "21069099", 20_000_000i64, "MG"),
-            ("prod_honey_bun", "Coconut Honey Sweet Bun", "தேங்காய் பன்", "BAK-HB-008", "cat_bakery", "PER_PIECE", "PIECE", 2500, 500, "19059010", 50i64, "PIECE"),
-            ("prod_butter_rusk", "Malgudi Crunchy Butter Rusk", "மால்குடி ரஸ்க் பாக்கெட்", "BAK-BR-009", "cat_bakery", "PER_PACK", "PACK", 4500, 500, "19059010", 40i64, "PACK"),
-            ("prod_badam_milk", "Kesar Badam Milk (Cold Bottle)", "குங்குமப்பூ பாதாம் பால்", "BEV-BM-010", "cat_beverages", "PER_PIECE", "PIECE", 6000, 500, "22029990", 60i64, "PIECE"),
-            ("prod_jigarthanda", "Famous Madurai Special Jigarthanda", "மதுரை ஸ்பெஷல் ஜிகர்தண்டா", "BEV-JT-011", "cat_beverages", "PER_PIECE", "PIECE", 8000, 500, "22029990", 50i64, "PIECE"),
-            ("prod_filter_coffee", "Madurai Degree Filter Coffee", "மதுரை டிகிரி பில்டர் காபி", "BEV-FC-012", "cat_beverages", "PER_PIECE", "PIECE", 3500, 500, "09012100", 100i64, "PIECE"),
+            ("prod_mysore_pak", "Special Ghee Mysore Pak", "நெய் மைசூர் பாகு", "MP-001", "cat_sweets", "PER_KG", "MG", 68000, 500, "21069099"),
+            ("prod_laddu", "Madurai Nei Laddu", "மதுரை நெய் லட்டு", "SW-NL-002", "cat_sweets", "PER_KG", "MG", 44000, 500, "21069099"),
+            ("prod_kaju_katli", "Royal Kaju Katli", "காஜூ கத்திலி", "SW-KK-003", "cat_sweets", "PER_KG", "MG", 95000, 500, "21069099"),
+            ("prod_wheat_halwa", "Tirunelveli Wheat Halwa", "திருநெல்வேலி கோதுமை அல்வா", "SW-TH-004", "cat_sweets", "PER_KG", "MG", 48000, 500, "21069099"),
+            ("prod_ribbon_pakoda", "Madurai Ribbon Pakoda", "ரிப்பன் பகோடா", "SAV-RP-005", "cat_savories", "PER_KG", "MG", 38000, 500, "21069099"),
+            ("prod_kara_sev", "Sattur Spicy Kara Sev", "சாத்தூர் காராசேவ்", "SAV-KS-006", "cat_savories", "PER_KG", "MG", 36000, 500, "21069099"),
+            ("prod_butter_murukku", "Traditional Butter Murukku", "வெண்ணெய் முறுக்கு", "SAV-BM-007", "cat_savories", "PER_KG", "MG", 42000, 500, "21069099"),
+            ("prod_honey_bun", "Coconut Honey Sweet Bun", "தேங்காய் பன்", "BAK-HB-008", "cat_bakery", "PER_PIECE", "PIECE", 2500, 500, "19059010"),
+            ("prod_butter_rusk", "Malgudi Crunchy Butter Rusk", "மால்குடி ரஸ்க் பாக்கெட்", "BAK-BR-009", "cat_bakery", "PER_PACK", "PACK", 4500, 500, "19059010"),
+            ("prod_badam_milk", "Kesar Badam Milk (Cold Bottle)", "குங்குமப்பூ பாதாம் பால்", "BEV-BM-010", "cat_beverages", "PER_PIECE", "PIECE", 6000, 500, "22029990"),
+            ("prod_jigarthanda", "Famous Madurai Special Jigarthanda", "மதுரை ஸ்பெஷல் ஜிகர்தண்டா", "BEV-JT-011", "cat_beverages", "PER_PIECE", "PIECE", 8000, 500, "22029990"),
+            ("prod_filter_coffee", "Madurai Degree Filter Coffee", "மதுரை டிகிரி பில்டர் காபி", "BEV-FC-012", "cat_beverages", "PER_PIECE", "PIECE", 3500, 500, "09012100"),
         ];
 
         for item in &default_items {
             conn.execute(
-                "INSERT INTO products (
+                "INSERT OR IGNORE INTO products (
                     id, name, tamil_name, sku, category_id, pricing_unit, inventory_unit,
                     pricing_basis, base_price_paise, tax_rate_bps, hsn_code, is_active, created_at, updated_at
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'TAX_INCLUSIVE', ?8, ?9, ?10, 1, ?11, ?11);",
@@ -367,22 +370,72 @@ impl DatabaseManager {
                     item.0, item.1, item.2, item.3, item.4, item.5, item.6, item.7, item.8, item.9, now
                 ],
             )?;
+        }
 
-            // Seed initial opening stock in stock_movements
-            let sm_id = format!("sm_opening_{}", item.0);
-            conn.execute(
-                "INSERT INTO stock_movements (
-                    id, branch_id, product_id, movement_type, quantity_delta, unit, reference_id, created_at, reason, actor_id
-                ) VALUES (?1, ?2, ?3, 'OPENING_STOCK', ?4, ?5, 'INITIAL_SEED', ?6, 'Initial System Stock Provisioning', 'system');",
-                rusqlite::params![sm_id, branch, item.0, item.10, item.11, now],
-            )?;
+        Ok(())
+    }
 
-            // Seed stock_balances
-            conn.execute(
-                "INSERT INTO stock_balances (branch_id, product_id, current_quantity, unit, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5);",
-                rusqlite::params![branch, item.0, item.10, item.11, now],
-            )?;
+    /// Initializes baseline stock for a specific branch idempotently.
+    /// - IB (Town Hall): Seeded with verified initial pilot inventory.
+    /// - MN (Mattuthavani): Initialized with 0 stock baseline without inventing fictitious inventory.
+    /// - Safe to run repeatedly: never overwrites existing non-zero or updated inventory balances.
+    pub fn initialize_branch_stock_if_missing(conn: &Connection, branch_id: &str) -> Result<()> {
+        let now = "2026-10-12T00:00:00Z";
+
+        let mut stmt = conn.prepare(
+            "SELECT id, inventory_unit FROM products WHERE is_active = 1;"
+        )?;
+        let products: Vec<(String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let ib_quantities: std::collections::HashMap<&str, i64> = [
+            ("prod_mysore_pak", 25_000_000i64),
+            ("prod_laddu", 30_000_000i64),
+            ("prod_kaju_katli", 15_000_000i64),
+            ("prod_wheat_halwa", 20_000_000i64),
+            ("prod_ribbon_pakoda", 25_000_000i64),
+            ("prod_kara_sev", 25_000_000i64),
+            ("prod_butter_murukku", 20_000_000i64),
+            ("prod_honey_bun", 50i64),
+            ("prod_butter_rusk", 40i64),
+            ("prod_badam_milk", 60i64),
+            ("prod_jigarthanda", 50i64),
+            ("prod_filter_coffee", 100i64),
+        ].into_iter().collect();
+
+        for (prod_id, unit) in &products {
+            let exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM stock_balances WHERE branch_id = ?1 AND product_id = ?2);",
+                [branch_id, prod_id],
+                |r| r.get(0),
+            ).unwrap_or(false);
+
+            if !exists {
+                let initial_qty = if branch_id == "IB" {
+                    *ib_quantities.get(prod_id.as_str()).unwrap_or(&0i64)
+                } else {
+                    0i64
+                };
+
+                conn.execute(
+                    "INSERT INTO stock_balances (branch_id, product_id, current_quantity, unit, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT (branch_id, product_id) DO NOTHING;",
+                    rusqlite::params![branch_id, prod_id, initial_qty, unit, now],
+                )?;
+
+                if initial_qty > 0 {
+                    let sm_id = format!("sm_opening_{}_{}", branch_id, prod_id);
+                    conn.execute(
+                        "INSERT OR IGNORE INTO stock_movements (
+                            id, branch_id, product_id, movement_type, quantity_delta, unit, reference_id, created_at, reason, actor_id
+                        ) VALUES (?1, ?2, ?3, 'OPENING_STOCK', ?4, ?5, 'INITIAL_SEED', ?6, 'Initial System Stock Provisioning', 'system');",
+                        rusqlite::params![sm_id, branch_id, prod_id, initial_qty, unit, now],
+                    )?;
+                }
+            }
         }
 
         Ok(())

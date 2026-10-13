@@ -1,14 +1,11 @@
 import { 
   PaymentTenderAllocation, 
-  PaymentMethod, 
   CashMovementType, 
   SaleStatus, 
-  SalePaymentStatus,
-  PaymentOutcome,
-  DigitalRefundRecord,
-  DigitalRefundStatus,
-  PaymentVerificationSource,
-  SettlementPolicy
+  SalePaymentStatus, 
+  PaymentOutcome, 
+  DigitalRefundRecord, 
+  SettlementPolicy 
 } from '@malgudi/contracts';
 
 export interface SplitTenderValidationResult {

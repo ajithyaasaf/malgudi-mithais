@@ -66,6 +66,22 @@ pub struct FinalizeSaleResult {
     pub payload_hash: String,
 }
 
+/// Derives the 4-digit Indian Financial Year code (e.g. "2627" for 2026-04-01 to 2027-03-31)
+/// from a date string (YYYY-MM-DD or ISO-8601).
+pub fn derive_indian_financial_year(date_str: &str) -> String {
+    let date_part = date_str.split('T').next().unwrap_or(date_str);
+    let parts: Vec<&str> = date_part.split('-').collect();
+    if parts.len() >= 2 {
+        if let (Ok(year), Ok(month)) = (parts[0].parse::<i32>(), parts[1].parse::<u32>()) {
+            let start_year = if month >= 4 { year } else { year - 1 };
+            let start_yy = (start_year % 100).abs();
+            let end_yy = ((start_year + 1) % 100).abs();
+            return format!("{:02}{:02}", start_yy, end_yy);
+        }
+    }
+    "2627".to_string()
+}
+
 /// Executes the 8-boundary atomic sale finalization holding a single SQLite transaction.
 pub fn finalize_sale_atomic(
     conn: &mut Connection,
@@ -74,11 +90,18 @@ pub fn finalize_sale_atomic(
 ) -> Result<FinalizeSaleResult> {
     let tx = conn.transaction()?;
 
+    // Derive financial year dynamically if missing or default
+    let fy = if payload.financial_year.is_empty() {
+        derive_indian_financial_year(&payload.business_date)
+    } else {
+        payload.financial_year.clone()
+    };
+
     // Boundary 1: Invoice sequence allocation & formatted invoice generation
     let next_seq: i64 = {
         tx.execute(
             "INSERT OR IGNORE INTO invoice_series (series_code, financial_year, current_seq) VALUES (?1, ?2, 0);",
-            [&payload.series_code, &payload.financial_year],
+            [&payload.series_code, &fy],
         )?;
         let mut seq_stmt = tx.prepare(
             "UPDATE invoice_series 
@@ -86,9 +109,9 @@ pub fn finalize_sale_atomic(
              WHERE series_code = ?1 AND financial_year = ?2 
              RETURNING current_seq;"
         )?;
-        seq_stmt.query_row([&payload.series_code, &payload.financial_year], |r| r.get(0))?
+        seq_stmt.query_row([&payload.series_code, &fy], |r| r.get(0))?
     };
-    let invoice_number = format!("{}/{}/{:06}", payload.series_code, payload.financial_year, next_seq);
+    let invoice_number = format!("{}/{}/{:06}", payload.series_code, fy, next_seq);
 
     if fault_boundary_to_abort == Some(1) {
         return Err(user_error("FAULT_INJECTION_BOUNDARY_1_ABORT"));

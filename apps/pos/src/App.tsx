@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { calculateLineItem } from '@malgudi/domain/pricing.js';
 import { validateAndReconcileSplitTender, evaluateTransactionPaymentLifecycle } from '@malgudi/domain/tender.js';
+import { getIndianFinancialYearCode } from '@malgudi/domain/aggregate.js';
 import {
   PaymentTenderAllocation,
   ProductDefinition,
@@ -57,6 +58,25 @@ export interface DBProductRecord {
   stock_unit: string;
   created_at: string;
   updated_at: string;
+}
+
+export function toProductDefinition(rec: DBProductRecord): ProductDefinition {
+  return {
+    id: rec.id,
+    name: rec.name,
+    tamil_name: rec.tamil_name,
+    sku: rec.sku,
+    barcode: rec.barcode ?? undefined,
+    category_id: rec.category_id,
+    pricing_unit: rec.pricing_unit,
+    inventory_unit: rec.inventory_unit,
+    pricing_basis: rec.pricing_basis,
+    base_price_paise: rec.base_price_paise,
+    piece_price_paise: rec.piece_price_paise ?? undefined,
+    tax_rate_bps: rec.tax_rate_bps,
+    hsn_code: rec.hsn_code,
+    is_active: rec.is_active,
+  };
 }
 
 export interface StockMovementRecord {
@@ -605,22 +625,15 @@ export const App: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
   // Weight Entry Dialog state (for PER_KG products)
-  const [weightModalProduct, setWeightModalProduct] = useState<ProductDefinition | null>(null);
+  const [weightModalProduct, setWeightModalProduct] = useState<DBProductRecord | null>(null);
   const [weightModalGrams, setWeightModalGrams] = useState<number>(375);
   const [weightModalUnit, setWeightModalUnit] = useState<'g' | 'kg'>('g');
   const [weightModalKgInput, setWeightModalKgInput] = useState<string>('0.375');
   const [weightModalCartIndex, setWeightModalCartIndex] = useState<number | null>(null);
 
   // --- 3. Active Order / Cart State ---
-  // Initial state has 375g Mysore Pak (₹255.00) matching existing regression test baseline
-  const [cartItems, setCartItems] = useState<SaleItemAllocation[]>(() => {
-    const initialItem = calculateLineItem({
-      product: defaultCatalog[0],
-      quantityInput: 375000,
-      weightInputSource: 'SCALE_AUTO',
-    });
-    return [initialItem];
-  });
+  // Cart initializes completely empty on clean application startup
+  const [cartItems, setCartItems] = useState<SaleItemAllocation[]>([]);
 
   const subtotalTaxablePaise = cartItems.reduce((sum, item) => sum + item.taxable_paise, 0);
   const totalCgstPaise = cartItems.reduce((sum, item) => sum + item.cgst_paise, 0);
@@ -631,10 +644,9 @@ export const App: React.FC = () => {
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState<boolean>(false);
   const [isUpiModalOpen, setIsUpiModalOpen] = useState<boolean>(false);
   const [upiSimulatedVerified, setUpiSimulatedVerified] = useState<boolean>(false);
-  const [cashTenderedRupees, setCashTenderedRupees] = useState<number>(200);
-  const [cashAllocatedRupees, setCashAllocatedRupees] = useState<number>(155);
+  const [cashTenderedRupees, setCashTenderedRupees] = useState<number>(0);
   const [upiAllocatedRupees, setUpiAllocatedRupees] = useState<number>(0);
-  const [upiVerificationSource, setUpiVerificationSource] = useState<PaymentVerificationSource>('GATEWAY_API');
+  const [upiVerificationSource] = useState<PaymentVerificationSource>('GATEWAY_API');
   const [settlementPolicy, setSettlementPolicy] = useState<SettlementPolicy>(() => {
     const saved = typeof window !== 'undefined' ? localStorage.getItem('malgudi_settlement_policy') : null;
     return (saved as SettlementPolicy) || 'STRICT_GATEWAY_ONLY';
@@ -676,7 +688,6 @@ export const App: React.FC = () => {
   // Open Payment Modal helper: synchronizes tender with current total
   const openPaymentModal = () => {
     const currentTotalRupees = Math.round(totalGrossPaise / 100);
-    setCashAllocatedRupees(currentTotalRupees);
     setCashTenderedRupees(currentTotalRupees);
     setUpiAllocatedRupees(0);
     setIsPaymentModalOpen(true);
@@ -1083,7 +1094,7 @@ export const App: React.FC = () => {
   };
 
   // --- Handlers: Product Management & Stock Operations ---
-  const refreshCatalog = async (token?: string, branch?: string) => {
+  const refreshCatalog = async (_token?: string, branch?: string) => {
     if (!isTauriRuntime) return;
     setCatalogLoading(true);
     try {
@@ -1544,7 +1555,7 @@ export const App: React.FC = () => {
     return list;
   }, [catalog, searchQuery, selectedCategory]);
 
-  const handleProductCardClick = (product: ProductDefinition) => {
+  const handleProductCardClick = (product: DBProductRecord) => {
     if (product.pricing_unit === 'PER_KG') {
       // Open weight entry modal for kg items
       const existingIdx = cartItems.findIndex(i => i.product_id === product.id);
@@ -1565,14 +1576,15 @@ export const App: React.FC = () => {
     }
   };
 
-  const addItemWithQuantity = (product: ProductDefinition, quantityInput: number, weightSource: WeightInputSource) => {
+  const addItemWithQuantity = (product: DBProductRecord, quantityInput: number, weightSource: WeightInputSource) => {
     try {
+      const prodDef = toProductDefinition(product);
       const existingIdx = cartItems.findIndex(i => i.product_id === product.id);
       if (existingIdx >= 0 && product.pricing_unit !== 'PER_KG') {
         // Increment piece count
         const updatedQty = cartItems[existingIdx].quantity_input + quantityInput;
         const updatedItem = calculateLineItem({
-          product,
+          product: prodDef,
           quantityInput: updatedQty,
           weightInputSource: weightSource,
         });
@@ -1583,7 +1595,7 @@ export const App: React.FC = () => {
         });
       } else {
         const newItem = calculateLineItem({
-          product,
+          product: prodDef,
           quantityInput: product.pricing_unit === 'PER_KG' ? quantityInput * 1000 : quantityInput,
           weightInputSource: weightSource,
         });
@@ -1599,9 +1611,9 @@ export const App: React.FC = () => {
     if (!weightModalProduct || weightModalGrams <= 0) return;
     try {
       const newItem = calculateLineItem({
-        product: weightModalProduct,
+        product: toProductDefinition(weightModalProduct),
         quantityInput: Math.round(weightModalGrams * 1000),
-        weightInputSource: 'SCALE_AUTO',
+        weightInputSource: 'MANUAL_KEYPAD',
       });
       if (weightModalCartIndex !== null && weightModalCartIndex >= 0) {
         setCartItems(prev => {
@@ -1626,6 +1638,7 @@ export const App: React.FC = () => {
     if (!product) return;
 
     try {
+      const prodDef = toProductDefinition(product);
       if (item.pricing_unit === 'PER_KG') {
         // Adjust weight by 50g
         const currentGrams = Math.round(item.quantity_input / 1000);
@@ -1635,7 +1648,7 @@ export const App: React.FC = () => {
           return;
         }
         const updated = calculateLineItem({
-          product,
+          product: prodDef,
           quantityInput: newGrams * 1000,
           weightInputSource: item.weight_input_source,
         });
@@ -1648,7 +1661,7 @@ export const App: React.FC = () => {
           return;
         }
         const updated = calculateLineItem({
-          product,
+          product: prodDef,
           quantityInput: newCount,
           weightInputSource: item.weight_input_source,
         });
@@ -1670,9 +1683,9 @@ export const App: React.FC = () => {
         return;
       }
       const updated = calculateLineItem({
-        product,
+        product: toProductDefinition(product),
         quantityInput: Math.round(grams * 1000),
-        weightInputSource: 'MANUAL_SCALE',
+        weightInputSource: 'MANUAL_KEYPAD',
       });
       setCartItems(prev => prev.map((it, idx) => (idx === index ? updated : it)));
       setErrorMessage(null);
@@ -1769,14 +1782,18 @@ export const App: React.FC = () => {
         throw new Error(`Settlement Blocked: ${lifecycleEval.errors.join('; ')}`);
       }
 
+      const businessDate = new Date().toISOString().split('T')[0];
+      const financialYearCode = getIndianFinancialYearCode(businessDate);
+      const seriesCode = `${currentSession.branch_id}1`;
+
       const payload = {
         branch_id: currentSession.branch_id,
         counter_id: currentSession.counter_id,
         terminal_id: currentSession.terminal_id,
         session_id: currentSession.session_id,
-        business_date: new Date().toISOString().split('T')[0],
-        series_code: 'IB1',
-        financial_year: '2627',
+        business_date: businessDate,
+        series_code: seriesCode,
+        financial_year: financialYearCode,
         tax_policy_version: '2026.1-TN',
         subtotal_taxable_paise: subtotalTaxablePaise,
         total_cgst_paise: totalCgstPaise,
@@ -1837,7 +1854,7 @@ export const App: React.FC = () => {
         const nextSeq = persistedHistory.length + 101;
         committedRecord = {
           sale_id: `dev_sim_${Date.now()}`,
-          invoice_number: `IB1/2627/${String(nextSeq).padStart(6, '0')} [SIM]`,
+          invoice_number: `${seriesCode}/${financialYearCode}/${String(nextSeq).padStart(6, '0')} [SIM]`,
           event_id: `evt_dev_${Date.now()}`,
           payload_hash: `sha256_${Date.now()}`,
           items_count: cartItems.length,
@@ -1856,7 +1873,6 @@ export const App: React.FC = () => {
       setIsUpiModalOpen(false);
       setUpiSimulatedVerified(false);
       setCartItems([]);
-      setCashAllocatedRupees(0);
       setCashTenderedRupees(0);
       setUpiAllocatedRupees(0);
       refreshCatalog(currentSession?.token);
@@ -3632,6 +3648,12 @@ export const App: React.FC = () => {
 
                 <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px dashed #ccc' }}>
                   <h4 style={{ margin: '0 0 6px 0', fontSize: 13, color: '#333' }}>Database Operations</h4>
+                  {dbInfo && (
+                    <div style={{ fontSize: 11, color: '#666', marginBottom: 8, lineHeight: 1.4 }}>
+                      <div>Status: <strong>{dbInfo.is_wal_active ? 'WAL Active' : 'Normal'}</strong></div>
+                      <div>Total Sales: {dbInfo.total_sales} | Pending Sync: {dbInfo.pending_sync_count}</div>
+                    </div>
+                  )}
                   <button
                     onClick={handleTriggerBackup}
                     style={{ width: '100%', padding: 8, backgroundColor: '#333', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
@@ -4017,7 +4039,7 @@ export const App: React.FC = () => {
               </div>
 
               <div style={{ fontSize: 12, color: '#666', whiteSpace: 'nowrap', fontWeight: 500 }}>
-                Showing <strong>{filteredProducts.length}</strong> items
+                {catalogLoading ? 'Refreshing catalog...' : <>Showing <strong>{filteredProducts.length}</strong> items</>}
               </div>
             </div>
 

@@ -219,3 +219,41 @@ export function recoverAggregate(
     hash: currentHash,
   };
 }
+
+/**
+ * Computes the official 4-digit Indian Financial Year code (YY(YY+1)) from a date string (YYYY-MM-DD) or Date object.
+ * In India, the financial year runs from April 1 to March 31 of the subsequent year.
+ * Examples:
+ *  - 2026-04-01 -> "2627"
+ *  - 2026-10-13 -> "2627"
+ *  - 2027-03-31 -> "2627"
+ *  - 2027-04-01 -> "2728"
+ *  - 2026-03-31 -> "2526"
+ */
+export function getIndianFinancialYearCode(dateOrIso: Date | string = new Date()): string {
+  let year: number;
+  let month: number;
+
+  if (typeof dateOrIso === 'string') {
+    const parts = dateOrIso.split('T')[0].split('-');
+    if (parts.length >= 2 && !isNaN(Number(parts[0])) && !isNaN(Number(parts[1]))) {
+      year = parseInt(parts[0], 10);
+      month = parseInt(parts[1], 10);
+    } else {
+      const d = new Date(dateOrIso);
+      year = d.getUTCFullYear();
+      month = d.getUTCMonth() + 1;
+    }
+  } else {
+    year = dateOrIso.getFullYear();
+    month = dateOrIso.getMonth() + 1;
+  }
+
+  const startYear = month >= 4 ? year : year - 1;
+  const endYear = startYear + 1;
+
+  const startStr = String(Math.abs(startYear) % 100).padStart(2, '0');
+  const endStr = String(Math.abs(endYear) % 100).padStart(2, '0');
+  return `${startStr}${endStr}`;
+}
+

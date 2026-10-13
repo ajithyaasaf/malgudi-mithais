@@ -4,6 +4,7 @@ import {
   computeAggregateSha256, 
   verifyAggregateInvariants,
   recoverAggregate,
+  getIndianFinancialYearCode,
   MockDatabaseState
 } from '../src/aggregate.js';
 import { CanonicalSaleAggregate } from '@malgudi/contracts';
@@ -295,4 +296,32 @@ describe('Canonical Aggregate Serialization & Invariant Verification', () => {
       }
     });
   });
+
+  describe('Indian Financial Year Code Generator (Rule 46 / Invoice Sequences)', () => {
+    it('resolves April 2026 through March 2027 to 2627', () => {
+      expect(getIndianFinancialYearCode('2026-04-01')).toBe('2627');
+      expect(getIndianFinancialYearCode('2026-10-13')).toBe('2627');
+      expect(getIndianFinancialYearCode('2026-12-31')).toBe('2627');
+      expect(getIndianFinancialYearCode('2027-01-01')).toBe('2627');
+      expect(getIndianFinancialYearCode('2027-03-31')).toBe('2627');
+    });
+
+    it('resolves March 31 boundary correctly to previous FY and April 1 to new FY', () => {
+      // Transition from FY 2025-26 to FY 2026-27
+      expect(getIndianFinancialYearCode('2026-03-31')).toBe('2526');
+      expect(getIndianFinancialYearCode('2026-04-01')).toBe('2627');
+
+      // Transition from FY 2026-27 to FY 2027-28
+      expect(getIndianFinancialYearCode('2027-03-31')).toBe('2627');
+      expect(getIndianFinancialYearCode('2027-04-01')).toBe('2728');
+    });
+
+    it('handles Date objects as well as ISO date strings', () => {
+      const march31 = new Date(2027, 2, 31); // March 31, 2027 (month index 2)
+      const april01 = new Date(2027, 3, 1);  // April 1, 2027 (month index 3)
+      expect(getIndianFinancialYearCode(march31)).toBe('2627');
+      expect(getIndianFinancialYearCode(april01)).toBe('2728');
+    });
+  });
 });
+
