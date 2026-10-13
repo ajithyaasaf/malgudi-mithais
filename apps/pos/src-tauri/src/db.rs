@@ -440,4 +440,37 @@ impl DatabaseManager {
 
         Ok(())
     }
+
+    /// Seeds or updates the default `owner` (ADMIN) and `staff` (CASHIER) accounts with PIN `123456`.
+    pub fn seed_default_users(conn: &Connection) -> Result<()> {
+        let now = "2026-10-13T00:00:00Z";
+        let pin_hash = match crate::auth::hash_pin("123456") {
+            Ok(h) => h,
+            Err(_) => return Ok(()),
+        };
+
+        // Ensure default owner account (Role: ADMIN, PIN: 123456)
+        let _ = conn.execute(
+            "INSERT INTO users (id, username, display_name, role, pin_hash, status, created_at, updated_at)
+             VALUES ('usr_owner_default', 'owner', 'Store Owner', 'ADMIN', ?1, 'ACTIVE', ?2, ?2)
+             ON CONFLICT(username) DO UPDATE SET pin_hash = excluded.pin_hash, status = 'ACTIVE';",
+            rusqlite::params![&pin_hash, now],
+        );
+
+        // Ensure default staff account (Role: CASHIER, PIN: 123456)
+        let _ = conn.execute(
+            "INSERT INTO users (id, username, display_name, role, pin_hash, status, created_at, updated_at)
+             VALUES ('usr_staff_default', 'staff', 'Billing Staff', 'CASHIER', ?1, 'ACTIVE', ?2, ?2)
+             ON CONFLICT(username) DO UPDATE SET pin_hash = excluded.pin_hash, status = 'ACTIVE';",
+            rusqlite::params![&pin_hash, now],
+        );
+
+        // Clear any prior lockouts for owner and staff
+        let _ = conn.execute(
+            "DELETE FROM auth_attempts WHERE username IN ('owner', 'staff');",
+            [],
+        );
+
+        Ok(())
+    }
 }

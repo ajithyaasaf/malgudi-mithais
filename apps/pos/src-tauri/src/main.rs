@@ -555,6 +555,9 @@ fn main() {
         }
     };
 
+    // Ensure default owner and staff accounts are seeded and ready
+    let _ = DatabaseManager::seed_default_users(&conn);
+
     // Launch autonomous background sync worker (runs periodically every 20 seconds)
     sync::start_background_sync_worker(db_path, 20);
 

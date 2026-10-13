@@ -167,9 +167,9 @@ pub fn get_branch_config(conn: &Connection) -> Result<BranchConfig, String> {
 
     let branch_name = get_val("branch_name").unwrap_or_else(|| {
         if branch_id == "IB" {
-            "Madurai Town Hall Main Store (IB)".to_string()
-        } else if branch_id == "MN" {
-            "Mattuthavani Bus Stand Branch (MN)".to_string()
+            "Iyer Bungalow Branch (IB)".to_string()
+        } else if branch_id == "UK" || branch_id == "MN" {
+            "Umachikulam Branch (UK)".to_string()
         } else {
             format!("Branch {}", branch_id)
         }

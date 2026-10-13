@@ -196,8 +196,11 @@ export class DurableSyncServer {
       );
 
       INSERT OR IGNORE INTO server_branches (id, code, name, address, city, gstin, is_active) VALUES
-        ('b_ib', 'IB', 'Madurai Town Hall Main Store', 'West Veli Street, Madurai', 'Madurai', '33AAAAA0000A1Z5', 1),
-        ('b_mn', 'MN', 'Mattuthavani Bus Stand Branch', 'Omni Bus Stand Concourse, Madurai', 'Madurai', '33AAAAA0000A1Z5', 1);
+        ('b_ib', 'IB', 'Iyer Bungalow Branch', 'Iyer Bungalow Main Road, Madurai', 'Madurai', '33AAAAA0000A1Z5', 1),
+        ('b_uk', 'UK', 'Umachikulam Branch', 'Umachikulam Main Road, Madurai', 'Madurai', '33AAAAA0000A1Z5', 1);
+
+      UPDATE server_branches SET name = 'Iyer Bungalow Branch', address = 'Iyer Bungalow Main Road, Madurai' WHERE code = 'IB';
+      UPDATE server_branches SET code = 'UK', name = 'Umachikulam Branch', address = 'Umachikulam Main Road, Madurai' WHERE code = 'MN';
 
       CREATE TABLE IF NOT EXISTS server_events (
         event_id TEXT PRIMARY KEY,

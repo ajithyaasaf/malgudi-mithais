@@ -316,7 +316,7 @@ export interface CatalogCategory {
   icon: string;
 }
 
-const catalogCategories: CatalogCategory[] = [
+const defaultCatalogCategories: CatalogCategory[] = [
   { id: 'all', name: 'All Items', tamil_name: 'அனைத்தும்', icon: '🍽️' },
   { id: 'cat_sweets', name: 'Sweets', tamil_name: 'இனிப்புகள்', icon: '🧈' },
   { id: 'cat_savories', name: 'Savouries', tamil_name: 'கார வகைகள்', icon: '🥨' },
@@ -573,7 +573,7 @@ export const App: React.FC = () => {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncConfigForm, setSyncConfigForm] = useState<BranchConfigState>({
     branch_id: 'IB',
-    branch_name: 'Madurai Town Hall Main Store (IB)',
+    branch_name: 'Iyer Bungalow Branch (IB)',
     terminal_id: 'T1',
     counter_id: 'C1',
     cloud_api_url: 'http://127.0.0.1:3000',
@@ -614,6 +614,23 @@ export const App: React.FC = () => {
   const [adjustReferenceId, setAdjustReferenceId] = useState<string>('');
   const [adjustError, setAdjustError] = useState<string | null>(null);
   const [stockMovements, setStockMovements] = useState<StockMovementRecord[]>([]);
+  const [adjustProductSearch, setAdjustProductSearch] = useState<string>('');
+
+  // Category State & Management
+  const [categories, setCategories] = useState<CatalogCategory[]>(() => {
+    try {
+      const saved = typeof window !== 'undefined' ? localStorage.getItem('pos_custom_categories') : null;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return defaultCatalogCategories;
+  });
+  const [isAddCategoryModalOpen, setIsAddCategoryModalOpen] = useState<boolean>(false);
+  const [newCatName, setNewCatName] = useState<string>('');
+  const [newCatTamilName, setNewCatTamilName] = useState<string>('');
+  const [newCatIcon, setNewCatIcon] = useState<string>('📦');
 
   // Void Sale Confirmation Modal state
   const [voidTargetSale, setVoidTargetSale] = useState<FinalizeSaleResult | null>(null);
@@ -643,13 +660,12 @@ export const App: React.FC = () => {
   // --- 4. Payment Tender Reconciliation State ---
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState<boolean>(false);
   const [isUpiModalOpen, setIsUpiModalOpen] = useState<boolean>(false);
-  const [upiSimulatedVerified, setUpiSimulatedVerified] = useState<boolean>(false);
+  const [upiSimulatedVerified, setUpiSimulatedVerified] = useState<boolean>(true);
   const [cashTenderedRupees, setCashTenderedRupees] = useState<number>(0);
   const [upiAllocatedRupees, setUpiAllocatedRupees] = useState<number>(0);
-  const [upiVerificationSource] = useState<PaymentVerificationSource>('GATEWAY_API');
+  const [upiVerificationSource] = useState<PaymentVerificationSource>('SOUNDBOX_BROADCAST');
   const [settlementPolicy, setSettlementPolicy] = useState<SettlementPolicy>(() => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem('malgudi_settlement_policy') : null;
-    return (saved as SettlementPolicy) || 'STRICT_GATEWAY_ONLY';
+    return 'CASHIER_ASSERTION_PERMITTED';
   });
 
   // Automatically derive cash allocated to bill (No cashier input needed)
@@ -856,18 +872,21 @@ export const App: React.FC = () => {
         setLoginPin('');
         loadSessionData(session.token);
       } else {
-        const role = loginUsername.toLowerCase().includes('admin') || loginUsername.toLowerCase() === 'owner' ? 'ADMIN' : 'CASHIER';
+        const isOwner = loginUsername.trim().toLowerCase() === 'owner' || loginUsername.toLowerCase().includes('admin');
+        const role = isOwner ? 'ADMIN' : 'CASHIER';
         const simSession: SessionInfo = {
           token: `sim_${loginUsername}_token`,
-          user_id: `usr_${loginUsername}`,
-          username: loginUsername,
-          display_name: loginUsername.toUpperCase(),
+          user_id: isOwner ? 'usr_owner_default' : 'usr_staff_default',
+          username: loginUsername.trim().toLowerCase(),
+          display_name: isOwner ? 'Store Owner' : 'Billing Staff',
           role,
           branch_id: syncConfig?.branch_id || 'IB',
           terminal_id: syncConfig?.terminal_id || 'T1',
           counter_id: syncConfig?.counter_id || 'C1',
           session_id: 'sess_madurai_01',
-          permissions: ['billing:finalize_sale', 'billing:reprint_receipt'],
+          permissions: isOwner
+            ? ['billing:finalize_sale', 'billing:reprint_receipt', 'users:manage', 'config:manage', 'reports:view']
+            : ['billing:finalize_sale', 'billing:reprint_receipt'],
           expires_at: new Date(Date.now() + 28800000).toISOString(),
         };
         setCurrentSession(simSession);
@@ -1126,6 +1145,31 @@ export const App: React.FC = () => {
     } catch (err: any) {
       console.error('Failed to load stock movements:', err);
     }
+  };
+
+  const handleAddCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCatName.trim()) return;
+    const catId = `cat_${newCatName.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now().toString().slice(-4)}`;
+    const newCat: CatalogCategory = {
+      id: catId,
+      name: newCatName.trim(),
+      tamil_name: newCatTamilName.trim() || newCatName.trim(),
+      icon: newCatIcon.trim() || '📦',
+    };
+    const updated = [...categories, newCat];
+    setCategories(updated);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('pos_custom_categories', JSON.stringify(updated));
+      } catch {}
+    }
+    setNewCatName('');
+    setNewCatTamilName('');
+    setNewCatIcon('📦');
+    setIsAddCategoryModalOpen(false);
+    setAdminActionMessage(`New category "${newCat.name}" added successfully.`);
+    setTimeout(() => setAdminActionMessage(null), 4000);
   };
 
   const handleOpenAddProduct = () => {
@@ -1557,19 +1601,8 @@ export const App: React.FC = () => {
 
   const handleProductCardClick = (product: DBProductRecord) => {
     if (product.pricing_unit === 'PER_KG') {
-      // Open weight entry modal for kg items
-      const existingIdx = cartItems.findIndex(i => i.product_id === product.id);
-      if (existingIdx >= 0) {
-        const g = Math.round(cartItems[existingIdx].quantity_input / 1000);
-        setWeightModalGrams(g);
-        setWeightModalKgInput((g / 1000).toString());
-        setWeightModalCartIndex(existingIdx);
-      } else {
-        setWeightModalGrams(375); // Default convenient sweet box weight
-        setWeightModalKgInput('0.375');
-        setWeightModalCartIndex(null);
-      }
-      setWeightModalProduct(product);
+      // Fast 1-tap addition of 250g standard sweet box — directly to cart, NO POPUP!
+      addItemWithQuantity(product, 250, 'MANUAL_KEYPAD');
     } else {
       // Piece / pack items: fast 1-tap addition
       addItemWithQuantity(product, 1, 'MANUAL_KEYPAD');
@@ -1580,9 +1613,10 @@ export const App: React.FC = () => {
     try {
       const prodDef = toProductDefinition(product);
       const existingIdx = cartItems.findIndex(i => i.product_id === product.id);
-      if (existingIdx >= 0 && product.pricing_unit !== 'PER_KG') {
-        // Increment piece count
-        const updatedQty = cartItems[existingIdx].quantity_input + quantityInput;
+      const addDelta = product.pricing_unit === 'PER_KG' ? quantityInput * 1000 : quantityInput;
+      if (existingIdx >= 0) {
+        // Increment quantity in cart (250g for weight items, 1 for unit items)
+        const updatedQty = cartItems[existingIdx].quantity_input + addDelta;
         const updatedItem = calculateLineItem({
           product: prodDef,
           quantityInput: updatedQty,
@@ -1596,7 +1630,7 @@ export const App: React.FC = () => {
       } else {
         const newItem = calculateLineItem({
           product: prodDef,
-          quantityInput: product.pricing_unit === 'PER_KG' ? quantityInput * 1000 : quantityInput,
+          quantityInput: addDelta,
           weightInputSource: weightSource,
         });
         setCartItems(prev => [...prev, newItem]);
@@ -2004,8 +2038,8 @@ export const App: React.FC = () => {
                   onChange={e => setProvBranchId(e.target.value)}
                   style={{ width: '100%', padding: '10px 8px', borderRadius: 6, border: '1px solid #ccc', fontSize: 12, boxSizing: 'border-box', backgroundColor: '#fff' }}
                 >
-                  <option value="IB">IB - Town Hall Main Store</option>
-                  <option value="MN">MN - Mattuthavani Bus Stand Branch</option>
+                  <option value="IB">IB - Iyer Bungalow Branch</option>
+                  <option value="UK">UK - Umachikulam Branch</option>
                 </select>
               </div>
               <div>
@@ -2056,6 +2090,65 @@ export const App: React.FC = () => {
           )}
 
           <form onSubmit={handleLogin}>
+            {/* Quick Demo Credentials */}
+            <div style={{ marginBottom: 16, padding: '10px 12px', backgroundColor: '#FFF3E0', border: '1px dashed #E65100', borderRadius: 8, textAlign: 'center' }}>
+              <div style={{ fontSize: 11, fontWeight: 'bold', color: '#B26A00', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                Quick Login Credentials
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginUsername('owner');
+                    setLoginPin('123456');
+                    setAuthError(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '8px 10px',
+                    backgroundColor: '#8B1E2D',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                  }}
+                >
+                  👑 Owner (123456)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginUsername('staff');
+                    setLoginPin('123456');
+                    setAuthError(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '8px 10px',
+                    backgroundColor: '#2E7D32',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                  }}
+                >
+                  👤 Staff (123456)
+                </button>
+              </div>
+            </div>
+
             <div style={{ marginBottom: 14 }}>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', color: '#1F1F1F', marginBottom: 4 }}>
                 Username / Employee ID
@@ -2066,7 +2159,7 @@ export const App: React.FC = () => {
                 onChange={e => setLoginUsername(e.target.value)}
                 required
                 autoFocus
-                placeholder="e.g. owner or anand"
+                placeholder="owner or staff"
                 style={{ width: '100%', padding: '10px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 15, boxSizing: 'border-box' }}
               />
             </div>
@@ -2331,7 +2424,7 @@ export const App: React.FC = () => {
                   ⚙️ Store Administration & Inventory Management
                 </h2>
                 <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-                  Branch: <strong style={{ color: '#8B1E2D' }}>Madurai Central Store (IB)</strong> | Multi-Branch Synchronized | Owner/Admin Security
+                  Branch: <strong style={{ color: '#8B1E2D' }}>{syncConfig?.branch_name || 'Iyer Bungalow Branch (IB)'}</strong> | Multi-Branch Synchronized | Owner/Admin Security
                 </div>
               </div>
 
@@ -2453,10 +2546,11 @@ export const App: React.FC = () => {
                       style={{ padding: '8px 10px', border: '1px solid #ccc', borderRadius: 6, fontSize: 13 }}
                     >
                       <option value="all">All Categories</option>
-                      <option value="cat_sweets">Sweets (இனிப்புகள்)</option>
-                      <option value="cat_savories">Savouries (கார வகைகள்)</option>
-                      <option value="cat_bakery">Bakery (பேக்கரி)</option>
-                      <option value="cat_beverages">Drinks & Dairy (பானங்கள்)</option>
+                      {categories.filter(c => c.id !== 'all').map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.icon} {c.name} ({c.tamil_name})
+                        </option>
+                      ))}
                     </select>
                     <select
                       value={ownerStatusFilter}
@@ -2469,24 +2563,47 @@ export const App: React.FC = () => {
                     </select>
                   </div>
 
-                  <button
-                    onClick={handleOpenAddProduct}
-                    style={{
-                      padding: '8px 16px',
-                      backgroundColor: '#8B1E2D',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 6,
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      fontSize: 13,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
-                  >
-                    <span>➕ Add New Product</span>
-                  </button>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddCategoryModalOpen(true)}
+                      style={{
+                        padding: '8px 14px',
+                        backgroundColor: '#FFFDF9',
+                        color: '#8B1E2D',
+                        border: '1.5px solid #8B1E2D',
+                        borderRadius: 6,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        fontSize: 13,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                      title="Add a custom product category"
+                    >
+                      <span>📁 Add Category</span>
+                    </button>
+
+                    <button
+                      onClick={handleOpenAddProduct}
+                      style={{
+                        padding: '8px 16px',
+                        backgroundColor: '#8B1E2D',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 6,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        fontSize: 13,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <span>➕ Add New Product</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div style={{ overflowX: 'auto', border: '1px solid #E5E5DF', borderRadius: 6 }}>
@@ -2783,7 +2900,7 @@ export const App: React.FC = () => {
                         📈 Sales, GST & Financial Reconciliation Reports
                       </h3>
                       <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
-                        Branch: <strong>Madurai Central Store (IB)</strong> • Authoritative SQLite Transaction Data
+                        Branch: <strong>{syncConfig?.branch_name || 'Iyer Bungalow Branch (IB)'}</strong> • Authoritative SQLite Transaction Data
                       </div>
                     </div>
 
@@ -3471,52 +3588,19 @@ export const App: React.FC = () => {
             {/* TAB 4: STAFF & SECURITY SETTINGS */}
             {ownerSubTab === 'users_security' && (
               <div>
-                {/* Store Terminal & Settlement Policy Configuration */}
+                {/* Store Terminal Payment Settlement Mode */}
             <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 16, marginBottom: 20 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                 <h3 style={{ fontSize: 14, margin: 0, color: '#8B1E2D', fontWeight: 800 }}>
-                  ⚙️ Terminal Payment & Settlement Policy (Owner Configuration)
+                  💳 Payment Settlement Mode (Retail Counter)
                 </h3>
-                <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 12, backgroundColor: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#EDE7F6' : '#E8F5E9', color: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#4527A0' : '#2E7D32', fontWeight: 'bold' }}>
-                  Active: {settlementPolicy === 'STRICT_GATEWAY_ONLY' ? 'Strict Gateway Webhook' : 'Soundbox Audio Permitted'}
+                <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 12, backgroundColor: '#E8F5E9', color: '#2E7D32', fontWeight: 'bold' }}>
+                  Active: Shop Soundbox & Cash
                 </span>
               </div>
-              <p style={{ fontSize: 12, color: '#666', margin: '0 0 12px 0', lineHeight: 1.4 }}>
-                Enforce how this terminal verifies UPI settlements. Cashiers at the billing screen cannot override this security policy.
+              <p style={{ fontSize: 12, color: '#666', margin: 0, lineHeight: 1.5 }}>
+                Standard retail operation active. Cashiers record payments as <strong>Cash</strong> or <strong>UPI</strong> based on physical counter soundbox voice alerts (PhonePe / GPay / Paytm). No external webhook delays or simulator buttons required.
               </p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: 12, backgroundColor: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#FBF4F5' : '#fff', border: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '1.5px solid #8B1E2D' : '1px solid #ddd', borderRadius: 6, cursor: 'pointer' }}>
-                  <input
-                    type="radio"
-                    name="ownerSettlementPolicy"
-                    checked={settlementPolicy === 'STRICT_GATEWAY_ONLY'}
-                    onChange={() => handleUpdateSettlementPolicy('STRICT_GATEWAY_ONLY')}
-                    style={{ marginTop: 2 }}
-                  />
-                  <div>
-                    <strong style={{ fontSize: 13, color: '#1F1F1F', display: 'block' }}>Strict Gateway Only (QR Webhook)</strong>
-                    <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
-                      Maximum security. Requires automated gateway webhook confirmation directly from the bank. Cashiers cannot manually confirm without webhook.
-                    </div>
-                  </div>
-                </label>
-
-                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: 12, backgroundColor: settlementPolicy === 'CASHIER_ASSERTION_PERMITTED' ? '#FBF4F5' : '#fff', border: settlementPolicy === 'CASHIER_ASSERTION_PERMITTED' ? '1.5px solid #8B1E2D' : '1px solid #ddd', borderRadius: 6, cursor: 'pointer' }}>
-                  <input
-                    type="radio"
-                    name="ownerSettlementPolicy"
-                    checked={settlementPolicy === 'CASHIER_ASSERTION_PERMITTED'}
-                    onChange={() => handleUpdateSettlementPolicy('CASHIER_ASSERTION_PERMITTED')}
-                    style={{ marginTop: 2 }}
-                  />
-                  <div>
-                    <strong style={{ fontSize: 13, color: '#1F1F1F', display: 'block' }}>Cashier Assertion (Soundbox Audio)</strong>
-                    <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
-                      Retail speed. Permits cashiers to confirm UPI payments after hearing the physical shop soundbox speaker (e.g. PhonePe / Paytm voice alert).
-                    </div>
-                  </div>
-                </label>
-              </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 24, marginBottom: 24 }}>
@@ -3831,10 +3915,10 @@ export const App: React.FC = () => {
                         value={syncConfigForm.branch_id}
                         onChange={e => setSyncConfigForm({ ...syncConfigForm, branch_id: e.target.value.toUpperCase() })}
                         required
-                        placeholder="e.g. IB or MN"
+                        placeholder="e.g. IB or UK"
                         style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontWeight: 700 }}
                       />
-                      <span style={{ fontSize: 11, color: '#777' }}>IB = Town Hall, MN = Mattuthavani</span>
+                      <span style={{ fontSize: 11, color: '#777' }}>IB = Iyer Bungalow, UK = Umachikulam</span>
                     </div>
 
                     <div>
@@ -3862,7 +3946,7 @@ export const App: React.FC = () => {
                       value={syncConfigForm.branch_name}
                       onChange={e => setSyncConfigForm({ ...syncConfigForm, branch_name: e.target.value })}
                       required
-                      placeholder="e.g. Madurai Town Hall Main Store"
+                      placeholder="e.g. Iyer Bungalow Branch (IB)"
                       style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
                     />
                   </div>
@@ -4054,7 +4138,7 @@ export const App: React.FC = () => {
                 flexShrink: 0,
               }}
             >
-              {catalogCategories.map(cat => {
+              {categories.map(cat => {
                 const isActive = selectedCategory === cat.id;
                 const count = cat.id === 'all' ? catalog.filter(p => p.is_active).length : catalog.filter(p => p.is_active && p.category_id === cat.id).length;
                 return (
@@ -5182,66 +5266,34 @@ export const App: React.FC = () => {
               <div style={{ fontSize: 12, color: '#78909C', marginTop: 2 }}>UPI ID: malgudi.mithais@icici</div>
             </div>
 
-            {/* Security Policy Badge */}
-            <div style={{ padding: 10, borderRadius: 6, marginBottom: 16, fontSize: 12, backgroundColor: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#EDE7F6' : '#E8F5E9', border: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '1px solid #D1C4E9' : '1px solid #C8E6C9', color: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#4527A0' : '#2E7D32' }}>
-              <strong>Enforced Policy:</strong> {settlementPolicy === 'STRICT_GATEWAY_ONLY' ? 'Strict Gateway Only (Dynamic Webhook)' : 'Soundbox Audio Permitted'}
-              <div style={{ fontSize: 11, marginTop: 2, opacity: 0.9 }}>
-                {settlementPolicy === 'STRICT_GATEWAY_ONLY'
-                  ? (upiSimulatedVerified ? '✓ Gateway webhook confirmed from bank' : 'Waiting for incoming payment webhook...')
-                  : 'Listen for Soundbox voice alert before confirming'}
+            {/* Simple Counter Soundbox & UPI Confirmation */}
+            <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13, backgroundColor: '#E8F5E9', border: '1px solid #C8E6C9', color: '#2E7D32', textAlign: 'center' }}>
+              <strong>🔊 Shop QR & Counter Soundbox Mode</strong>
+              <div style={{ fontSize: 12, marginTop: 4, color: '#388E3C' }}>
+                Customer scans the counter QR standee. Once payment is confirmed on your soundbox or phone, click below to finalize.
               </div>
             </div>
 
             {/* Action Buttons */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {settlementPolicy === 'STRICT_GATEWAY_ONLY' ? (
-                <>
-                  {!upiSimulatedVerified && (
-                    <button
-                      type="button"
-                      onClick={() => setUpiSimulatedVerified(true)}
-                      style={{ padding: '10px', backgroundColor: '#EDE7F6', color: '#4527A0', border: '1px dashed #7E57C2', borderRadius: 6, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
-                    >
-                      ⚡ Receive Bank Gateway Webhook Signal
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleQuickUpiFinalize}
-                    disabled={isFinalizing || !upiSimulatedVerified}
-                    style={{
-                      padding: '14px',
-                      backgroundColor: isFinalizing || !upiSimulatedVerified ? '#999' : '#1565C0',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 6,
-                      fontWeight: 'bold',
-                      fontSize: 15,
-                      cursor: isFinalizing || !upiSimulatedVerified ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    {isFinalizing ? 'Committing Sale...' : upiSimulatedVerified ? '✓ Finalize Sale (Gateway Verified)' : 'Awaiting Gateway Confirmation...'}
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleQuickUpiFinalize}
-                  disabled={isFinalizing}
-                  style={{
-                    padding: '14px',
-                    backgroundColor: isFinalizing ? '#999' : '#2E7D32',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: 6,
-                    fontWeight: 'bold',
-                    fontSize: 15,
-                    cursor: isFinalizing ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {isFinalizing ? 'Committing Sale...' : '✓ Soundbox Audio Confirmed — Finalize Sale'}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleQuickUpiFinalize}
+                disabled={isFinalizing}
+                style={{
+                  padding: '14px',
+                  backgroundColor: isFinalizing ? '#999' : '#1565C0',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 6,
+                  fontWeight: 'bold',
+                  fontSize: 16,
+                  cursor: isFinalizing ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 4px 10px rgba(21,101,192,0.25)',
+                }}
+              >
+                {isFinalizing ? 'Finalizing Bill...' : `✓ Acknowledge UPI & Finalize Bill (₹${(totalGrossPaise / 100).toFixed(2)})`}
+              </button>
 
               <button
                 type="button"
@@ -5498,6 +5550,113 @@ export const App: React.FC = () => {
       )}
 
       {/* ========================================================= */}
+      {/* MODAL 5B: Custom Category Add Dialog                       */}
+      {/* ========================================================= */}
+      {isAddCategoryModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1260, padding: 16 }}>
+          <div style={{ backgroundColor: '#fff', border: '2px solid #8B1E2D', borderRadius: 10, width: 440, maxWidth: '95vw', padding: 24, boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: 10, marginBottom: 16 }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 17, fontWeight: 800 }}>
+                  📁 Add New Category
+                </h3>
+                <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                  Create custom product category for billing & reports
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddCategoryModalOpen(false)}
+                style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleAddCategory}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                  Category Name (English) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  placeholder="e.g. Gift Hampers, Pickles, Dry Fruits"
+                  value={newCatName}
+                  onChange={e => setNewCatName(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                  Tamil Name (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. பரிசுப் பெட்டிகள், ஊறுகாய்"
+                  value={newCatTamilName}
+                  onChange={e => setNewCatTamilName(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                  Display Icon (Emoji)
+                </label>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    maxLength={3}
+                    value={newCatIcon}
+                    onChange={e => setNewCatIcon(e.target.value)}
+                    style={{ width: 60, padding: '8px 10px', fontSize: 20, textAlign: 'center', border: '1px solid #ccc', borderRadius: 6 }}
+                  />
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {['📦', '🎁', '🥒', '🥜', '🍪', '🥨', '🍯', '🍫', '☕'].map(icon => (
+                      <button
+                        key={icon}
+                        type="button"
+                        onClick={() => setNewCatIcon(icon)}
+                        style={{
+                          fontSize: 16,
+                          padding: '4px 8px',
+                          border: newCatIcon === icon ? '2px solid #8B1E2D' : '1px solid #ddd',
+                          backgroundColor: newCatIcon === icon ? '#FFF9F0' : '#f9f9f9',
+                          borderRadius: 4,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {icon}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', borderTop: '1px solid #eee', paddingTop: 14 }}>
+                <button
+                  type="button"
+                  onClick={() => setIsAddCategoryModalOpen(false)}
+                  style={{ padding: '8px 16px', border: '1px solid #ccc', borderRadius: 6, backgroundColor: '#f5f5f5', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{ padding: '8px 18px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 700, cursor: 'pointer', fontSize: 13 }}
+                >
+                  ✓ Save Category
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
       {/* MODAL 6: Product Add / Edit Dialog                         */}
       {/* ========================================================= */}
       {isProductModalOpen && (
@@ -5595,10 +5754,11 @@ export const App: React.FC = () => {
                     onChange={e => setProdFormCategory(e.target.value)}
                     style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', backgroundColor: '#fff' }}
                   >
-                    <option value="cat_sweets">Sweets (இனிப்புகள்)</option>
-                    <option value="cat_savories">Savouries (கார வகைகள்)</option>
-                    <option value="cat_bakery">Bakery (பேக்கரி)</option>
-                    <option value="cat_beverages">Drinks & Dairy (பானங்கள்)</option>
+                    {categories.filter(c => c.id !== 'all').map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.icon} {c.name} ({c.tamil_name})
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div>
@@ -5739,7 +5899,7 @@ export const App: React.FC = () => {
                   📊 Record Stock Movement / Adjustment
                 </h3>
                 <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
-                  Branch: Madurai Central Store (IB) • Mandatory Reason Audited
+                  Branch: {syncConfig?.branch_name || 'Iyer Bungalow Branch (IB)'} • Mandatory Reason Audited
                 </div>
               </div>
               <button
@@ -5758,26 +5918,89 @@ export const App: React.FC = () => {
             )}
 
             <form onSubmit={handleAdjustStockSubmit}>
-              <div style={{ marginBottom: 12 }}>
+              <div style={{ marginBottom: 14 }}>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
-                  Select Product *
+                  Select Product * (Search & Select)
                 </label>
-                <select
-                  value={adjustProductId}
-                  onChange={e => setAdjustProductId(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', backgroundColor: '#fff' }}
-                >
-                  {catalog.map(p => {
-                    const stockStr = p.pricing_unit === 'PER_KG'
-                      ? `${(p.current_stock / 1000000).toFixed(2)} kg`
-                      : `${p.current_stock} ${p.stock_unit.toLowerCase()}`;
-                    return (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.sku}) — Stock: {stockStr}
-                      </option>
-                    );
-                  })}
-                </select>
+                {/* Search input */}
+                <input
+                  type="text"
+                  placeholder="🔍 Type name, Tamil, or SKU to search products..."
+                  value={adjustProductSearch}
+                  onChange={e => setAdjustProductSearch(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    fontSize: 13,
+                    border: '1px solid #ccc',
+                    borderRadius: 6,
+                    boxSizing: 'border-box',
+                    marginBottom: 6,
+                  }}
+                />
+
+                {/* Filtered Search Results List */}
+                <div style={{ maxHeight: 150, overflowY: 'auto', border: '1px solid #E5E5DF', borderRadius: 6, backgroundColor: '#fff' }}>
+                  {catalog
+                    .filter(p => {
+                      if (!adjustProductSearch.trim()) return true;
+                      const q = adjustProductSearch.toLowerCase();
+                      return (
+                        p.name.toLowerCase().includes(q) ||
+                        p.tamil_name.toLowerCase().includes(q) ||
+                        p.sku.toLowerCase().includes(q)
+                      );
+                    })
+                    .map(p => {
+                      const isSelected = adjustProductId === p.id;
+                      const stockStr = p.pricing_unit === 'PER_KG'
+                        ? `${(p.current_stock / 1000000).toFixed(2)} kg`
+                        : `${p.current_stock} ${p.stock_unit.toLowerCase()}`;
+                      return (
+                        <div
+                          key={p.id}
+                          onClick={() => setAdjustProductId(p.id)}
+                          style={{
+                            padding: '8px 10px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            borderBottom: '1px solid #f0f0f0',
+                            backgroundColor: isSelected ? '#FFF3E0' : '#fff',
+                            fontWeight: isSelected ? 700 : 400,
+                          }}
+                        >
+                          <div>
+                            <span style={{ color: isSelected ? '#8B1E2D' : '#1F1F1F', fontSize: 13 }}>
+                              {isSelected ? '✓ ' : ''}{p.name}
+                            </span>
+                            <span style={{ fontSize: 11, color: '#666', marginLeft: 6 }}>
+                              ({p.sku}) • {p.tamil_name}
+                            </span>
+                          </div>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: '#2E7D32' }}>
+                            Stock: {stockStr}
+                          </span>
+                        </div>
+                      );
+                    })}
+                </div>
+
+                {/* Selected Product Banner */}
+                {(() => {
+                  const sel = catalog.find(p => p.id === adjustProductId);
+                  if (!sel) return null;
+                  const stockStr = sel.pricing_unit === 'PER_KG'
+                    ? `${(sel.current_stock / 1000000).toFixed(2)} kg`
+                    : `${sel.current_stock} ${sel.stock_unit.toLowerCase()}`;
+                  return (
+                    <div style={{ marginTop: 6, padding: '6px 10px', backgroundColor: '#F5F5F0', borderRadius: 6, fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
+                      <span><strong>Selected:</strong> {sel.name} ({sel.sku})</span>
+                      <span style={{ color: '#8B1E2D', fontWeight: 700 }}>Current: {stockStr}</span>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12, marginBottom: 12 }}>
