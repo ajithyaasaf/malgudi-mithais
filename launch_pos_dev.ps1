@@ -15,12 +15,21 @@ $env:WEBVIEW2_USER_DATA_FOLDER = $devWebviewDir
 $vitePort = Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue
 if (-not $vitePort) {
     Write-Host "Starting Vite frontend server on port 5173..." -ForegroundColor Yellow
-    Start-Process pnpm -ArgumentList "run dev" -WorkingDirectory (Join-Path $PSScriptRoot "apps\pos") -WindowStyle Hidden
-    for ($i = 0; $i -lt 15; $i++) {
+    Start-Process -FilePath "cmd.exe" -ArgumentList "/c pnpm --filter @malgudi/pos dev" -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
+    $ready = $false
+    for ($i = 0; $i -lt 30; $i++) {
         Start-Sleep -Milliseconds 400
-        if (Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue) { break }
+        if (Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue) {
+            $ready = $true
+            break
+        }
+    }
+    if (-not $ready) {
+        Write-Error "Vite frontend server failed to start on port 5173. Please run 'pnpm --filter @malgudi/pos dev' manually."
+        exit 1
     }
 }
+Write-Host "Vite dev server is ready on http://localhost:5173" -ForegroundColor Green
 
 $exe = Join-Path $PSScriptRoot "apps\pos\src-tauri\target\debug\malgudi-pos-native.exe"
 
