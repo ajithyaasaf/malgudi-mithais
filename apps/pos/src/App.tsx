@@ -679,6 +679,8 @@ export const App: React.FC = () => {
     cloud_api_key: 'malgudi_sync_secret_token_2026',
     auto_sync_enabled: true,
   });
+  const [isSavingBranchConfig, setIsSavingBranchConfig] = useState<boolean>(false);
+  const [branchConfigSavedSuccess, setBranchConfigSavedSuccess] = useState<boolean>(false);
 
   // --- Reports State ---
   const [reportsLoading, setReportsLoading] = useState<boolean>(false);
@@ -1387,8 +1389,13 @@ export const App: React.FC = () => {
       const cfg = await window.__TAURI__!.core.invoke<BranchConfigState>('sync_get_branch_config', {
         sessionToken: token || currentSession?.token || null,
       });
-      setSyncConfig(cfg);
-      setSyncConfigForm(cfg);
+      if (cfg) {
+        if (!cfg.branch_name || cfg.branch_name.includes('Town Hall') || cfg.branch_name.includes('West Veli')) {
+          cfg.branch_name = cfg.branch_id === 'UK' ? 'Umachikulam Branch (UK)' : 'Iyer Bungalow Branch (IB)';
+        }
+        setSyncConfig(cfg);
+        setSyncConfigForm(cfg);
+      }
     } catch (e) {
       console.error('Failed to get branch config:', e);
     }
@@ -1415,19 +1422,29 @@ export const App: React.FC = () => {
 
   const handleSaveBranchConfig = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isTauriRuntime || !currentSession || currentSession.role !== 'ADMIN') return;
+    if (!currentSession || currentSession.role !== 'ADMIN') return;
     setAdminActionMessage(null);
     setAdminActionError(null);
+    setIsSavingBranchConfig(true);
+    setBranchConfigSavedSuccess(false);
     try {
-      await window.__TAURI__!.core.invoke('sync_set_branch_config', {
-        sessionToken: currentSession.token,
-        config: syncConfigForm,
-      });
+      if (isTauriRuntime) {
+        await window.__TAURI__!.core.invoke('sync_set_branch_config', {
+          sessionToken: currentSession.token,
+          config: syncConfigForm,
+        });
+      }
+      // Tactical UX hold (450ms) to ensure smooth human-perceptible blur and loading indication
+      await new Promise(resolve => setTimeout(resolve, 450));
       setAdminActionMessage(`Branch configuration saved successfully! Active Identity: ${syncConfigForm.branch_id} - ${syncConfigForm.branch_name}`);
       await loadSyncConfig();
       await loadSyncStatus();
+      setBranchConfigSavedSuccess(true);
+      setTimeout(() => setBranchConfigSavedSuccess(false), 3500);
     } catch (err: any) {
       setAdminActionError('Failed to save branch config: ' + (err.message || String(err)));
+    } finally {
+      setIsSavingBranchConfig(false);
     }
   };
 
@@ -2588,9 +2605,11 @@ export const App: React.FC = () => {
           <div style={{ textAlign: 'center', marginBottom: 24 }}>
             <span style={{ fontSize: 32 }}>🏛️</span>
             <h1 style={{ color: '#8B1E2D', fontSize: 22, margin: '6px 0 2px 0' }}>மால்குடி மிட்டாய்ஸ்</h1>
-            <h2 style={{ color: '#6F1623', fontSize: 15, margin: 0, fontWeight: '600' }}>Malgudi Mithais POS • Sign In</h2>
-            <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-              {syncConfig ? `${syncConfig.branch_name} | Terminal ${syncConfig.terminal_id} | Counter ${syncConfig.counter_id}` : 'Madurai Branch | Terminal T1 | Counter C1'}
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, backgroundColor: '#FFF0F2', border: '1px solid #FFCDD2', borderRadius: 20, padding: '4px 12px', fontSize: 12, color: '#8B1E2D', fontWeight: 700 }}>
+                <span>📍</span>
+                <span>{syncConfig ? `${syncConfig.branch_name} • Terminal ${syncConfig.terminal_id}` : 'Iyer Bungalow Branch (IB) • Terminal T1'}</span>
+              </div>
             </div>
           </div>
 
@@ -4582,9 +4601,9 @@ export const App: React.FC = () => {
                   </div>
                   <button
                     type="submit"
-                    style={{ width: '100%', padding: 8, backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, fontWeight: 'bold', cursor: 'pointer' }}
+                    style={{ width: '100%', padding: '10px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 'bold', fontSize: 13, cursor: 'pointer' }}
                   >
-                    Create Staff Account
+                    👤 Create Staff Account
                   </button>
                 </form>
 
@@ -4598,7 +4617,7 @@ export const App: React.FC = () => {
                   )}
                   <button
                     onClick={handleTriggerBackup}
-                    style={{ width: '100%', padding: 8, backgroundColor: '#333', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
+                    style={{ width: '100%', padding: '10px', backgroundColor: '#333', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
                   >
                     📦 Create Hot Consistency Backup
                   </button>
@@ -4668,17 +4687,21 @@ export const App: React.FC = () => {
                   disabled={isSyncing}
                   style={{
                     padding: '10px 18px',
-                    backgroundColor: '#8B1E2D',
+                    backgroundColor: isSyncing ? '#7A1A28' : '#8B1E2D',
                     color: '#fff',
                     border: 'none',
                     borderRadius: 6,
                     fontWeight: 700,
                     fontSize: 13,
-                    cursor: isSyncing ? 'not-allowed' : 'pointer',
+                    cursor: isSyncing ? 'wait' : 'pointer',
+                    opacity: isSyncing ? 0.72 : 1,
+                    filter: isSyncing ? 'blur(0.8px)' : 'none',
+                    transform: isSyncing ? 'scale(0.98)' : 'scale(1)',
+                    transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 8,
-                    boxShadow: '0 2px 6px rgba(139,30,45,0.25)',
+                    boxShadow: isSyncing ? 'none' : '0 2px 6px rgba(139,30,45,0.25)',
                   }}
                 >
                   <span>{isSyncing ? '⏳' : '⚡'}</span>
@@ -4774,6 +4797,69 @@ export const App: React.FC = () => {
                 </p>
 
                 <form onSubmit={handleSaveBranchConfig}>
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 6 }}>
+                      ⚡ 1-Click Branch Quick Presets:
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSyncConfigForm({
+                            ...syncConfigForm,
+                            branch_id: 'IB',
+                            branch_name: 'Iyer Bungalow Branch (IB)',
+                          });
+                        }}
+                        style={{
+                          padding: '10px 12px',
+                          backgroundColor: syncConfigForm.branch_id === 'IB' ? '#8B1E2D' : '#F9F9F6',
+                          color: syncConfigForm.branch_id === 'IB' ? '#fff' : '#1F1F1F',
+                          border: syncConfigForm.branch_id === 'IB' ? '2px solid #8B1E2D' : '1px solid #D5D5CE',
+                          borderRadius: 8,
+                          cursor: 'pointer',
+                          fontWeight: 700,
+                          fontSize: 12,
+                          textAlign: 'left',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 2,
+                        }}
+                      >
+                        <span style={{ fontSize: 13 }}>📍 Branch 1: Iyer Bungalow</span>
+                        <span style={{ fontSize: 10, opacity: syncConfigForm.branch_id === 'IB' ? 0.85 : 0.6 }}>ID: IB • Natham Main Road</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSyncConfigForm({
+                            ...syncConfigForm,
+                            branch_id: 'UK',
+                            branch_name: 'Umachikulam Branch (UK)',
+                          });
+                        }}
+                        style={{
+                          padding: '10px 12px',
+                          backgroundColor: syncConfigForm.branch_id === 'UK' ? '#8B1E2D' : '#F9F9F6',
+                          color: syncConfigForm.branch_id === 'UK' ? '#fff' : '#1F1F1F',
+                          border: syncConfigForm.branch_id === 'UK' ? '2px solid #8B1E2D' : '1px solid #D5D5CE',
+                          borderRadius: 8,
+                          cursor: 'pointer',
+                          fontWeight: 700,
+                          fontSize: 12,
+                          textAlign: 'left',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 2,
+                        }}
+                      >
+                        <span style={{ fontSize: 13 }}>📍 Branch 2: Umachikulam</span>
+                        <span style={{ fontSize: 10, opacity: syncConfigForm.branch_id === 'UK' ? 0.85 : 0.6 }}>ID: UK • Main Road</span>
+                      </button>
+                    </div>
+                  </div>
+
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
                     <div>
                       <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
@@ -4877,21 +4963,67 @@ export const App: React.FC = () => {
                     </label>
                   </div>
 
-                  <button
-                    type="submit"
-                    style={{
-                      padding: '10px 20px',
-                      backgroundColor: '#8B1E2D',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 6,
-                      fontSize: 13,
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    💾 Save Branch Identity Configuration
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    <button
+                      type="submit"
+                      disabled={isSavingBranchConfig}
+                      style={{
+                        padding: '11px 22px',
+                        backgroundColor: branchConfigSavedSuccess ? '#2E7D32' : isSavingBranchConfig ? '#7A1A28' : '#8B1E2D',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 7,
+                        fontSize: 13,
+                        fontWeight: 700,
+                        cursor: isSavingBranchConfig ? 'wait' : 'pointer',
+                        opacity: isSavingBranchConfig ? 0.72 : 1,
+                        filter: isSavingBranchConfig ? 'blur(0.8px)' : 'none',
+                        transform: isSavingBranchConfig ? 'scale(0.98)' : 'scale(1)',
+                        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        boxShadow: isSavingBranchConfig ? 'none' : '0 2px 6px rgba(139,30,45,0.22)',
+                      }}
+                    >
+                      {isSavingBranchConfig ? (
+                        <>
+                          <span style={{ display: 'inline-block' }}>⏳</span>
+                          <span>Saving Configuration...</span>
+                        </>
+                      ) : branchConfigSavedSuccess ? (
+                        <>
+                          <span>✅</span>
+                          <span>Configuration Saved!</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>💾</span>
+                          <span>Save Branch Identity Configuration</span>
+                        </>
+                      )}
+                    </button>
+
+                    {branchConfigSavedSuccess && (
+                      <div
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          backgroundColor: '#E8F5E9',
+                          border: '1px solid #A5D6A7',
+                          borderRadius: 6,
+                          padding: '6px 12px',
+                          fontSize: 12,
+                          color: '#1B5E20',
+                          fontWeight: 700,
+                        }}
+                      >
+                        <span>🏢 Active:</span>
+                        <span>{syncConfigForm.branch_id} — {syncConfigForm.branch_name}</span>
+                      </div>
+                    )}
+                  </div>
                 </form>
               </div>
 
@@ -6212,9 +6344,14 @@ export const App: React.FC = () => {
                   fontSize: 16,
                   cursor: isFinalizing ? 'not-allowed' : 'pointer',
                   boxShadow: '0 4px 12px rgba(139,30,45,0.2)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
                 }}
               >
-                {isFinalizing ? 'Committing Atomic SQLite Transaction...' : 'Finalize Sale & Commit (Ctrl+Enter)'}
+                <span>{isFinalizing ? '⏳' : '⚡'}</span>
+                <span>{isFinalizing ? 'Committing Atomic SQLite Transaction...' : 'Finalize Sale & Commit (Ctrl+Enter)'}</span>
               </button>
               <button
                 type="button"
@@ -6554,10 +6691,25 @@ export const App: React.FC = () => {
             <div id="receipt-print-area">
               <div style={{ textAlign: 'center', borderBottom: '1px dashed #000', paddingBottom: 8, marginBottom: 8 }}>
                 <div style={{ fontWeight: 'bold', fontSize: 16, letterSpacing: 0.5 }}>MALGUDI MITHAIS</div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#333', marginTop: 2 }}>
-                  {activeReceiptModal.branch_name || 'Iyer Bungalow Branch (IB)'}
-                </div>
-                <div style={{ fontSize: 11, color: '#555' }}>West Veli Street, Madurai - 625001</div>
+                {(() => {
+                  const isUk =
+                    activeReceiptModal.branch_id === 'UK' ||
+                    (activeReceiptModal.branch_name || '').toLowerCase().includes('umachikulam');
+
+                  const branchTitle = isUk ? 'Umachikulam Branch (UK)' : 'Iyer Bungalow Branch (IB)';
+                  const branchAddress = isUk
+                    ? 'Main Road, Umachikulam, Madurai - 625014'
+                    : 'Natham Main Road, Iyer Bungalow, Madurai - 625014';
+
+                  return (
+                    <>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#333', marginTop: 2 }}>
+                        {branchTitle}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#555' }}>{branchAddress}</div>
+                    </>
+                  );
+                })()}
                 <div style={{ fontSize: 11, color: '#555' }}>GSTIN: 33AAAAA0000A1Z5</div>
               </div>
 

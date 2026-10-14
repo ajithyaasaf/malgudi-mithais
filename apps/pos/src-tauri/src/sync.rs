@@ -165,15 +165,26 @@ pub fn get_branch_config(conn: &Connection) -> Result<BranchConfig, String> {
         .or_else(|| get_val("branch_id"))
         .unwrap_or_else(|| "IB".to_string());
 
-    let branch_name = get_val("branch_name").unwrap_or_else(|| {
-        if branch_id == "IB" {
-            "Iyer Bungalow Branch (IB)".to_string()
-        } else if branch_id == "UK" || branch_id == "MN" {
-            "Umachikulam Branch (UK)".to_string()
-        } else {
-            format!("Branch {}", branch_id)
+    let raw_name = get_val("branch_name");
+    let branch_name = match raw_name {
+        Some(ref name) if !name.contains("Town Hall") && !name.contains("West Veli") && !name.trim().is_empty() => name.clone(),
+        _ => {
+            let correct = if branch_id == "IB" {
+                "Iyer Bungalow Branch (IB)".to_string()
+            } else if branch_id == "UK" || branch_id == "MN" {
+                "Umachikulam Branch (UK)".to_string()
+            } else {
+                format!("Branch {}", branch_id)
+            };
+            // Persist the corrected name so future lookups are clean
+            let _ = conn.execute(
+                "INSERT INTO terminal_trust_state (key, value) VALUES ('branch_name', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+                [&correct],
+            );
+            correct
         }
-    });
+    };
 
     let terminal_id = env_terminal
         .or_else(|| get_val("terminal_id"))
