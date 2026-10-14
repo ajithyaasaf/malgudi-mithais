@@ -1,0 +1,63 @@
+name: Release Malgudi Mithais POS
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Setup Rust Stable Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust Build Artifacts
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/pos/src-tauri
+
+      - name: Install Monorepo Dependencies
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build and Release Desktop POS (Tauri v2)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          projectPath: ./apps/pos
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Malgudi Mithais POS ${{ github.ref_name }}'
+          releaseBody: |
+            Automated production release for Malgudi Mithais Windows counter terminals.
+            
+            - **Target:** Windows x64 (NSIS Installer)
+            - **Signature:** Cryptographically signed with Ed25519 asymmetric key
+            - **OTA Updater:** Compatible with in-app background auto-updates
+          releaseDraft: false
+          prerelease: false

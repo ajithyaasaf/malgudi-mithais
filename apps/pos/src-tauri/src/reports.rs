@@ -1,6 +1,6 @@
+use crate::auth::validate_session_and_permission;
 use rusqlite::{Connection, Result};
 use serde::{Deserialize, Serialize};
-use crate::auth::validate_session_and_permission;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ReportFilterPayload {
@@ -267,10 +267,20 @@ pub fn get_daily_sales_report(
         filter_sql
     );
 
-    let mut active_stmt = conn.prepare(&active_query).map_err(|e| format!("Query error: {}", e))?;
+    let mut active_stmt = conn
+        .prepare(&active_query)
+        .map_err(|e| format!("Query error: {}", e))?;
     let active_row: (i64, i64, i64, i64, i64, i64, i64) = active_stmt
         .query_row(rusqlite::params_from_iter(params_vec.clone()), |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+            ))
         })
         .unwrap_or((0, 0, 0, 0, 0, 0, 0));
 
@@ -281,9 +291,13 @@ pub fn get_daily_sales_report(
          WHERE sale_status = 'VOIDED' {}",
         filter_sql
     );
-    let mut voided_stmt = conn.prepare(&voided_query).map_err(|e| format!("Query error: {}", e))?;
+    let mut voided_stmt = conn
+        .prepare(&voided_query)
+        .map_err(|e| format!("Query error: {}", e))?;
     let (voided_count, voided_amount): (i64, i64) = voided_stmt
-        .query_row(rusqlite::params_from_iter(params_vec.clone()), |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_row(rusqlite::params_from_iter(params_vec.clone()), |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
         .unwrap_or((0, 0));
 
     let active_bills_count = active_row.0;
@@ -314,7 +328,9 @@ pub fn get_daily_sales_report(
         filter_sql
     );
 
-    let mut daily_stmt = conn.prepare(&daily_query).map_err(|e| format!("Query error: {}", e))?;
+    let mut daily_stmt = conn
+        .prepare(&daily_query)
+        .map_err(|e| format!("Query error: {}", e))?;
     let daily_rows = daily_stmt
         .query_map(rusqlite::params_from_iter(params_vec), |r| {
             let gross: i64 = r.get(6)?;
@@ -378,10 +394,14 @@ pub fn get_payment_summary_report(
          JOIN sales s ON s.id = sp.sale_id
          WHERE s.sale_status != 'VOIDED' {}
          GROUP BY sp.payment_method;",
-        filter_sql.replace("business_date", "s.business_date").replace("branch_id", "s.branch_id")
+        filter_sql
+            .replace("business_date", "s.business_date")
+            .replace("branch_id", "s.branch_id")
     );
 
-    let mut pay_stmt = conn.prepare(&active_pay_query).map_err(|e| format!("Query error: {}", e))?;
+    let mut pay_stmt = conn
+        .prepare(&active_pay_query)
+        .map_err(|e| format!("Query error: {}", e))?;
     let rows = pay_stmt
         .query_map(rusqlite::params_from_iter(params_vec.clone()), |r| {
             Ok((
@@ -398,7 +418,8 @@ pub fn get_payment_summary_report(
     let mut total_cash_tendered_paise = 0;
     let mut total_change_returned_paise = 0;
     let mut total_upi_collected_paise = 0;
-    let mut method_map: std::collections::HashMap<String, (i64, i64)> = std::collections::HashMap::new();
+    let mut method_map: std::collections::HashMap<String, (i64, i64)> =
+        std::collections::HashMap::new();
 
     for r in rows {
         if let Ok((method, bills, collected, tendered, change)) = r {
@@ -423,12 +444,18 @@ pub fn get_payment_summary_report(
             GROUP BY s.id
             HAVING COUNT(DISTINCT sp.payment_method) > 1
         );",
-        filter_sql.replace("business_date", "s.business_date").replace("branch_id", "s.branch_id")
+        filter_sql
+            .replace("business_date", "s.business_date")
+            .replace("branch_id", "s.branch_id")
     );
 
-    let mut split_stmt = conn.prepare(&split_query).map_err(|e| format!("Query error: {}", e))?;
+    let mut split_stmt = conn
+        .prepare(&split_query)
+        .map_err(|e| format!("Query error: {}", e))?;
     let (total_split_bills_count, total_split_amount_paise): (i64, i64) = split_stmt
-        .query_row(rusqlite::params_from_iter(params_vec.clone()), |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_row(rusqlite::params_from_iter(params_vec.clone()), |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
         .unwrap_or((0, 0));
 
     // Refunds by payment method (from voided sales)
@@ -440,12 +467,18 @@ pub fn get_payment_summary_report(
          JOIN sales s ON s.id = sp.sale_id
          WHERE s.sale_status = 'VOIDED' {}
          GROUP BY sp.payment_method;",
-        filter_sql.replace("business_date", "s.business_date").replace("branch_id", "s.branch_id")
+        filter_sql
+            .replace("business_date", "s.business_date")
+            .replace("branch_id", "s.branch_id")
     );
 
-    let mut refund_stmt = conn.prepare(&refund_query).map_err(|e| format!("Query error: {}", e))?;
+    let mut refund_stmt = conn
+        .prepare(&refund_query)
+        .map_err(|e| format!("Query error: {}", e))?;
     let refund_rows = refund_stmt
-        .query_map(rusqlite::params_from_iter(params_vec), |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+        .query_map(rusqlite::params_from_iter(params_vec), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })
         .map_err(|e| format!("Query error: {}", e))?;
 
     let mut cash_refunds_paise = 0;
@@ -523,10 +556,14 @@ pub fn get_gst_report(
          WHERE s.sale_status != 'VOIDED' {}
          GROUP BY tax_rate
          ORDER BY tax_rate ASC;",
-        filter_sql.replace("business_date", "s.business_date").replace("branch_id", "s.branch_id")
+        filter_sql
+            .replace("business_date", "s.business_date")
+            .replace("branch_id", "s.branch_id")
     );
 
-    let mut slabs_stmt = conn.prepare(&slabs_query).map_err(|e| format!("Query error: {}", e))?;
+    let mut slabs_stmt = conn
+        .prepare(&slabs_query)
+        .map_err(|e| format!("Query error: {}", e))?;
     let slab_rows = slabs_stmt
         .query_map(rusqlite::params_from_iter(params_vec.clone()), |r| {
             Ok(GstSlabRow {
@@ -584,10 +621,14 @@ pub fn get_gst_report(
          FROM sales s
          WHERE 1=1 {}
          ORDER BY s.created_at DESC LIMIT 500;",
-        filter_sql.replace("business_date", "s.business_date").replace("branch_id", "s.branch_id")
+        filter_sql
+            .replace("business_date", "s.business_date")
+            .replace("branch_id", "s.branch_id")
     );
 
-    let mut inv_stmt = conn.prepare(&invoices_query).map_err(|e| format!("Query error: {}", e))?;
+    let mut inv_stmt = conn
+        .prepare(&invoices_query)
+        .map_err(|e| format!("Query error: {}", e))?;
     let inv_rows = inv_stmt
         .query_map(rusqlite::params_from_iter(params_vec), |r| {
             Ok(GstInvoiceRow {
@@ -655,10 +696,14 @@ pub fn get_product_sales_report(
          WHERE s.sale_status != 'VOIDED' {}
          GROUP BY si.product_id, si.pricing_unit
          ORDER BY gross_paise DESC;",
-        filter_sql.replace("business_date", "s.business_date").replace("branch_id", "s.branch_id")
+        filter_sql
+            .replace("business_date", "s.business_date")
+            .replace("branch_id", "s.branch_id")
     );
 
-    let mut prod_stmt = conn.prepare(&prod_query).map_err(|e| format!("Query error: {}", e))?;
+    let mut prod_stmt = conn
+        .prepare(&prod_query)
+        .map_err(|e| format!("Query error: {}", e))?;
     let rows = prod_stmt
         .query_map(rusqlite::params_from_iter(params_vec), |r| {
             let pid: String = r.get(0)?;
@@ -706,7 +751,8 @@ pub fn get_product_sales_report(
     let mut products = Vec::new();
     let mut total_revenue_paise: i64 = 0;
     let mut total_items_sold_count: i64 = 0;
-    let mut cat_map: std::collections::HashMap<String, (i64, i64, i64)> = std::collections::HashMap::new();
+    let mut cat_map: std::collections::HashMap<String, (i64, i64, i64)> =
+        std::collections::HashMap::new();
 
     for r in rows {
         if let Ok(item) = r {
@@ -725,7 +771,8 @@ pub fn get_product_sales_report(
     // Compute revenue share percentage
     for p in &mut products {
         if total_revenue_paise > 0 {
-            p.revenue_share_percent = ((p.gross_paise as f64 / total_revenue_paise as f64) * 1000.0).round() / 10.0;
+            p.revenue_share_percent =
+                ((p.gross_paise as f64 / total_revenue_paise as f64) * 1000.0).round() / 10.0;
         }
     }
 
@@ -807,7 +854,9 @@ pub fn get_cash_drawer_report(
 
     query.push_str(" ORDER BY created_at DESC;");
 
-    let mut stmt = conn.prepare(&query).map_err(|e| format!("Query error: {}", e))?;
+    let mut stmt = conn
+        .prepare(&query)
+        .map_err(|e| format!("Query error: {}", e))?;
     let rows = stmt
         .query_map(rusqlite::params_from_iter(params_vec), |r| {
             Ok(CashMovementRow {
@@ -863,7 +912,9 @@ pub fn get_cash_drawer_report(
         }
     }
 
-    let net_cash_change_paise = cash_sales_inflow_paise + manual_inflows_paise - cash_refunds_outflow_paise - manual_outflows_paise;
+    let net_cash_change_paise = cash_sales_inflow_paise + manual_inflows_paise
+        - cash_refunds_outflow_paise
+        - manual_outflows_paise;
     let expected_closing_cash_paise = opening_float_paise + net_cash_change_paise;
     let variance_paise = recorded_closing_cash_paise.map(|rec| rec - expected_closing_cash_paise);
 

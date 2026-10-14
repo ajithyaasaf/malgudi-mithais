@@ -72,3 +72,7 @@ Thumbs.db
 # Test & Coverage Outputs
 coverage/
 .nyc_output/
+
+# Tauri Signer Keys (Never commit private keys)
+.tauri/
+*.key

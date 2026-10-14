@@ -1,6 +1,8 @@
-use malgudi_pos_native::db::DatabaseManager;
-use malgudi_pos_native::transaction::{finalize_sale_atomic, FinalizeSalePayload, SaleItemInput, SalePaymentInput};
 use malgudi_pos_native::backup::BackupManager;
+use malgudi_pos_native::db::DatabaseManager;
+use malgudi_pos_native::transaction::{
+    finalize_sale_atomic, FinalizeSalePayload, SaleItemInput, SalePaymentInput,
+};
 use rusqlite::Connection;
 use std::fs::{self, File};
 use std::io::Write;
@@ -35,35 +37,31 @@ fn sample_sale(sale_id: &str, _invoice_num: &str) -> FinalizeSalePayload {
         total_igst_paise: 0,
         round_off_paise: 0,
         net_payable_paise: 10500,
-        items: vec![
-            SaleItemInput {
-                product_id: "prod_mysore_pak".into(),
-                quantity_input: 250000,
-                pricing_unit: "PER_KG".into(),
-                weight_input_source: "SCALE_AUTO".into(),
-                unit_price_paise: 40000,
-                taxable_paise: 10000,
-                cgst_paise: 250,
-                sgst_paise: 250,
-                igst_paise: 0,
-                total_tax_paise: 500,
-                gross_paise: 10500,
-                stock_deduction_delta: -250000,
-                stock_unit: "MG".into(),
-            }
-        ],
-        payments: vec![
-            SalePaymentInput {
-                payment_method: "CASH".into(),
-                allocated_amount_paise: 10500,
-                tendered_paise: 10500,
-                change_returned_paise: 0,
-                net_amount_paise: 10500,
-                outcome: "SUCCESS".into(),
-                reference_note: None,
-                verified_by_user_id: None,
-            }
-        ],
+        items: vec![SaleItemInput {
+            product_id: "prod_mysore_pak".into(),
+            quantity_input: 250000,
+            pricing_unit: "PER_KG".into(),
+            weight_input_source: "SCALE_AUTO".into(),
+            unit_price_paise: 40000,
+            taxable_paise: 10000,
+            cgst_paise: 250,
+            sgst_paise: 250,
+            igst_paise: 0,
+            total_tax_paise: 500,
+            gross_paise: 10500,
+            stock_deduction_delta: -250000,
+            stock_unit: "MG".into(),
+        }],
+        payments: vec![SalePaymentInput {
+            payment_method: "CASH".into(),
+            allocated_amount_paise: 10500,
+            tendered_paise: 10500,
+            change_returned_paise: 0,
+            net_amount_paise: 10500,
+            outcome: "SUCCESS".into(),
+            reference_note: None,
+            verified_by_user_id: None,
+        }],
         cashier_id: "usr_owner".into(),
         customer_name: None,
         customer_phone: None,
@@ -99,14 +97,20 @@ fn test_automated_backup_schedule_and_retention() {
             remaining.push(p);
         }
     }
-    assert_eq!(remaining.len(), 3, "Retention policy must prune backups exceeding max_retention=3");
+    assert_eq!(
+        remaining.len(),
+        3,
+        "Retention policy must prune backups exceeding max_retention=3"
+    );
 
     // Verify audit logs record SCHEDULED_BACKUP_SUCCESS
-    let audit_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM audit_events WHERE action = 'SCHEDULED_BACKUP_SUCCESS';",
-        [],
-        |r| r.get(0),
-    ).unwrap();
+    let audit_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'SCHEDULED_BACKUP_SUCCESS';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(audit_count, 5);
 
     let _ = fs::remove_file(db_path);
@@ -126,7 +130,8 @@ fn test_backup_restore_into_clean_installation_preserves_consistency() {
 
     // Take backup
     let backup_dir = Path::new("target/test_restore_snapshots");
-    let backup_path = BackupManager::create_consistent_backup(&conn, backup_dir, "clean_restore_snap").unwrap();
+    let backup_path =
+        BackupManager::create_consistent_backup(&conn, backup_dir, "clean_restore_snap").unwrap();
 
     // Target a fresh clean path
     let clean_install_path = Path::new("target/test_restore_dest.db");
@@ -144,23 +149,29 @@ fn test_backup_restore_into_clean_installation_preserves_consistency() {
     let restored_conn = DatabaseManager::open_writable(clean_install_path).unwrap();
 
     // Verify sales count and invoice numbers
-    let count: i64 = restored_conn.query_row("SELECT COUNT(*) FROM sales;", [], |r| r.get(0)).unwrap();
+    let count: i64 = restored_conn
+        .query_row("SELECT COUNT(*) FROM sales;", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(count, 2);
 
-    let (inv1, inv2): (String, String) = restored_conn.query_row(
-        "SELECT MIN(invoice_number), MAX(invoice_number) FROM sales;",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    ).unwrap();
+    let (inv1, inv2): (String, String) = restored_conn
+        .query_row(
+            "SELECT MIN(invoice_number), MAX(invoice_number) FROM sales;",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
     assert_eq!(inv1, res1.invoice_number);
     assert_eq!(inv2, res2.invoice_number);
 
     // Verify invoice series sequence was preserved
-    let current_seq: i64 = restored_conn.query_row(
-        "SELECT current_seq FROM invoice_series WHERE series_code = 'IB1';",
-        [],
-        |r| r.get(0),
-    ).unwrap();
+    let current_seq: i64 = restored_conn
+        .query_row(
+            "SELECT current_seq FROM invoice_series WHERE series_code = 'IB1';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(current_seq, 102);
 
     // Cleanup
@@ -180,15 +191,22 @@ fn test_corrupted_database_integrity_failure_preserves_file() {
     // Write corrupted non-SQLite garbage into file
     {
         let mut f = File::create(corrupt_path).unwrap();
-        f.write_all(b"CORRUPTED_NON_SQLITE_GARBAGE_PAYLOAD_1234567890").unwrap();
+        f.write_all(b"CORRUPTED_NON_SQLITE_GARBAGE_PAYLOAD_1234567890")
+            .unwrap();
     }
 
     // Attempting open_writable must detect corruption
     let open_res = DatabaseManager::open_writable(corrupt_path);
-    assert!(open_res.is_err(), "Corrupted database MUST fail integrity check on startup");
+    assert!(
+        open_res.is_err(),
+        "Corrupted database MUST fail integrity check on startup"
+    );
 
     // Verify the file was NOT deleted or overwritten
-    assert!(corrupt_path.exists(), "Original corrupted file must NOT be deleted or discarded");
+    assert!(
+        corrupt_path.exists(),
+        "Original corrupted file must NOT be deleted or discarded"
+    );
     let content = fs::read(corrupt_path).unwrap();
     assert_eq!(content, b"CORRUPTED_NON_SQLITE_GARBAGE_PAYLOAD_1234567890");
 

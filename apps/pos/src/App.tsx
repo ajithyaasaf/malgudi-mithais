@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { check as checkTauriUpdate, Update as TauriUpdate } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
 import { calculateLineItem } from '@malgudi/domain/pricing.js';
 import { validateAndReconcileSplitTender, evaluateTransactionPaymentLifecycle } from '@malgudi/domain/tender.js';
 import { getIndianFinancialYearCode } from '@malgudi/domain/aggregate.js';
@@ -663,10 +665,20 @@ export const App: React.FC = () => {
     }))
   );
   const [catalogLoading, setCatalogLoading] = useState<boolean>(false);
-  const [ownerSubTab, setOwnerSubTab] = useState<'products' | 'stock' | 'reports' | 'users_security' | 'cloud_sync'>('products');
+  const [ownerSubTab, setOwnerSubTab] = useState<'products' | 'stock' | 'reports' | 'users_security' | 'cloud_sync' | 'updates'>('products');
   const [ownerProductSearch, setOwnerProductSearch] = useState<string>('');
   const [ownerCategoryFilter, setOwnerCategoryFilter] = useState<string>('all');
   const [ownerStatusFilter, setOwnerStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+
+  // --- OTA Software Updates State (Tauri v2 Auto-Updater) ---
+  const [availableUpdate, setAvailableUpdate] = useState<TauriUpdate | null>(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
+  const [isUpdating, setIsUpdating] = useState<boolean>(false);
+  const [updateProgressPercent, setUpdateProgressPercent] = useState<number>(0);
+  const [updateStatusMessage, setUpdateStatusMessage] = useState<string | null>(null);
+  const [updateErrorMessage, setUpdateErrorMessage] = useState<string | null>(null);
+  const [updateBannerDismissed, setUpdateBannerDismissed] = useState<boolean>(false);
+  const currentAppVersion = '2.9.15';
 
   // --- Cloud Sync & Multi-Branch State ---
   const [syncStatus, setSyncStatus] = useState<SyncStatusState | null>(null);
@@ -1125,7 +1137,7 @@ export const App: React.FC = () => {
     }
   };
 
-  // Initial Authentication Check
+  // Initial Authentication Check & Quiet OTA Update Check
   useEffect(() => {
     checkInitialAuthStatus();
     loadSyncStatus();
@@ -1133,7 +1145,18 @@ export const App: React.FC = () => {
     const syncInterval = setInterval(() => {
       loadSyncStatus();
     }, 10000);
-    return () => clearInterval(syncInterval);
+
+    // Quiet background update check 5 seconds after startup
+    const updateTimer = setTimeout(() => {
+      if (isTauriRuntime) {
+        handleCheckForUpdates(true);
+      }
+    }, 5000);
+
+    return () => {
+      clearInterval(syncInterval);
+      clearTimeout(updateTimer);
+    };
   }, []);
 
   // Open Payment Modal helper: synchronizes tender with current total
@@ -1435,6 +1458,87 @@ export const App: React.FC = () => {
       }
     } catch (e) {
       console.error('Failed to get branch config:', e);
+    }
+  };
+
+  const handleCheckForUpdates = async (silent: boolean = false) => {
+    if (!isTauriRuntime) {
+      if (!silent) {
+        setUpdateErrorMessage(null);
+        setUpdateStatusMessage(`In-app background updates are active on the Windows Desktop App (.exe). Current web preview version: v${currentAppVersion}`);
+      }
+      return;
+    }
+
+    try {
+      setIsCheckingUpdate(true);
+      if (!silent) {
+        setUpdateErrorMessage(null);
+        setUpdateStatusMessage('Checking GitHub Releases for new Malgudi POS updates...');
+      }
+
+      const update = await checkTauriUpdate();
+      if (update) {
+        setAvailableUpdate(update);
+        setUpdateBannerDismissed(false);
+        setUpdateStatusMessage(`✨ New version v${update.version} is available! (Current: v${currentAppVersion})`);
+      } else {
+        setAvailableUpdate(null);
+        if (!silent) {
+          setUpdateStatusMessage(`Malgudi POS is up to date (v${currentAppVersion}). No newer version found.`);
+        }
+      }
+    } catch (err: any) {
+      console.warn('Tauri update check failed:', err);
+      if (!silent) {
+        setUpdateErrorMessage(
+          'Could not reach update server. Please verify internet connection. ' +
+          (err?.message || String(err))
+        );
+      }
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
+
+  const handleApplyUpdate = async () => {
+    if (!availableUpdate) return;
+    try {
+      setIsUpdating(true);
+      setUpdateErrorMessage(null);
+      setUpdateProgressPercent(0);
+      setUpdateStatusMessage('Connecting to GitHub Releases and verifying cryptographic signature...');
+
+      let downloaded = 0;
+      let total = 0;
+
+      await availableUpdate.downloadAndInstall((event) => {
+        if (event.event === 'Started') {
+          total = event.data.contentLength || 0;
+          setUpdateStatusMessage('Starting update download...');
+        } else if (event.event === 'Progress') {
+          downloaded += event.data.chunkLength;
+          if (total > 0) {
+            const pct = Math.min(100, Math.round((downloaded / total) * 100));
+            setUpdateProgressPercent(pct);
+            setUpdateStatusMessage(
+              `Downloading update: ${pct}% (${(downloaded / 1024 / 1024).toFixed(1)} MB / ${(total / 1024 / 1024).toFixed(1)} MB)...`
+            );
+          } else {
+            setUpdateStatusMessage(`Downloading update: ${(downloaded / 1024 / 1024).toFixed(1)} MB...`);
+          }
+        } else if (event.event === 'Finished') {
+          setUpdateProgressPercent(100);
+          setUpdateStatusMessage('Update downloaded and verified! Relaunching application...');
+        }
+      });
+
+      // Relaunch the application with the new version
+      await relaunch();
+    } catch (err: any) {
+      console.error('Update installation failed:', err);
+      setIsUpdating(false);
+      setUpdateErrorMessage('Update installation failed: ' + (err?.message || String(err)));
     }
   };
 
@@ -2900,6 +3004,37 @@ export const App: React.FC = () => {
             </button>
           </div>
 
+          {/* OTA Auto-Update Header Quick Indicator */}
+          {availableUpdate && (
+            <button
+              onClick={() => {
+                if (currentSession.role === 'ADMIN') {
+                  setActiveTab('owner_panel');
+                  setOwnerSubTab('updates');
+                } else {
+                  setUpdateBannerDismissed(false);
+                }
+              }}
+              title="Click to view and install software update"
+              style={{
+                backgroundColor: '#FEF3C7',
+                color: '#B45309',
+                border: '1px solid #F59E0B',
+                borderRadius: 4,
+                padding: '3px 8px',
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+              }}
+            >
+              <span>🚀</span>
+              <span>v{availableUpdate.version} Available</span>
+            </button>
+          )}
+
           {currentSession.role === 'ADMIN' && (
             <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden', border: '1px solid #8B1E2D' }}>
               <button
@@ -3007,6 +3142,94 @@ export const App: React.FC = () => {
         </div>
       </header>
 
+      {/* Global OTA Software Update Banner */}
+      {availableUpdate && !updateBannerDismissed && (
+        <div
+          style={{
+            backgroundColor: '#FFFBEB',
+            borderBottom: '2px solid #F59E0B',
+            padding: '8px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontSize: 13,
+            color: '#92400E',
+            fontWeight: 600,
+            zIndex: 20,
+            boxShadow: '0 2px 8px rgba(245, 158, 11, 0.15)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 18 }}>✨</span>
+            <span>
+              <strong>New Software Update Available:</strong> Malgudi Mithais POS <strong>v{availableUpdate.version}</strong> is ready (Current: v{currentAppVersion}).
+            </span>
+            {updateStatusMessage && (
+              <span style={{ fontSize: 12, color: '#B45309', fontWeight: 500 }}>
+                • {updateStatusMessage}
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {isUpdating ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 140, height: 8, backgroundColor: '#FDE68A', borderRadius: 4, overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      width: `${updateProgressPercent}%`,
+                      height: '100%',
+                      backgroundColor: '#D97706',
+                      transition: 'width 0.2s',
+                    }}
+                  />
+                </div>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#B45309' }}>
+                  {updateProgressPercent}%
+                </span>
+              </div>
+            ) : (
+              <>
+                <button
+                  onClick={handleApplyUpdate}
+                  style={{
+                    padding: '5px 14px',
+                    backgroundColor: '#D97706',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 4,
+                    fontWeight: 700,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    boxShadow: '0 2px 4px rgba(217, 119, 6, 0.3)',
+                  }}
+                >
+                  <span>⚡</span> Install & Restart
+                </button>
+                <button
+                  onClick={() => setUpdateBannerDismissed(true)}
+                  title="Dismiss banner for now"
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#92400E',
+                    cursor: 'pointer',
+                    fontSize: 14,
+                    padding: '3px 8px',
+                    fontWeight: 700,
+                  }}
+                >
+                  ✕
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 2. Owner Management Panel (When in Owner Tab) */}
       {activeTab === 'owner_panel' && currentSession.role === 'ADMIN' && (
         <div style={{ flex: 1, overflowY: 'auto', padding: 20, backgroundColor: '#F7F7F5' }}>
@@ -3102,12 +3325,33 @@ export const App: React.FC = () => {
                     fontSize: 12,
                     fontWeight: 700,
                     border: 'none',
+                    borderRight: '1px solid #8B1E2D',
                     backgroundColor: ownerSubTab === 'cloud_sync' ? '#8B1E2D' : '#FFF9F0',
                     color: ownerSubTab === 'cloud_sync' ? '#fff' : '#8B1E2D',
                     cursor: 'pointer',
                   }}
                 >
                   ☁️ Cloud Sync & Branches
+                </button>
+                <button
+                  onClick={() => setOwnerSubTab('updates')}
+                  style={{
+                    padding: '7px 16px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    border: 'none',
+                    backgroundColor: ownerSubTab === 'updates' ? '#8B1E2D' : '#FFF9F0',
+                    color: ownerSubTab === 'updates' ? '#fff' : '#8B1E2D',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <span>🔄 Software Updates</span>
+                  {availableUpdate && (
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#F59E0B' }} />
+                  )}
                 </button>
               </div>
             </div>
@@ -5098,6 +5342,190 @@ export const App: React.FC = () => {
                     <strong style={{ color: '#8B1E2D' }}>4. Idempotency & Tamper Protection:</strong><br/>
                     Central API computes SHA-256 payload hashes. Replaying lost ACKs is completely safe, while payload tampering triggers automatic HTTP 409 conflict rejection.
                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 6: SOFTWARE UPDATES & OTA DEPLOYMENT */}
+        {ownerSubTab === 'updates' && (
+          <div>
+            {/* Header & Quick Action */}
+            <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 20, marginBottom: 24 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                <div>
+                  <h3 style={{ fontSize: 16, margin: 0, color: '#8B1E2D', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>🔄</span> Software Updates & Over-The-Air (OTA) Deployment
+                  </h3>
+                  <p style={{ fontSize: 12, color: '#666', margin: '4px 0 0 0' }}>
+                    Cryptographically signed desktop updates for counter terminals. Changes download securely and relaunch with zero loss of offline sales or customer tabs.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => handleCheckForUpdates(false)}
+                  disabled={isCheckingUpdate || isUpdating}
+                  style={{
+                    padding: '10px 18px',
+                    backgroundColor: isCheckingUpdate ? '#7A1A28' : '#8B1E2D',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: isCheckingUpdate || isUpdating ? 'wait' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    boxShadow: '0 2px 6px rgba(139,30,45,0.25)',
+                    opacity: isCheckingUpdate || isUpdating ? 0.75 : 1,
+                  }}
+                >
+                  <span>{isCheckingUpdate ? '⏳' : '🔄'}</span>
+                  <span>{isCheckingUpdate ? 'Checking GitHub Releases...' : 'Check for Updates Now'}</span>
+                </button>
+              </div>
+
+              {/* Status Alert Messages */}
+              {updateErrorMessage && (
+                <div style={{ marginTop: 16, backgroundColor: '#FFEBEE', border: '1px solid #FFCDD2', color: '#C62828', padding: '12px 16px', borderRadius: 6, fontSize: 13 }}>
+                  <div style={{ fontWeight: 800, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>⚠️</span> Update Server Warning
+                  </div>
+                  <div>{updateErrorMessage}</div>
+                  <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                    Cashier billing operates normally in offline mode. Software updates require an active internet connection.
+                  </div>
+                </div>
+              )}
+
+              {updateStatusMessage && !updateErrorMessage && !availableUpdate && (
+                <div style={{ marginTop: 16, backgroundColor: '#E8F5E9', border: '1px solid #C8E6C9', color: '#2E7D32', padding: '12px 16px', borderRadius: 6, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 16 }}>✓</span>
+                  <span>{updateStatusMessage}</span>
+                </div>
+              )}
+
+              {/* Available Update Card */}
+              {availableUpdate && (
+                <div style={{ marginTop: 16, backgroundColor: '#FFFBEB', border: '1px solid #F59E0B', borderRadius: 8, padding: 18 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 20 }}>🚀</span>
+                        <h4 style={{ margin: 0, fontSize: 16, color: '#92400E', fontWeight: 800 }}>
+                          New Version Available: v{availableUpdate.version}
+                        </h4>
+                        <span style={{ backgroundColor: '#FEF3C7', color: '#B45309', padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 700, border: '1px solid #FDE68A' }}>
+                          Signed & Verified
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 12, color: '#78350F', marginTop: 6 }}>
+                        Current Version: <strong>v{currentAppVersion}</strong> | Published: {availableUpdate.date ? new Date(availableUpdate.date).toLocaleDateString() : 'Latest'}
+                      </div>
+                      {availableUpdate.body && (
+                        <div style={{ marginTop: 10, backgroundColor: '#FEF3C7', padding: '10px 14px', borderRadius: 6, fontSize: 12, color: '#78350F', whiteSpace: 'pre-line', border: '1px solid #FDE68A', maxHeight: 120, overflowY: 'auto' }}>
+                          <strong style={{ display: 'block', marginBottom: 4 }}>Release Notes:</strong>
+                          {availableUpdate.body}
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ minWidth: 220 }}>
+                      {isUpdating ? (
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: '#92400E', marginBottom: 6 }}>
+                            {updateStatusMessage || 'Downloading update...'}
+                          </div>
+                          <div style={{ width: '100%', height: 10, backgroundColor: '#FDE68A', borderRadius: 5, overflow: 'hidden' }}>
+                            <div style={{ width: `${updateProgressPercent}%`, height: '100%', backgroundColor: '#D97706', transition: 'width 0.2s' }} />
+                          </div>
+                          <div style={{ fontSize: 11, color: '#B45309', textAlign: 'right', marginTop: 4, fontWeight: 700 }}>
+                            {updateProgressPercent}% Completed
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={handleApplyUpdate}
+                          style={{
+                            width: '100%',
+                            padding: '12px 18px',
+                            backgroundColor: '#D97706',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: 6,
+                            fontWeight: 700,
+                            fontSize: 13,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 8,
+                            boxShadow: '0 2px 6px rgba(217,119,6,0.3)',
+                          }}
+                        >
+                          <span>⚡</span>
+                          <span>Download, Install & Relaunch</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Architecture & Verification Tiles */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
+              <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 18 }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <span>🔐</span> Cryptographic Signing
+                </div>
+                <div style={{ fontSize: 12, color: '#555', lineHeight: 1.5 }}>
+                  Every Windows executable is signed with an asymmetric Ed25519 private key. The desktop POS verifies the signature against the embedded public key (<code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>2BCE14FA4599BEAE</code>) before installing.
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 18 }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <span>🛡️</span> Zero Data Loss Guarantee
+                </div>
+                <div style={{ fontSize: 12, color: '#555', lineHeight: 1.5 }}>
+                  Updating the app replaces only the binary executable. Local SQLite database (<code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>malgudi.db</code>), outbox queue, products, and offline receipts are 100% persistent and untouched.
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 18 }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <span>🌐</span> GitHub Releases Channel
+                </div>
+                <div style={{ fontSize: 12, color: '#555', lineHeight: 1.5 }}>
+                  Endpoints point directly to GitHub Release assets via <code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>latest.json</code>. Terminal cashiers never need to download manual zip files or touch setup wizards.
+                </div>
+              </div>
+            </div>
+
+            {/* Version Information Details */}
+            <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 18 }}>
+              <h4 style={{ margin: '0 0 12px 0', fontSize: 14, color: '#8B1E2D', fontWeight: 800 }}>
+                Terminal Software Identity
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, fontSize: 12 }}>
+                <div>
+                  <span style={{ color: '#777', display: 'block' }}>Current App Version:</span>
+                  <strong style={{ color: '#8B1E2D', fontSize: 14 }}>v{currentAppVersion}</strong>
+                </div>
+                <div>
+                  <span style={{ color: '#777', display: 'block' }}>Target Platform:</span>
+                  <strong>Windows x86_64 (NSIS)</strong>
+                </div>
+                <div>
+                  <span style={{ color: '#777', display: 'block' }}>Active Branch:</span>
+                  <strong>{syncConfig?.branch_id || 'IB'} ({syncConfig?.branch_name || 'Iyer Bungalow'})</strong>
+                </div>
+                <div>
+                  <span style={{ color: '#777', display: 'block' }}>Terminal Counter:</span>
+                  <strong>{syncConfig?.terminal_id || 'T1'} / {syncConfig?.counter_id || 'C1'}</strong>
                 </div>
               </div>
             </div>

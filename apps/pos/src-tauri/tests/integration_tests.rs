@@ -1,6 +1,8 @@
-use malgudi_pos_native::db::DatabaseManager;
-use malgudi_pos_native::transaction::{finalize_sale_atomic, FinalizeSalePayload, SaleItemInput, SalePaymentInput};
 use malgudi_pos_native::backup::BackupManager;
+use malgudi_pos_native::db::DatabaseManager;
+use malgudi_pos_native::transaction::{
+    finalize_sale_atomic, FinalizeSalePayload, SaleItemInput, SalePaymentInput,
+};
 use rusqlite::Connection;
 use std::fs;
 use std::path::Path;
@@ -35,23 +37,21 @@ fn sample_payload() -> FinalizeSalePayload {
         total_igst_paise: 0,
         round_off_paise: 0,
         net_payable_paise: 25500,
-        items: vec![
-            SaleItemInput {
-                product_id: "prod_mysore_pak".into(),
-                quantity_input: 375000,
-                pricing_unit: "PER_KG".into(),
-                weight_input_source: "SCALE_AUTO".into(),
-                unit_price_paise: 68000,
-                taxable_paise: 24286,
-                cgst_paise: 607,
-                sgst_paise: 607,
-                igst_paise: 0,
-                total_tax_paise: 1214,
-                gross_paise: 25500,
-                stock_deduction_delta: -375000,
-                stock_unit: "MG".into(),
-            }
-        ],
+        items: vec![SaleItemInput {
+            product_id: "prod_mysore_pak".into(),
+            quantity_input: 375000,
+            pricing_unit: "PER_KG".into(),
+            weight_input_source: "SCALE_AUTO".into(),
+            unit_price_paise: 68000,
+            taxable_paise: 24286,
+            cgst_paise: 607,
+            sgst_paise: 607,
+            igst_paise: 0,
+            total_tax_paise: 1214,
+            gross_paise: 25500,
+            stock_deduction_delta: -375000,
+            stock_unit: "MG".into(),
+        }],
         payments: vec![
             SalePaymentInput {
                 payment_method: "CASH".into(),
@@ -72,7 +72,7 @@ fn sample_payload() -> FinalizeSalePayload {
                 outcome: "SUCCESS".into(),
                 reference_note: Some("Soundbox verified".into()),
                 verified_by_user_id: Some("cashier_01".into()),
-            }
+            },
         ],
         cashier_id: "cashier_01".into(),
         customer_name: None,
@@ -96,12 +96,28 @@ fn test_pre_commit_fault_injection_rolls_back_all_tables() {
     let recovery_conn = DatabaseManager::open_writable(db_path).expect("Reopen failed");
 
     // Assert that ZERO partial rows are visible in ANY table
-    let sales_count: i64 = recovery_conn.query_row("SELECT COUNT(*) FROM sales;", [], |r| r.get(0)).unwrap();
-    let items_count: i64 = recovery_conn.query_row("SELECT COUNT(*) FROM sale_items;", [], |r| r.get(0)).unwrap();
-    let payments_count: i64 = recovery_conn.query_row("SELECT COUNT(*) FROM sale_payments;", [], |r| r.get(0)).unwrap();
-    let cash_count: i64 = recovery_conn.query_row("SELECT COUNT(*) FROM cash_movements;", [], |r| r.get(0)).unwrap();
-    let stock_count: i64 = recovery_conn.query_row("SELECT COUNT(*) FROM stock_movements WHERE movement_type = 'SALE_DEDUCTION';", [], |r| r.get(0)).unwrap();
-    let outbox_count: i64 = recovery_conn.query_row("SELECT COUNT(*) FROM sync_outbox;", [], |r| r.get(0)).unwrap();
+    let sales_count: i64 = recovery_conn
+        .query_row("SELECT COUNT(*) FROM sales;", [], |r| r.get(0))
+        .unwrap();
+    let items_count: i64 = recovery_conn
+        .query_row("SELECT COUNT(*) FROM sale_items;", [], |r| r.get(0))
+        .unwrap();
+    let payments_count: i64 = recovery_conn
+        .query_row("SELECT COUNT(*) FROM sale_payments;", [], |r| r.get(0))
+        .unwrap();
+    let cash_count: i64 = recovery_conn
+        .query_row("SELECT COUNT(*) FROM cash_movements;", [], |r| r.get(0))
+        .unwrap();
+    let stock_count: i64 = recovery_conn
+        .query_row(
+            "SELECT COUNT(*) FROM stock_movements WHERE movement_type = 'SALE_DEDUCTION';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let outbox_count: i64 = recovery_conn
+        .query_row("SELECT COUNT(*) FROM sync_outbox;", [], |r| r.get(0))
+        .unwrap();
 
     assert_eq!(sales_count, 0, "No partial sales row should exist");
     assert_eq!(items_count, 0, "No partial items row should exist");
@@ -129,31 +145,44 @@ fn test_successful_commit_persists_complete_aggregate_and_sync_pending() {
     let recovery_conn = DatabaseManager::open_writable(db_path).expect("Reopen failed");
 
     // Verify all 8 tables are consistently populated
-    let sync_status: String = recovery_conn.query_row(
-        "SELECT sync_status FROM sales WHERE id = ?1;",
-        [&res.sale_id],
-        |r| r.get(0),
-    ).unwrap();
-    assert_eq!(sync_status, "SYNC_PENDING", "Must persist with sync_status = SYNC_PENDING");
+    let sync_status: String = recovery_conn
+        .query_row(
+            "SELECT sync_status FROM sales WHERE id = ?1;",
+            [&res.sale_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        sync_status, "SYNC_PENDING",
+        "Must persist with sync_status = SYNC_PENDING"
+    );
 
-    let cash_amount: i64 = recovery_conn.query_row(
-        "SELECT amount_paise FROM cash_movements WHERE reference_id = ?1;",
-        [&res.sale_id],
-        |r| r.get(0),
-    ).unwrap();
-    assert_eq!(cash_amount, 15500, "Cash drawer must increase by exactly net cash retained");
+    let cash_amount: i64 = recovery_conn
+        .query_row(
+            "SELECT amount_paise FROM cash_movements WHERE reference_id = ?1;",
+            [&res.sale_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        cash_amount, 15500,
+        "Cash drawer must increase by exactly net cash retained"
+    );
 
-    let stock_delta: i64 = recovery_conn.query_row(
-        "SELECT quantity_delta FROM stock_movements WHERE reference_id = ?1;",
-        [&res.sale_id],
-        |r| r.get(0),
-    ).unwrap();
+    let stock_delta: i64 = recovery_conn
+        .query_row(
+            "SELECT quantity_delta FROM stock_movements WHERE reference_id = ?1;",
+            [&res.sale_id],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(stock_delta, -375000, "Stock must decrease by 375,000 mg");
 
     // Test hot snapshot and staged restoration
     let backup_dir = Path::new("target/backups");
-    let backup_path = BackupManager::create_consistent_backup(&recovery_conn, backup_dir, "snapshot_test")
-        .expect("Consistent backup generation failed");
+    let backup_path =
+        BackupManager::create_consistent_backup(&recovery_conn, backup_dir, "snapshot_test")
+            .expect("Consistent backup generation failed");
     assert!(backup_path.exists());
 
     // Validate staged restore
@@ -182,7 +211,10 @@ fn test_backup_destination_already_exists_preserves_original() {
 
     // Second backup to same destination must fail and preserve existing file
     let second_res = BackupManager::create_consistent_backup(&conn, backup_dir, "safe_snapshot");
-    assert!(second_res.is_err(), "Must reject overwriting existing backup file");
+    assert!(
+        second_res.is_err(),
+        "Must reject overwriting existing backup file"
+    );
 
     // Clean up
     let _ = fs::remove_file(db_path);
@@ -199,8 +231,9 @@ fn test_staged_restore_quarantines_duplicate_invoice_and_fk_violation() {
 
     // Disable foreign keys and drop unique index to simulate damaged/collided database state
     conn.execute("PRAGMA foreign_keys = OFF;", []).unwrap();
-    conn.execute("DROP INDEX IF EXISTS idx_sales_invoice_unique;", []).unwrap();
-    
+    conn.execute("DROP INDEX IF EXISTS idx_sales_invoice_unique;", [])
+        .unwrap();
+
     // Inject two sales with the exact same invoice number
     conn.execute(
         "INSERT INTO sales (
@@ -216,9 +249,12 @@ fn test_staged_restore_quarantines_duplicate_invoice_and_fk_violation() {
 
     let report = BackupManager::validate_and_reconcile_staged_restore(corrupt_db_path)
         .expect("Recovery inspection completed");
-    
+
     // Must identify collision and flag as unsafe to restore
-    assert!(!report.is_safe_to_restore, "Restore with duplicate invoices must be marked unsafe");
+    assert!(
+        !report.is_safe_to_restore,
+        "Restore with duplicate invoices must be marked unsafe"
+    );
     assert_eq!(report.duplicate_invoices.len(), 1);
     assert_eq!(report.duplicate_invoices[0], "IB1/2627/000999");
     assert!(!report.rejected_or_quarantined_records.is_empty());
@@ -232,17 +268,26 @@ fn test_restore_database_preserves_existing_file() {
     let original_db = Path::new("target/test_restore_orig.db");
     let conn = setup_test_db(original_db);
     let backup_dir = Path::new("target/test_restore_backups");
-    let backup_path = BackupManager::create_consistent_backup(&conn, backup_dir, "valid_restore_src").unwrap();
+    let backup_path =
+        BackupManager::create_consistent_backup(&conn, backup_dir, "valid_restore_src").unwrap();
     drop(conn);
 
     let target_db = Path::new("target/test_restore_dest.db");
     let dest_conn = setup_test_db(target_db);
-    dest_conn.execute("INSERT INTO terminal_trust_state (key, value) VALUES ('preserve_me', 'true');", []).unwrap();
+    dest_conn
+        .execute(
+            "INSERT INTO terminal_trust_state (key, value) VALUES ('preserve_me', 'true');",
+            [],
+        )
+        .unwrap();
     drop(dest_conn);
 
     // Attempting restore with allow_destructive = false must fail
     let err_res = BackupManager::restore_database(&backup_path, target_db, false);
-    assert!(err_res.is_err(), "Must require allow_destructive to overwrite existing DB");
+    assert!(
+        err_res.is_err(),
+        "Must require allow_destructive to overwrite existing DB"
+    );
 
     // With allow_destructive = true, it must succeed and preserve the existing DB copy
     let ok_res = BackupManager::restore_database(&backup_path, target_db, true);
@@ -273,15 +318,35 @@ fn test_fault_injection_at_all_boundaries_guarantees_invoice_seq_rollback_and_ze
             [],
             |r| r.get(0),
         ).unwrap();
-        assert_eq!(seq, 100, "Boundary {} aborted but invoice sequence did not roll back!", boundary);
+        assert_eq!(
+            seq, 100,
+            "Boundary {} aborted but invoice sequence did not roll back!",
+            boundary
+        );
 
         // Verify zero partial rows in any table
-        let sales_count: i64 = conn.query_row("SELECT COUNT(*) FROM sales;", [], |r| r.get(0)).unwrap();
-        let items_count: i64 = conn.query_row("SELECT COUNT(*) FROM sale_items;", [], |r| r.get(0)).unwrap();
-        let payments_count: i64 = conn.query_row("SELECT COUNT(*) FROM sale_payments;", [], |r| r.get(0)).unwrap();
-        let cash_count: i64 = conn.query_row("SELECT COUNT(*) FROM cash_movements;", [], |r| r.get(0)).unwrap();
-        let stock_count: i64 = conn.query_row("SELECT COUNT(*) FROM stock_movements WHERE movement_type = 'SALE_DEDUCTION';", [], |r| r.get(0)).unwrap();
-        let outbox_count: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox;", [], |r| r.get(0)).unwrap();
+        let sales_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sales;", [], |r| r.get(0))
+            .unwrap();
+        let items_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sale_items;", [], |r| r.get(0))
+            .unwrap();
+        let payments_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sale_payments;", [], |r| r.get(0))
+            .unwrap();
+        let cash_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cash_movements;", [], |r| r.get(0))
+            .unwrap();
+        let stock_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM stock_movements WHERE movement_type = 'SALE_DEDUCTION';",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let outbox_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sync_outbox;", [], |r| r.get(0))
+            .unwrap();
 
         assert_eq!(sales_count, 0);
         assert_eq!(items_count, 0);
@@ -308,7 +373,10 @@ fn test_duplicate_sale_id_finalization_fails_atomically() {
 
     // Second finalization with duplicate sale_id must fail on PRIMARY KEY constraint
     let res2 = finalize_sale_atomic(&mut conn, &payload, None);
-    assert!(res2.is_err(), "Duplicate sale_id must be rejected by database");
+    assert!(
+        res2.is_err(),
+        "Duplicate sale_id must be rejected by database"
+    );
 
     // Clean up
     let _ = fs::remove_file(db_path);
@@ -323,12 +391,23 @@ fn test_read_only_pragma_and_write_rejection() {
     let ro_conn = DatabaseManager::open_read_only(db_path).expect("Failed to open read-only DB");
 
     // Verify PRAGMA query_only is active
-    let query_only: i64 = ro_conn.query_row("PRAGMA query_only;", [], |r| r.get(0)).unwrap();
-    assert_eq!(query_only, 1, "PRAGMA query_only must be 1 on read-only connection");
+    let query_only: i64 = ro_conn
+        .query_row("PRAGMA query_only;", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        query_only, 1,
+        "PRAGMA query_only must be 1 on read-only connection"
+    );
 
     // Verify writes are strictly rejected
-    let write_res = ro_conn.execute("INSERT INTO terminal_trust_state (key, value) VALUES ('k', 'v');", []);
-    assert!(write_res.is_err(), "Write on read-only connection must be rejected");
+    let write_res = ro_conn.execute(
+        "INSERT INTO terminal_trust_state (key, value) VALUES ('k', 'v');",
+        [],
+    );
+    assert!(
+        write_res.is_err(),
+        "Write on read-only connection must be rejected"
+    );
 
     let _ = fs::remove_file(db_path);
 }

@@ -4,7 +4,8 @@ use malgudi_pos_native::inventory::{
     self, AdjustStockPayload, CreateProductPayload, UpdateProductPayload, VoidSalePayload,
 };
 use malgudi_pos_native::transaction::{
-    derive_indian_financial_year, finalize_sale_atomic, FinalizeSalePayload, SaleItemInput, SalePaymentInput,
+    derive_indian_financial_year, finalize_sale_atomic, FinalizeSalePayload, SaleItemInput,
+    SalePaymentInput,
 };
 use rusqlite::Connection;
 use std::fs;
@@ -26,7 +27,10 @@ fn test_product_seeding_and_retrieval() {
     let products = inventory::list_products(&conn, "IB", false).expect("Failed to list products");
     assert_eq!(products.len(), 12, "Expected 12 default seeded products");
 
-    let mysore_pak = products.iter().find(|p| p.sku == "MP-001").expect("Mysore pak not found");
+    let mysore_pak = products
+        .iter()
+        .find(|p| p.sku == "MP-001")
+        .expect("Mysore pak not found");
     assert_eq!(mysore_pak.name, "Special Ghee Mysore Pak");
     assert_eq!(mysore_pak.tamil_name, "நெய் மைசூர் பாகு");
     assert_eq!(mysore_pak.pricing_unit, "PER_KG");
@@ -52,7 +56,8 @@ fn test_product_management_authorization() {
             counter_id: Some("C1".to_string()),
             session_id: Some("sess_01".to_string()),
         },
-    ).expect("Admin provisioning failed");
+    )
+    .expect("Admin provisioning failed");
 
     // 2. Create cashier
     let _cashier_rec = auth::create_user(
@@ -64,7 +69,8 @@ fn test_product_management_authorization() {
             role: "CASHIER".to_string(),
             pin: "123456".to_string(),
         },
-    ).expect("Cashier creation failed");
+    )
+    .expect("Cashier creation failed");
 
     let cashier_session = auth::login(
         &conn,
@@ -76,7 +82,8 @@ fn test_product_management_authorization() {
             counter_id: Some("C1".to_string()),
             session_id: Some("sess_01".to_string()),
         },
-    ).expect("Cashier login failed");
+    )
+    .expect("Cashier login failed");
 
     // 3. Cashier attempts to create a product -> MUST FAIL
     let new_prod_payload = CreateProductPayload {
@@ -96,7 +103,10 @@ fn test_product_management_authorization() {
     };
 
     let cashier_res = inventory::create_product(&conn, &cashier_session.token, &new_prod_payload);
-    assert!(cashier_res.is_err(), "Cashier should not be allowed to create products");
+    assert!(
+        cashier_res.is_err(),
+        "Cashier should not be allowed to create products"
+    );
     assert!(cashier_res.unwrap_err().contains("FORBIDDEN"));
 
     // 4. Admin creates the product -> MUST SUCCEED
@@ -122,7 +132,8 @@ fn test_product_management_authorization() {
         hsn_code: "21069099".to_string(),
         is_active: true,
     };
-    let cashier_update_res = inventory::update_product(&conn, &cashier_session.token, &update_payload);
+    let cashier_update_res =
+        inventory::update_product(&conn, &cashier_session.token, &update_payload);
     assert!(cashier_update_res.is_err());
     assert!(cashier_update_res.unwrap_err().contains("FORBIDDEN"));
 
@@ -142,7 +153,10 @@ fn test_product_management_authorization() {
 
     // Admin listing with include_inactive sees it
     let all_products = inventory::list_products(&conn, "IB", true).unwrap();
-    let found = all_products.iter().find(|p| p.id == created_prod.id).unwrap();
+    let found = all_products
+        .iter()
+        .find(|p| p.id == created_prod.id)
+        .unwrap();
     assert!(!found.is_active);
 }
 
@@ -162,7 +176,8 @@ fn test_stock_adjustments_mandatory_reason_and_audit() {
             counter_id: Some("C1".to_string()),
             session_id: Some("sess_01".to_string()),
         },
-    ).expect("Admin provisioning failed");
+    )
+    .expect("Admin provisioning failed");
 
     // 1. Adjustment without reason -> MUST FAIL with MANDATORY_FIELD
     let empty_reason_payload = AdjustStockPayload {
@@ -223,9 +238,11 @@ fn test_stock_adjustments_mandatory_reason_and_audit() {
         Some("prod_mysore_pak".to_string()),
         Some("IB".to_string()),
         50,
-    ).expect("Failed to list movements");
+    )
+    .expect("Failed to list movements");
 
-    assert!(movements.iter().any(|m| m.movement_type == "WASTAGE_DAMAGE" && m.reason.as_deref().unwrap().contains("Tray dropped")));
+    assert!(movements.iter().any(|m| m.movement_type == "WASTAGE_DAMAGE"
+        && m.reason.as_deref().unwrap().contains("Tray dropped")));
 }
 
 #[test]
@@ -244,7 +261,8 @@ fn test_billing_stock_deduction_and_void_reversal() {
             counter_id: Some("C1".to_string()),
             session_id: Some("sess_01".to_string()),
         },
-    ).expect("Admin provisioning failed");
+    )
+    .expect("Admin provisioning failed");
 
     // Initial stock for Mysore Pak is 25,000,000 mg (25 kg)
     let p_before = inventory::list_products(&conn, "IB", false).unwrap();
@@ -299,7 +317,8 @@ fn test_billing_stock_deduction_and_void_reversal() {
         customer_location: None,
     };
 
-    let sale_res = finalize_sale_atomic(&mut conn, &sale_payload, None).expect("Sale finalization failed");
+    let sale_res =
+        finalize_sale_atomic(&mut conn, &sale_payload, None).expect("Sale finalization failed");
 
     // Verify stock balance decremented by 500,000 mg -> 24,500,000 mg
     let p_after = inventory::list_products(&conn, "IB", false).unwrap();
@@ -325,15 +344,20 @@ fn test_billing_stock_deduction_and_void_reversal() {
 
     // Stock must be restored back to 25,000,000 mg!
     let p_restored = inventory::list_products(&conn, "IB", false).unwrap();
-    let mp_restored = p_restored.iter().find(|p| p.id == "prod_mysore_pak").unwrap();
+    let mp_restored = p_restored
+        .iter()
+        .find(|p| p.id == "prod_mysore_pak")
+        .unwrap();
     assert_eq!(mp_restored.current_stock, 25_000_000);
 
     // Sale status in DB must be VOIDED and REFUNDED
-    let (sale_status, payment_status): (String, String) = conn.query_row(
-        "SELECT sale_status, payment_status FROM sales WHERE id = ?1;",
-        [&sale_res.sale_id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    ).unwrap();
+    let (sale_status, payment_status): (String, String) = conn
+        .query_row(
+            "SELECT sale_status, payment_status FROM sales WHERE id = ?1;",
+            [&sale_res.sale_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
     assert_eq!(sale_status, "VOIDED");
     assert_eq!(payment_status, "REFUNDED");
 
@@ -346,7 +370,8 @@ fn test_billing_stock_deduction_and_void_reversal() {
     assert_eq!(refund_cm_count, 1);
 
     // Attempting to void the same sale again -> MUST BE REJECTED (Duplicate reversal rejected)
-    let dup_void_res = inventory::void_or_refund_sale(&mut conn, &admin_session.token, &void_payload);
+    let dup_void_res =
+        inventory::void_or_refund_sale(&mut conn, &admin_session.token, &void_payload);
     assert!(dup_void_res.is_err());
     assert!(dup_void_res.unwrap_err().contains("already voided"));
 }
@@ -357,30 +382,36 @@ fn test_multi_branch_stock_initialization_and_isolation() {
     let conn = setup_inventory_test_db(db_path);
 
     // 1. IB products should have initialized pilot quantities
-    let ib_products = inventory::list_products(&conn, "IB", false).expect("Failed to list IB products");
+    let ib_products =
+        inventory::list_products(&conn, "IB", false).expect("Failed to list IB products");
     assert_eq!(ib_products.len(), 12);
     let ib_mp = ib_products.iter().find(|p| p.sku == "MP-001").unwrap();
     assert_eq!(ib_mp.current_stock, 25_000_000); // 25 kg
 
     // 2. MN products must have baseline 0 quantity without fictitious inventory
-    let mn_products = inventory::list_products(&conn, "MN", false).expect("Failed to list MN products");
+    let mn_products =
+        inventory::list_products(&conn, "MN", false).expect("Failed to list MN products");
     assert_eq!(mn_products.len(), 12);
     let mn_mp = mn_products.iter().find(|p| p.sku == "MP-001").unwrap();
     assert_eq!(mn_mp.current_stock, 0); // 0 stock baseline
 
     // 3. Verify stock balances exist in table for both branches
-    let ib_balance_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM stock_balances WHERE branch_id = 'IB';",
-        [],
-        |r| r.get(0),
-    ).unwrap();
+    let ib_balance_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM stock_balances WHERE branch_id = 'IB';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(ib_balance_count, 12);
 
-    let mn_balance_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM stock_balances WHERE branch_id = 'MN';",
-        [],
-        |r| r.get(0),
-    ).unwrap();
+    let mn_balance_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM stock_balances WHERE branch_id = 'MN';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(mn_balance_count, 12);
 
     // 4. Stock isolation: Adjusting IB does not alter MN
@@ -410,8 +441,10 @@ fn test_repeated_initialization_idempotence() {
 
     // Re-run initialization for both branches 5 times
     for _ in 0..5 {
-        DatabaseManager::initialize_branch_stock_if_missing(&conn, "IB").expect("Re-init IB failed");
-        DatabaseManager::initialize_branch_stock_if_missing(&conn, "MN").expect("Re-init MN failed");
+        DatabaseManager::initialize_branch_stock_if_missing(&conn, "IB")
+            .expect("Re-init IB failed");
+        DatabaseManager::initialize_branch_stock_if_missing(&conn, "MN")
+            .expect("Re-init MN failed");
     }
 
     // Existing modified stock must NOT be overwritten!
@@ -420,7 +453,10 @@ fn test_repeated_initialization_idempotence() {
         [],
         |r| r.get(0),
     ).unwrap();
-    assert_eq!(ib_qty, 15_000_000, "Existing stock was unexpectedly overwritten on re-initialization");
+    assert_eq!(
+        ib_qty, 15_000_000,
+        "Existing stock was unexpectedly overwritten on re-initialization"
+    );
 }
 
 #[test]
@@ -437,6 +473,12 @@ fn test_indian_financial_year_derivation_boundaries() {
     assert_eq!(derive_indian_financial_year("2028-04-01"), "2829");
 
     // ISO timestamp parsing
-    assert_eq!(derive_indian_financial_year("2026-04-01T10:30:00.000Z"), "2627");
-    assert_eq!(derive_indian_financial_year("2027-03-31T23:59:59.999Z"), "2627");
+    assert_eq!(
+        derive_indian_financial_year("2026-04-01T10:30:00.000Z"),
+        "2627"
+    );
+    assert_eq!(
+        derive_indian_financial_year("2027-03-31T23:59:59.999Z"),
+        "2627"
+    );
 }

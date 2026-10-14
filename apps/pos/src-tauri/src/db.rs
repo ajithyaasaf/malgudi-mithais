@@ -12,15 +12,15 @@ impl DatabaseManager {
              PRAGMA synchronous = FULL;
              PRAGMA foreign_keys = ON;
              PRAGMA busy_timeout = 5000;
-             PRAGMA wal_autocheckpoint = 1000;"
+             PRAGMA wal_autocheckpoint = 1000;",
         )?;
         if !Self::verify_integrity(&conn)? {
-            return Err(rusqlite::Error::ToSqlConversionFailure(
-                Box::new(std::io::Error::new(
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "Database integrity check failed: PRAGMA integrity_check != ok",
-                ))
-            ));
+                ),
+            )));
         }
         Self::apply_migrations(&conn)?;
         Ok(conn)
@@ -36,7 +36,7 @@ impl DatabaseManager {
         conn.execute_batch(
             "PRAGMA query_only = ON;
              PRAGMA foreign_keys = ON;
-             PRAGMA busy_timeout = 5000;"
+             PRAGMA busy_timeout = 5000;",
         )?;
         Ok(conn)
     }
@@ -326,7 +326,10 @@ impl DatabaseManager {
                 .filter_map(|r| r.ok())
                 .collect();
             if !cols.contains(&"version".to_string()) {
-                conn.execute("ALTER TABLE products ADD COLUMN version INTEGER NOT NULL DEFAULT 1;", [])?;
+                conn.execute(
+                    "ALTER TABLE products ADD COLUMN version INTEGER NOT NULL DEFAULT 1;",
+                    [],
+                )?;
             }
         }
 
@@ -359,7 +362,9 @@ impl DatabaseManager {
     }
 
     fn seed_initial_products_if_empty(conn: &Connection) -> Result<()> {
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM products;", [], |r| r.get(0)).unwrap_or(0);
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM products;", [], |r| r.get(0))
+            .unwrap_or(0);
         if count > 0 {
             return Ok(());
         }
@@ -367,18 +372,150 @@ impl DatabaseManager {
         let now = "2026-10-12T00:00:00Z";
 
         let default_items = [
-            ("prod_mysore_pak", "Special Ghee Mysore Pak", "நெய் மைசூர் பாகு", "MP-001", "cat_sweets", "PER_KG", "MG", 68000, 500, "21069099"),
-            ("prod_laddu", "Madurai Nei Laddu", "மதுரை நெய் லட்டு", "SW-NL-002", "cat_sweets", "PER_KG", "MG", 44000, 500, "21069099"),
-            ("prod_kaju_katli", "Royal Kaju Katli", "காஜூ கத்திலி", "SW-KK-003", "cat_sweets", "PER_KG", "MG", 95000, 500, "21069099"),
-            ("prod_wheat_halwa", "Tirunelveli Wheat Halwa", "திருநெல்வேலி கோதுமை அல்வா", "SW-TH-004", "cat_sweets", "PER_KG", "MG", 48000, 500, "21069099"),
-            ("prod_ribbon_pakoda", "Madurai Ribbon Pakoda", "ரிப்பன் பகோடா", "SAV-RP-005", "cat_savories", "PER_KG", "MG", 38000, 500, "21069099"),
-            ("prod_kara_sev", "Sattur Spicy Kara Sev", "சாத்தூர் காராசேவ்", "SAV-KS-006", "cat_savories", "PER_KG", "MG", 36000, 500, "21069099"),
-            ("prod_butter_murukku", "Traditional Butter Murukku", "வெண்ணெய் முறுக்கு", "SAV-BM-007", "cat_savories", "PER_KG", "MG", 42000, 500, "21069099"),
-            ("prod_honey_bun", "Coconut Honey Sweet Bun", "தேங்காய் பன்", "BAK-HB-008", "cat_bakery", "PER_PIECE", "PIECE", 2500, 500, "19059010"),
-            ("prod_butter_rusk", "Malgudi Crunchy Butter Rusk", "மால்குடி ரஸ்க் பாக்கெட்", "BAK-BR-009", "cat_bakery", "PER_PACK", "PACK", 4500, 500, "19059010"),
-            ("prod_badam_milk", "Kesar Badam Milk (Cold Bottle)", "குங்குமப்பூ பாதாம் பால்", "BEV-BM-010", "cat_beverages", "PER_PIECE", "PIECE", 6000, 500, "22029990"),
-            ("prod_jigarthanda", "Famous Madurai Special Jigarthanda", "மதுரை ஸ்பெஷல் ஜிகர்தண்டா", "BEV-JT-011", "cat_beverages", "PER_PIECE", "PIECE", 8000, 500, "22029990"),
-            ("prod_filter_coffee", "Madurai Degree Filter Coffee", "மதுரை டிகிரி பில்டர் காபி", "BEV-FC-012", "cat_beverages", "PER_PIECE", "PIECE", 3500, 500, "09012100"),
+            (
+                "prod_mysore_pak",
+                "Special Ghee Mysore Pak",
+                "நெய் மைசூர் பாகு",
+                "MP-001",
+                "cat_sweets",
+                "PER_KG",
+                "MG",
+                68000,
+                500,
+                "21069099",
+            ),
+            (
+                "prod_laddu",
+                "Madurai Nei Laddu",
+                "மதுரை நெய் லட்டு",
+                "SW-NL-002",
+                "cat_sweets",
+                "PER_KG",
+                "MG",
+                44000,
+                500,
+                "21069099",
+            ),
+            (
+                "prod_kaju_katli",
+                "Royal Kaju Katli",
+                "காஜூ கத்திலி",
+                "SW-KK-003",
+                "cat_sweets",
+                "PER_KG",
+                "MG",
+                95000,
+                500,
+                "21069099",
+            ),
+            (
+                "prod_wheat_halwa",
+                "Tirunelveli Wheat Halwa",
+                "திருநெல்வேலி கோதுமை அல்வா",
+                "SW-TH-004",
+                "cat_sweets",
+                "PER_KG",
+                "MG",
+                48000,
+                500,
+                "21069099",
+            ),
+            (
+                "prod_ribbon_pakoda",
+                "Madurai Ribbon Pakoda",
+                "ரிப்பன் பகோடா",
+                "SAV-RP-005",
+                "cat_savories",
+                "PER_KG",
+                "MG",
+                38000,
+                500,
+                "21069099",
+            ),
+            (
+                "prod_kara_sev",
+                "Sattur Spicy Kara Sev",
+                "சாத்தூர் காராசேவ்",
+                "SAV-KS-006",
+                "cat_savories",
+                "PER_KG",
+                "MG",
+                36000,
+                500,
+                "21069099",
+            ),
+            (
+                "prod_butter_murukku",
+                "Traditional Butter Murukku",
+                "வெண்ணெய் முறுக்கு",
+                "SAV-BM-007",
+                "cat_savories",
+                "PER_KG",
+                "MG",
+                42000,
+                500,
+                "21069099",
+            ),
+            (
+                "prod_honey_bun",
+                "Coconut Honey Sweet Bun",
+                "தேங்காய் பன்",
+                "BAK-HB-008",
+                "cat_bakery",
+                "PER_PIECE",
+                "PIECE",
+                2500,
+                500,
+                "19059010",
+            ),
+            (
+                "prod_butter_rusk",
+                "Malgudi Crunchy Butter Rusk",
+                "மால்குடி ரஸ்க் பாக்கெட்",
+                "BAK-BR-009",
+                "cat_bakery",
+                "PER_PACK",
+                "PACK",
+                4500,
+                500,
+                "19059010",
+            ),
+            (
+                "prod_badam_milk",
+                "Kesar Badam Milk (Cold Bottle)",
+                "குங்குமப்பூ பாதாம் பால்",
+                "BEV-BM-010",
+                "cat_beverages",
+                "PER_PIECE",
+                "PIECE",
+                6000,
+                500,
+                "22029990",
+            ),
+            (
+                "prod_jigarthanda",
+                "Famous Madurai Special Jigarthanda",
+                "மதுரை ஸ்பெஷல் ஜிகர்தண்டா",
+                "BEV-JT-011",
+                "cat_beverages",
+                "PER_PIECE",
+                "PIECE",
+                8000,
+                500,
+                "22029990",
+            ),
+            (
+                "prod_filter_coffee",
+                "Madurai Degree Filter Coffee",
+                "மதுரை டிகிரி பில்டர் காபி",
+                "BEV-FC-012",
+                "cat_beverages",
+                "PER_PIECE",
+                "PIECE",
+                3500,
+                500,
+                "09012100",
+            ),
         ];
 
         for item in &default_items {
@@ -403,9 +540,8 @@ impl DatabaseManager {
     pub fn initialize_branch_stock_if_missing(conn: &Connection, branch_id: &str) -> Result<()> {
         let now = "2026-10-12T00:00:00Z";
 
-        let mut stmt = conn.prepare(
-            "SELECT id, inventory_unit FROM products WHERE is_active = 1;"
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, inventory_unit FROM products WHERE is_active = 1;")?;
         let products: Vec<(String, String)> = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
             .filter_map(|r| r.ok())
@@ -424,7 +560,9 @@ impl DatabaseManager {
             ("prod_badam_milk", 60i64),
             ("prod_jigarthanda", 50i64),
             ("prod_filter_coffee", 100i64),
-        ].into_iter().collect();
+        ]
+        .into_iter()
+        .collect();
 
         for (prod_id, unit) in &products {
             let exists: bool = conn.query_row(

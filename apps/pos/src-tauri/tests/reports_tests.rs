@@ -2,7 +2,9 @@ use malgudi_pos_native::auth::{self, CreateUserPayload, LoginPayload, ProvisionO
 use malgudi_pos_native::db::DatabaseManager;
 use malgudi_pos_native::inventory::{self, VoidSalePayload};
 use malgudi_pos_native::reports::{self, ReportFilterPayload};
-use malgudi_pos_native::transaction::{finalize_sale_atomic, FinalizeSalePayload, SaleItemInput, SalePaymentInput};
+use malgudi_pos_native::transaction::{
+    finalize_sale_atomic, FinalizeSalePayload, SaleItemInput, SalePaymentInput,
+};
 use rusqlite::Connection;
 use uuid::Uuid;
 
@@ -10,8 +12,9 @@ fn setup_test_db() -> Connection {
     let conn = Connection::open_in_memory().expect("Failed to open in-memory database");
     conn.execute_batch(
         "PRAGMA foreign_keys = ON;
-         PRAGMA busy_timeout = 5000;"
-    ).expect("Failed to set pragmas");
+         PRAGMA busy_timeout = 5000;",
+    )
+    .expect("Failed to set pragmas");
     DatabaseManager::apply_migrations(&conn).expect("Failed to apply migrations");
     conn
 }
@@ -209,7 +212,8 @@ fn test_daily_sales_report_accuracy_and_void_exclusion() {
         sale_id: sale3_id,
         reason: "Customer changed mind before counter exit".to_string(),
     };
-    inventory::void_or_refund_sale(&mut conn, &admin_token, &void_payload).expect("Void sale 3 should succeed");
+    inventory::void_or_refund_sale(&mut conn, &admin_token, &void_payload)
+        .expect("Void sale 3 should succeed");
 
     // Run Daily Sales Report
     let filter = ReportFilterPayload {
@@ -218,17 +222,44 @@ fn test_daily_sales_report_accuracy_and_void_exclusion() {
         branch_id: Some("IB".to_string()),
     };
 
-    let report = reports::get_daily_sales_report(&conn, &admin_token, &filter).expect("Report should generate");
+    let report = reports::get_daily_sales_report(&conn, &admin_token, &filter)
+        .expect("Report should generate");
 
     // Assertions
-    assert_eq!(report.total_bills_recorded, 3, "Total recorded bills should be 3");
-    assert_eq!(report.active_bills_count, 2, "Active bills count should be 2");
-    assert_eq!(report.voided_bills_count, 1, "Voided bills count should be 1");
-    assert_eq!(report.gross_sales_paise, 70000, "Active gross sales should be ₹700 (340 + 360)");
-    assert_eq!(report.voided_amount_paise, 10000, "Voided amount should be ₹100");
-    assert_eq!(report.net_sales_paise, 70000, "Net sales should equal active sales ₹700");
-    assert_eq!(report.taxable_sales_paise, 32381 + 34286, "Taxable sales should sum active items");
-    assert_eq!(report.daily_breakdown.len(), 1, "Daily breakdown should have 1 date entry");
+    assert_eq!(
+        report.total_bills_recorded, 3,
+        "Total recorded bills should be 3"
+    );
+    assert_eq!(
+        report.active_bills_count, 2,
+        "Active bills count should be 2"
+    );
+    assert_eq!(
+        report.voided_bills_count, 1,
+        "Voided bills count should be 1"
+    );
+    assert_eq!(
+        report.gross_sales_paise, 70000,
+        "Active gross sales should be ₹700 (340 + 360)"
+    );
+    assert_eq!(
+        report.voided_amount_paise, 10000,
+        "Voided amount should be ₹100"
+    );
+    assert_eq!(
+        report.net_sales_paise, 70000,
+        "Net sales should equal active sales ₹700"
+    );
+    assert_eq!(
+        report.taxable_sales_paise,
+        32381 + 34286,
+        "Taxable sales should sum active items"
+    );
+    assert_eq!(
+        report.daily_breakdown.len(),
+        1,
+        "Daily breakdown should have 1 date entry"
+    );
     assert_eq!(report.daily_breakdown[0].active_bills, 2);
     assert_eq!(report.daily_breakdown[0].voided_bills, 1);
 }
@@ -305,13 +336,29 @@ fn test_payment_summary_and_split_reporting() {
         branch_id: Some("IB".to_string()),
     };
 
-    let report = reports::get_payment_summary_report(&conn, &admin_token, &filter).expect("Report should generate");
+    let report = reports::get_payment_summary_report(&conn, &admin_token, &filter)
+        .expect("Report should generate");
 
-    assert_eq!(report.total_cash_collected_paise, 30000, "Cash collected should be ₹300");
-    assert_eq!(report.total_upi_collected_paise, 20000, "UPI collected should be ₹200");
-    assert_eq!(report.total_split_bills_count, 1, "Should count 1 split bill");
-    assert_eq!(report.total_split_amount_paise, 50000, "Split bill total should be ₹500");
-    assert_eq!(report.total_net_collected_paise, 50000, "Net collected should be ₹500");
+    assert_eq!(
+        report.total_cash_collected_paise, 30000,
+        "Cash collected should be ₹300"
+    );
+    assert_eq!(
+        report.total_upi_collected_paise, 20000,
+        "UPI collected should be ₹200"
+    );
+    assert_eq!(
+        report.total_split_bills_count, 1,
+        "Should count 1 split bill"
+    );
+    assert_eq!(
+        report.total_split_amount_paise, 50000,
+        "Split bill total should be ₹500"
+    );
+    assert_eq!(
+        report.total_net_collected_paise, 50000,
+        "Net collected should be ₹500"
+    );
 }
 
 #[test]
@@ -373,17 +420,26 @@ fn test_gst_report_slabs_and_invoice_details() {
         branch_id: Some("IB".to_string()),
     };
 
-    let report = reports::get_gst_report(&conn, &admin_token, &filter).expect("GST report should generate");
+    let report =
+        reports::get_gst_report(&conn, &admin_token, &filter).expect("GST report should generate");
 
     assert_eq!(report.total_taxable_paise, 95238);
     assert_eq!(report.total_cgst_paise, 2381);
     assert_eq!(report.total_sgst_paise, 2381);
     assert_eq!(report.total_gst_paise, 4762);
     assert_eq!(report.total_invoice_value_paise, 100000);
-    assert!(!report.slabs_breakdown.is_empty(), "Should have at least 1 slab");
-    assert_eq!(report.slabs_breakdown[0].tax_rate_percent, 5.0, "Should be 5% GST slab");
+    assert!(
+        !report.slabs_breakdown.is_empty(),
+        "Should have at least 1 slab"
+    );
+    assert_eq!(
+        report.slabs_breakdown[0].tax_rate_percent, 5.0,
+        "Should be 5% GST slab"
+    );
     assert_eq!(report.invoice_details.len(), 1, "Should list 1 invoice");
-    assert!(report.invoice_details[0].invoice_number.starts_with("IB1/2627/"));
+    assert!(report.invoice_details[0]
+        .invoice_number
+        .starts_with("IB1/2627/"));
 }
 
 #[test]
@@ -462,14 +518,19 @@ fn test_product_sales_ranking_and_category_breakdown() {
         branch_id: Some("IB".to_string()),
     };
 
-    let report = reports::get_product_sales_report(&conn, &admin_token, &filter).expect("Product report should generate");
+    let report = reports::get_product_sales_report(&conn, &admin_token, &filter)
+        .expect("Product report should generate");
 
     assert_eq!(report.total_revenue_paise, 72000);
     assert_eq!(report.products.len(), 2);
     // Highest revenue product should be first (Kara Sev @ ₹380 vs Mysore Pak @ ₹340)
     assert_eq!(report.products[0].product_id, "prod_kara_sev");
     assert_eq!(report.products[1].product_id, "prod_mysore_pak");
-    assert_eq!(report.categories.len(), 2, "Should cover sweets and savouries");
+    assert_eq!(
+        report.categories.len(),
+        2,
+        "Should cover sweets and savouries"
+    );
 }
 
 #[test]
@@ -539,12 +600,22 @@ fn test_cash_drawer_report_movements_and_variance() {
         branch_id: Some("IB".to_string()),
     };
 
-    let report = reports::get_cash_drawer_report(&conn, &admin_token, &filter).expect("Cash drawer report should generate");
+    let report = reports::get_cash_drawer_report(&conn, &admin_token, &filter)
+        .expect("Cash drawer report should generate");
 
-    assert_eq!(report.opening_float_paise, 200000, "Opening float should be ₹2,000 (200,000 paise)");
-    assert_eq!(report.cash_sales_inflow_paise, 50000, "Cash sale should be ₹500 (50,000 paise)");
+    assert_eq!(
+        report.opening_float_paise, 200000,
+        "Opening float should be ₹2,000 (200,000 paise)"
+    );
+    assert_eq!(
+        report.cash_sales_inflow_paise, 50000,
+        "Cash sale should be ₹500 (50,000 paise)"
+    );
     assert_eq!(report.cash_refunds_outflow_paise, 0);
-    assert_eq!(report.expected_closing_cash_paise, 250000, "Expected closing cash should be ₹2,500");
+    assert_eq!(
+        report.expected_closing_cash_paise, 250000,
+        "Expected closing cash should be ₹2,500"
+    );
 }
 
 #[test]
@@ -561,11 +632,20 @@ fn test_reports_authorization_security_blocks_cashier() {
 
     // 1. Admin must succeed
     let admin_res = reports::get_financial_reports_aggregate(&conn, &admin_token, &filter);
-    assert!(admin_res.is_ok(), "Admin must be authorized to view reports");
+    assert!(
+        admin_res.is_ok(),
+        "Admin must be authorized to view reports"
+    );
 
     // 2. Cashier must fail with Unauthorized
     let cashier_res = reports::get_financial_reports_aggregate(&conn, &cashier_token, &filter);
     assert!(cashier_res.is_err(), "Cashier must be blocked from reports");
     let err_msg = cashier_res.err().unwrap();
-    assert!(err_msg.contains("lacks required permission") || err_msg.contains("Permission denied") || err_msg.contains("Unauthorized"), "Must state permission denied: {}", err_msg);
+    assert!(
+        err_msg.contains("lacks required permission")
+            || err_msg.contains("Permission denied")
+            || err_msg.contains("Unauthorized"),
+        "Must state permission denied: {}",
+        err_msg
+    );
 }

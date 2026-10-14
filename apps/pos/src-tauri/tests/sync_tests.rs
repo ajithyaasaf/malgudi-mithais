@@ -1,7 +1,11 @@
-use malgudi_pos_native::db::DatabaseManager;
-use malgudi_pos_native::transaction::{finalize_sale_atomic, FinalizeSalePayload, SaleItemInput, SalePaymentInput};
-use malgudi_pos_native::sync::{get_branch_config, save_branch_config, get_sync_status, sync_outbox_batch, BranchConfig};
 use malgudi_pos_native::auth::{provision_first_owner, ProvisionOwnerPayload};
+use malgudi_pos_native::db::DatabaseManager;
+use malgudi_pos_native::sync::{
+    get_branch_config, get_sync_status, save_branch_config, sync_outbox_batch, BranchConfig,
+};
+use malgudi_pos_native::transaction::{
+    finalize_sale_atomic, FinalizeSalePayload, SaleItemInput, SalePaymentInput,
+};
 use rusqlite::Connection;
 use std::fs;
 use std::path::Path;
@@ -36,35 +40,31 @@ fn sample_mn_payload() -> FinalizeSalePayload {
         total_igst_paise: 0,
         round_off_paise: 0,
         net_payable_paise: 21000,
-        items: vec![
-            SaleItemInput {
-                product_id: "prod_mysore_pak".into(),
-                quantity_input: 500000,
-                pricing_unit: "PER_KG".into(),
-                weight_input_source: "SCALE_AUTO".into(),
-                unit_price_paise: 40000,
-                taxable_paise: 20000,
-                cgst_paise: 500,
-                sgst_paise: 500,
-                igst_paise: 0,
-                total_tax_paise: 1000,
-                gross_paise: 21000,
-                stock_deduction_delta: -500000,
-                stock_unit: "MG".into(),
-            }
-        ],
-        payments: vec![
-            SalePaymentInput {
-                payment_method: "CASH".into(),
-                allocated_amount_paise: 21000,
-                tendered_paise: 21000,
-                change_returned_paise: 0,
-                net_amount_paise: 21000,
-                outcome: "SUCCESS".into(),
-                reference_note: None,
-                verified_by_user_id: None,
-            }
-        ],
+        items: vec![SaleItemInput {
+            product_id: "prod_mysore_pak".into(),
+            quantity_input: 500000,
+            pricing_unit: "PER_KG".into(),
+            weight_input_source: "SCALE_AUTO".into(),
+            unit_price_paise: 40000,
+            taxable_paise: 20000,
+            cgst_paise: 500,
+            sgst_paise: 500,
+            igst_paise: 0,
+            total_tax_paise: 1000,
+            gross_paise: 21000,
+            stock_deduction_delta: -500000,
+            stock_unit: "MG".into(),
+        }],
+        payments: vec![SalePaymentInput {
+            payment_method: "CASH".into(),
+            allocated_amount_paise: 21000,
+            tendered_paise: 21000,
+            change_returned_paise: 0,
+            net_amount_paise: 21000,
+            outcome: "SUCCESS".into(),
+            reference_note: None,
+            verified_by_user_id: None,
+        }],
         cashier_id: "cashier_01".into(),
         customer_name: None,
         customer_phone: None,
@@ -84,7 +84,8 @@ fn create_test_owner_session(conn: &Connection) -> String {
             counter_id: Some("C1".to_string()),
             session_id: Some("sess_init".to_string()),
         },
-    ).expect("Failed to provision owner");
+    )
+    .expect("Failed to provision owner");
     session.token
 }
 
@@ -144,11 +145,13 @@ fn test_sale_enqueues_outbox_durably() {
     assert_eq!(status.total_outbox_count, 1);
 
     // Verify outbox record content
-    let (event_id, agg_type, agg_id, outbox_status): (String, String, String, String) = conn.query_row(
-        "SELECT event_id, aggregate_type, aggregate_id, status FROM sync_outbox LIMIT 1;",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-    ).unwrap();
+    let (event_id, agg_type, agg_id, outbox_status): (String, String, String, String) = conn
+        .query_row(
+            "SELECT event_id, aggregate_type, aggregate_id, status FROM sync_outbox LIMIT 1;",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
 
     assert!(!event_id.is_empty());
     assert_eq!(agg_type, "SALE");
@@ -178,7 +181,8 @@ fn test_offline_network_preserves_outbox_durably() {
 
     // Finalize a sale while offline
     let payload = sample_mn_payload();
-    let result = finalize_sale_atomic(&mut conn, &payload, None).expect("Local billing must NOT fail when offline");
+    let result = finalize_sale_atomic(&mut conn, &payload, None)
+        .expect("Local billing must NOT fail when offline");
     assert!(!result.sale_id.is_empty());
 
     // Attempt sync
@@ -214,22 +218,26 @@ fn test_simulated_acknowledgment_updates_outbox_and_sales() {
     conn.execute(
         "UPDATE sync_outbox SET status = 'ACKNOWLEDGED' WHERE aggregate_id = ?1;",
         [&result.sale_id],
-    ).unwrap();
+    )
+    .unwrap();
     conn.execute(
         "UPDATE sales SET sync_status = 'SERVER_ACKNOWLEDGED' WHERE id = ?1;",
         [&result.sale_id],
-    ).unwrap();
+    )
+    .unwrap();
 
     // After ACK
     let status_after = get_sync_status(&conn).unwrap();
     assert_eq!(status_after.pending_count, 0);
     assert_eq!(status_after.synced_count, 1);
 
-    let sale_sync_status: String = conn.query_row(
-        "SELECT sync_status FROM sales WHERE id = ?1;",
-        [&result.sale_id],
-        |r| r.get(0),
-    ).unwrap();
+    let sale_sync_status: String = conn
+        .query_row(
+            "SELECT sync_status FROM sales WHERE id = ?1;",
+            [&result.sale_id],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(sale_sync_status, "SERVER_ACKNOWLEDGED");
 
     let _ = fs::remove_file(db_path);
@@ -240,32 +248,40 @@ fn test_provision_first_owner_persists_branch_and_terminal_identity() {
     let db_path = Path::new("target/test_provision_identity.db");
     let conn = setup_test_db(db_path);
 
-    let session = provision_first_owner(&conn, &ProvisionOwnerPayload {
-        username: "owner_mn".to_string(),
-        display_name: "Owner Mattuthavani".to_string(),
-        pin: "123456".to_string(),
-        branch_id: Some("MN".to_string()),
-        terminal_id: Some("T2".to_string()),
-        counter_id: Some("C1".to_string()),
-        session_id: Some("sess_mn_initial".to_string()),
-    }).expect("Owner provisioning failed");
+    let session = provision_first_owner(
+        &conn,
+        &ProvisionOwnerPayload {
+            username: "owner_mn".to_string(),
+            display_name: "Owner Mattuthavani".to_string(),
+            pin: "123456".to_string(),
+            branch_id: Some("MN".to_string()),
+            terminal_id: Some("T2".to_string()),
+            counter_id: Some("C1".to_string()),
+            session_id: Some("sess_mn_initial".to_string()),
+        },
+    )
+    .expect("Owner provisioning failed");
 
     assert_eq!(session.branch_id, "MN");
     assert_eq!(session.terminal_id, "T2");
 
     // Verify persisted directly into terminal_trust_state
-    let configured_branch: String = conn.query_row(
-        "SELECT value FROM terminal_trust_state WHERE key = 'branch_id';",
-        [],
-        |r| r.get(0),
-    ).unwrap();
+    let configured_branch: String = conn
+        .query_row(
+            "SELECT value FROM terminal_trust_state WHERE key = 'branch_id';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(configured_branch, "MN");
 
-    let configured_terminal: String = conn.query_row(
-        "SELECT value FROM terminal_trust_state WHERE key = 'terminal_id';",
-        [],
-        |r| r.get(0),
-    ).unwrap();
+    let configured_terminal: String = conn
+        .query_row(
+            "SELECT value FROM terminal_trust_state WHERE key = 'terminal_id';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(configured_terminal, "T2");
 
     let _ = fs::remove_file(db_path);

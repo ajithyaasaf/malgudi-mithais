@@ -140,7 +140,9 @@ pub fn verify_pin(pin: &str, hash_str: &str) -> bool {
         Ok(h) => h,
         Err(_) => return false,
     };
-    Argon2::default().verify_password(pin.as_bytes(), &parsed_hash).is_ok()
+    Argon2::default()
+        .verify_password(pin.as_bytes(), &parsed_hash)
+        .is_ok()
 }
 
 /// Checks whether any user has been provisioned.
@@ -220,10 +222,22 @@ pub fn provision_first_owner(
 
     // Create initial authenticated session
     let token = Uuid::now_v7().to_string();
-    let branch_id = payload.branch_id.clone().unwrap_or_else(|| "IB".to_string());
-    let terminal_id = payload.terminal_id.clone().unwrap_or_else(|| "T1".to_string());
-    let counter_id = payload.counter_id.clone().unwrap_or_else(|| "C1".to_string());
-    let session_id = payload.session_id.clone().unwrap_or_else(|| "sess_madurai_01".to_string());
+    let branch_id = payload
+        .branch_id
+        .clone()
+        .unwrap_or_else(|| "IB".to_string());
+    let terminal_id = payload
+        .terminal_id
+        .clone()
+        .unwrap_or_else(|| "T1".to_string());
+    let counter_id = payload
+        .counter_id
+        .clone()
+        .unwrap_or_else(|| "C1".to_string());
+    let session_id = payload
+        .session_id
+        .clone()
+        .unwrap_or_else(|| "sess_madurai_01".to_string());
     let expires_at = iso_future_hours(SESSION_EXPIRY_HOURS);
 
     conn.execute(
@@ -313,19 +327,39 @@ pub fn login(conn: &Connection, payload: &LoginPayload) -> Result<SessionInfo, S
         Some(row) => row,
         None => {
             record_failed_attempt(conn, &username)?;
-            record_audit_event(conn, "LOGIN_FAILED_UNKNOWN_USER", "AUTH", &username, "UNKNOWN")?;
+            record_audit_event(
+                conn,
+                "LOGIN_FAILED_UNKNOWN_USER",
+                "AUTH",
+                &username,
+                "UNKNOWN",
+            )?;
             return Err("INVALID_CREDENTIALS: Invalid username or PIN.".to_string());
         }
     };
 
     if status != "ACTIVE" {
-        record_audit_event(conn, "LOGIN_REJECTED_DISABLED_ACCOUNT", "USER", &user_id, &username)?;
-        return Err("ACCOUNT_DISABLED: This account has been disabled. Contact store owner.".to_string());
+        record_audit_event(
+            conn,
+            "LOGIN_REJECTED_DISABLED_ACCOUNT",
+            "USER",
+            &user_id,
+            &username,
+        )?;
+        return Err(
+            "ACCOUNT_DISABLED: This account has been disabled. Contact store owner.".to_string(),
+        );
     }
 
     if !verify_pin(&payload.pin, &pin_hash) {
         let attempts = record_failed_attempt(conn, &username)?;
-        record_audit_event(conn, "LOGIN_FAILED_INCORRECT_PIN", "USER", &user_id, &username)?;
+        record_audit_event(
+            conn,
+            "LOGIN_FAILED_INCORRECT_PIN",
+            "USER",
+            &user_id,
+            &username,
+        )?;
         if attempts >= MAX_FAILED_ATTEMPTS {
             return Err(format!(
                 "ACCOUNT_LOCKED: 5 consecutive failed attempts. Account locked for {} seconds.",
@@ -336,7 +370,10 @@ pub fn login(conn: &Connection, payload: &LoginPayload) -> Result<SessionInfo, S
     }
 
     // Reset failed attempts upon successful login
-    let _ = conn.execute("DELETE FROM auth_attempts WHERE username = ?1;", [&username]);
+    let _ = conn.execute(
+        "DELETE FROM auth_attempts WHERE username = ?1;",
+        [&username],
+    );
 
     // Fall back to configured terminal identities in terminal_trust_state
     let configured_branch: Option<String> = conn
@@ -363,10 +400,25 @@ pub fn login(conn: &Connection, payload: &LoginPayload) -> Result<SessionInfo, S
 
     // Create session
     let token = Uuid::now_v7().to_string();
-    let branch_id = payload.branch_id.clone().or(configured_branch).unwrap_or_else(|| "IB".to_string());
-    let terminal_id = payload.terminal_id.clone().or(configured_terminal).unwrap_or_else(|| "T1".to_string());
-    let counter_id = payload.counter_id.clone().or(configured_counter).unwrap_or_else(|| "C1".to_string());
-    let session_id = payload.session_id.clone().unwrap_or_else(|| "sess_madurai_01".to_string());
+    let branch_id = payload
+        .branch_id
+        .clone()
+        .or(configured_branch)
+        .unwrap_or_else(|| "IB".to_string());
+    let terminal_id = payload
+        .terminal_id
+        .clone()
+        .or(configured_terminal)
+        .unwrap_or_else(|| "T1".to_string());
+    let counter_id = payload
+        .counter_id
+        .clone()
+        .or(configured_counter)
+        .unwrap_or_else(|| "C1".to_string());
+    let session_id = payload
+        .session_id
+        .clone()
+        .unwrap_or_else(|| "sess_madurai_01".to_string());
     let now = iso_now();
     let expires_at = iso_future_hours(SESSION_EXPIRY_HOURS);
 
@@ -431,8 +483,9 @@ pub fn switch_cashier(
     payload: &SwitchCashierPayload,
 ) -> Result<SessionInfo, String> {
     // 1. Verify previous session
-    let prev_session = validate_session_and_permission(conn, &payload.active_token, "billing:finalize_sale")
-        .map_err(|e| format!("Current session invalid: {}", e))?;
+    let prev_session =
+        validate_session_and_permission(conn, &payload.active_token, "billing:finalize_sale")
+            .map_err(|e| format!("Current session invalid: {}", e))?;
 
     // 2. Authenticate incoming cashier
     let incoming_username = payload.incoming_username.trim().to_lowercase();
@@ -447,7 +500,13 @@ pub fn switch_cashier(
     let (incoming_id, incoming_display, incoming_role, pin_hash, status) = match incoming_user {
         Some(row) => row,
         None => {
-            record_audit_event(conn, "HANDOVER_REJECTED_UNKNOWN_USER", "AUTH", &incoming_username, &prev_session.user_id)?;
+            record_audit_event(
+                conn,
+                "HANDOVER_REJECTED_UNKNOWN_USER",
+                "AUTH",
+                &incoming_username,
+                &prev_session.user_id,
+            )?;
             return Err("INVALID_CREDENTIALS: Unknown incoming cashier username.".to_string());
         }
     };
@@ -457,7 +516,13 @@ pub fn switch_cashier(
     }
 
     if !verify_pin(&payload.incoming_pin, &pin_hash) {
-        record_audit_event(conn, "HANDOVER_FAILED_PIN_MISMATCH", "USER", &incoming_id, &prev_session.user_id)?;
+        record_audit_event(
+            conn,
+            "HANDOVER_FAILED_PIN_MISMATCH",
+            "USER",
+            &incoming_id,
+            &prev_session.user_id,
+        )?;
         return Err("INVALID_CREDENTIALS: Incorrect PIN for incoming cashier.".to_string());
     }
 
@@ -486,7 +551,10 @@ pub fn switch_cashier(
     .map_err(|e| format!("Failed to create handover session: {}", e))?;
 
     // Invalidate previous session
-    let _ = conn.execute("DELETE FROM user_sessions WHERE token = ?1;", [&payload.active_token]);
+    let _ = conn.execute(
+        "DELETE FROM user_sessions WHERE token = ?1;",
+        [&payload.active_token],
+    );
 
     // Record auditable handover
     record_audit_event(
@@ -517,7 +585,11 @@ pub fn switch_cashier(
 /// Logs out active session.
 pub fn logout(conn: &Connection, token: &str) -> Result<(), String> {
     let user_id: Option<String> = conn
-        .query_row("SELECT user_id FROM user_sessions WHERE token = ?1;", [token], |r| r.get(0))
+        .query_row(
+            "SELECT user_id FROM user_sessions WHERE token = ?1;",
+            [token],
+            |r| r.get(0),
+        )
         .ok();
     conn.execute("DELETE FROM user_sessions WHERE token = ?1;", [token])
         .map_err(|e| e.to_string())?;
@@ -547,11 +619,20 @@ pub fn validate_session_and_permission(
         )
         .ok();
 
-    let (user_id, username, display_name, role, branch_id, terminal_id, counter_id, session_id, expires_at) =
-        match session_row {
-            Some(row) => row,
-            None => return Err("UNAUTHENTICATED: Active session not found. Please log in.".to_string()),
-        };
+    let (
+        user_id,
+        username,
+        display_name,
+        role,
+        branch_id,
+        terminal_id,
+        counter_id,
+        session_id,
+        expires_at,
+    ) = match session_row {
+        Some(row) => row,
+        None => return Err("UNAUTHENTICATED: Active session not found. Please log in.".to_string()),
+    };
 
     // Check expiration
     if let Ok(exp_epoch) = expires_at.parse::<u64>() {
@@ -564,12 +645,20 @@ pub fn validate_session_and_permission(
 
     // Verify user is still ACTIVE
     let status: String = conn
-        .query_row("SELECT status FROM users WHERE id = ?1;", [&user_id], |r| r.get(0))
+        .query_row("SELECT status FROM users WHERE id = ?1;", [&user_id], |r| {
+            r.get(0)
+        })
         .unwrap_or_else(|_| "DISABLED".to_string());
 
     if status != "ACTIVE" {
         let _ = conn.execute("DELETE FROM user_sessions WHERE token = ?1;", [token]);
-        record_audit_event(conn, "SESSION_TERMINATED_DISABLED_USER", "USER", &user_id, &user_id)?;
+        record_audit_event(
+            conn,
+            "SESSION_TERMINATED_DISABLED_USER",
+            "USER",
+            &user_id,
+            &user_id,
+        )?;
         return Err("UNAUTHORIZED: Account has been disabled.".to_string());
     }
 
@@ -639,7 +728,11 @@ pub fn create_user(
 
     // Check unique username
     let exists: bool = conn
-        .query_row("SELECT 1 FROM users WHERE username = ?1;", [&username], |_| Ok(true))
+        .query_row(
+            "SELECT 1 FROM users WHERE username = ?1;",
+            [&username],
+            |_| Ok(true),
+        )
         .unwrap_or(false);
     if exists {
         return Err(format!("Username '{}' is already taken.", username));
@@ -686,7 +779,11 @@ pub fn update_user_status(
     // Protect the last active ADMIN/Owner account
     if status == "DISABLED" {
         let target_role: String = conn
-            .query_row("SELECT role FROM users WHERE id = ?1;", [target_user_id], |r| r.get(0))
+            .query_row(
+                "SELECT role FROM users WHERE id = ?1;",
+                [target_user_id],
+                |r| r.get(0),
+            )
             .map_err(|_| "Target user not found".to_string())?;
 
         if target_role == "ADMIN" {
@@ -713,7 +810,10 @@ pub fn update_user_status(
 
     // If disabled, revoke any active sessions for that user
     if status == "DISABLED" {
-        let _ = conn.execute("DELETE FROM user_sessions WHERE user_id = ?1;", [target_user_id]);
+        let _ = conn.execute(
+            "DELETE FROM user_sessions WHERE user_id = ?1;",
+            [target_user_id],
+        );
     }
 
     record_audit_event(
@@ -746,9 +846,18 @@ pub fn reset_user_pin(
     .map_err(|e| format!("Failed to reset PIN: {}", e))?;
 
     // Invalidate active sessions to force re-login with the new PIN
-    let _ = conn.execute("DELETE FROM user_sessions WHERE user_id = ?1;", [target_user_id]);
+    let _ = conn.execute(
+        "DELETE FROM user_sessions WHERE user_id = ?1;",
+        [target_user_id],
+    );
 
-    record_audit_event(conn, "USER_PIN_RESET", "USER", target_user_id, &admin.user_id)?;
+    record_audit_event(
+        conn,
+        "USER_PIN_RESET",
+        "USER",
+        target_user_id,
+        &admin.user_id,
+    )?;
     Ok(())
 }
 
@@ -784,7 +893,10 @@ pub fn list_users(conn: &Connection, admin_token: &str) -> Result<Vec<UserRecord
 }
 
 /// Retrieves recent audit trail logs. (Admin only)
-pub fn get_security_logs(conn: &Connection, admin_token: &str) -> Result<Vec<AuditEventRecord>, String> {
+pub fn get_security_logs(
+    conn: &Connection,
+    admin_token: &str,
+) -> Result<Vec<AuditEventRecord>, String> {
     let _admin = validate_session_and_permission(conn, admin_token, "admin:view_audit_logs")?;
 
     let mut stmt = conn

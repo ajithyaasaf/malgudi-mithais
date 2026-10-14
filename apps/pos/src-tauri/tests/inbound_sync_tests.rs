@@ -1,10 +1,9 @@
+use malgudi_pos_native::auth::{provision_first_owner, ProvisionOwnerPayload};
 use malgudi_pos_native::db::DatabaseManager;
 use malgudi_pos_native::sync::{
-    save_branch_config, get_sync_status,
-    sync_inbound_catalog, start_background_sync_worker,
-    stop_background_sync_worker, is_background_sync_worker_running, BranchConfig,
+    get_sync_status, is_background_sync_worker_running, save_branch_config,
+    start_background_sync_worker, stop_background_sync_worker, sync_inbound_catalog, BranchConfig,
 };
-use malgudi_pos_native::auth::{provision_first_owner, ProvisionOwnerPayload};
 use rusqlite::Connection;
 use std::fs;
 use std::io::{Read, Write};
@@ -33,7 +32,8 @@ fn create_test_owner_session(conn: &Connection) -> String {
             counter_id: Some("C1".to_string()),
             session_id: Some("sess_admin_01".to_string()),
         },
-    ).expect("Failed to provision owner");
+    )
+    .expect("Failed to provision owner");
     session.token
 }
 
@@ -111,11 +111,13 @@ fn test_inbound_catalog_updates_applied_and_persisted() {
     let token = create_test_owner_session(&conn);
 
     // Initial check: Mysore Pak base price is 68000 paise (seeded in migration)
-    let initial_price: i64 = conn.query_row(
-        "SELECT base_price_paise FROM products WHERE sku = 'MP-001';",
-        [],
-        |r| r.get(0),
-    ).unwrap();
+    let initial_price: i64 = conn
+        .query_row(
+            "SELECT base_price_paise FROM products WHERE sku = 'MP-001';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(initial_price, 68000);
 
     // Prepare mock catalog updates:
@@ -165,7 +167,8 @@ fn test_inbound_catalog_updates_applied_and_persisted() {
                 "updated_at": "2026-10-12T12:00:00Z"
             }
         ]
-    }).to_string();
+    })
+    .to_string();
 
     let server = TestHttpServer::start(updates_payload, 200);
 
@@ -181,33 +184,40 @@ fn test_inbound_catalog_updates_applied_and_persisted() {
     save_branch_config(&conn, &token, &config).unwrap();
 
     // Trigger Inbound Sync
-    let sync_res = sync_inbound_catalog(&mut conn, Some(&token)).expect("Inbound sync must succeed");
+    let sync_res =
+        sync_inbound_catalog(&mut conn, Some(&token)).expect("Inbound sync must succeed");
     assert_eq!(sync_res.fetched_count, 2);
     assert_eq!(sync_res.applied_count, 2);
     assert_eq!(sync_res.skipped_stale_count, 0);
     assert_eq!(sync_res.latest_version, 2);
 
     // Verify product price updated
-    let updated_price: i64 = conn.query_row(
-        "SELECT base_price_paise FROM products WHERE sku = 'MP-001';",
-        [],
-        |r| r.get(0),
-    ).unwrap();
+    let updated_price: i64 = conn
+        .query_row(
+            "SELECT base_price_paise FROM products WHERE sku = 'MP-001';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(updated_price, 74000);
 
-    let updated_tax: i64 = conn.query_row(
-        "SELECT tax_rate_bps FROM products WHERE sku = 'MP-001';",
-        [],
-        |r| r.get(0),
-    ).unwrap();
+    let updated_tax: i64 = conn
+        .query_row(
+            "SELECT tax_rate_bps FROM products WHERE sku = 'MP-001';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(updated_tax, 1200);
 
     // Verify new product exists
-    let new_prod_exists: bool = conn.query_row(
-        "SELECT 1 FROM products WHERE sku = 'DF-LADDU-099';",
-        [],
-        |_| Ok(true),
-    ).unwrap_or(false);
+    let new_prod_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM products WHERE sku = 'DF-LADDU-099';",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
     assert!(new_prod_exists);
 
     // Verify sync tracking in trust state
@@ -231,7 +241,8 @@ fn test_safe_inventory_separation_catalog_updates_never_overwrite_local_stock() 
          VALUES ('MN', 'prod_mysore_pak', 15000000, 'MG', '2026-10-12T00:00:00Z')
          ON CONFLICT(branch_id, product_id) DO UPDATE SET current_quantity = 15000000;",
         [],
-    ).unwrap();
+    )
+    .unwrap();
 
     let stock_before: i64 = conn.query_row(
         "SELECT current_quantity FROM stock_balances WHERE branch_id = 'MN' AND product_id = 'prod_mysore_pak';",
@@ -266,7 +277,8 @@ fn test_safe_inventory_separation_catalog_updates_never_overwrite_local_stock() 
                 "updated_at": "2026-10-12T12:00:00Z"
             }
         ]
-    }).to_string();
+    })
+    .to_string();
 
     let server = TestHttpServer::start(updates_payload, 200);
 
@@ -289,7 +301,10 @@ fn test_safe_inventory_separation_catalog_updates_never_overwrite_local_stock() 
         [],
         |r| r.get(0),
     ).unwrap();
-    assert_eq!(stock_after, 15000000, "Catalog sync must NEVER overwrite branch stock balance!");
+    assert_eq!(
+        stock_after, 15000000,
+        "Catalog sync must NEVER overwrite branch stock balance!"
+    );
 
     let _ = fs::remove_file(db_path);
 }
@@ -304,7 +319,8 @@ fn test_conflict_rules_stale_update_rejected() {
     conn.execute(
         "UPDATE products SET version = 3, base_price_paise = 72000 WHERE sku = 'MP-001';",
         [],
-    ).unwrap();
+    )
+    .unwrap();
 
     // Server sends a STALE update at version 2 with price 65000
     let stale_payload = serde_json::json!({
@@ -332,7 +348,8 @@ fn test_conflict_rules_stale_update_rejected() {
                 "updated_at": "2026-10-11T12:00:00Z"
             }
         ]
-    }).to_string();
+    })
+    .to_string();
 
     let server = TestHttpServer::start(stale_payload, 200);
 
@@ -353,11 +370,13 @@ fn test_conflict_rules_stale_update_rejected() {
     assert_eq!(sync_res.skipped_stale_count, 1);
 
     // Local price remains at 72000 (NOT overwritten by 65000)
-    let current_price: i64 = conn.query_row(
-        "SELECT base_price_paise FROM products WHERE sku = 'MP-001';",
-        [],
-        |r| r.get(0),
-    ).unwrap();
+    let current_price: i64 = conn
+        .query_row(
+            "SELECT base_price_paise FROM products WHERE sku = 'MP-001';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(current_price, 72000);
 
     let _ = fs::remove_file(db_path);
@@ -372,7 +391,8 @@ fn test_security_unauthorized_branch_forbidden() {
     let forbidden_payload = serde_json::json!({
         "error": "FORBIDDEN_BRANCH",
         "message": "Branch 'UNKNOWN' is not authorized or is inactive."
-    }).to_string();
+    })
+    .to_string();
 
     let server = TestHttpServer::start(forbidden_payload, 403);
 
@@ -390,7 +410,10 @@ fn test_security_unauthorized_branch_forbidden() {
     let sync_res = sync_inbound_catalog(&mut conn, Some(&token)).unwrap();
     assert_eq!(sync_res.applied_count, 0);
     assert!(sync_res.last_error.is_some());
-    assert!(sync_res.last_error.unwrap().contains("Branch authorization rejected"));
+    assert!(sync_res
+        .last_error
+        .unwrap()
+        .contains("Branch authorization rejected"));
 
     let status = get_sync_status(&conn).unwrap();
     assert_eq!(status.last_inbound_sync_status, "OFFLINE");

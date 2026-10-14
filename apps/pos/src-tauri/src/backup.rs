@@ -18,7 +18,10 @@ pub struct RecoveryReport {
 }
 
 fn backup_error(msg: impl Into<String>) -> rusqlite::Error {
-    rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(std::io::ErrorKind::Other, msg.into())))
+    rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        msg.into(),
+    )))
 }
 
 pub struct BackupManager;
@@ -39,7 +42,8 @@ impl BackupManager {
     ) -> Result<PathBuf> {
         let dest_dir = dest_dir.as_ref();
         if !dest_dir.exists() {
-            fs::create_dir_all(dest_dir).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            fs::create_dir_all(dest_dir)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         }
 
         let temp_filename = format!("{}.tmp.db", filename_stem);
@@ -59,9 +63,9 @@ impl BackupManager {
         }
 
         // SQLite 3.27+ parameterized VACUUM INTO creates a zero-lock, transactionally consistent snapshot
-        let temp_path_str = temp_path.to_str().ok_or_else(|| {
-            rusqlite::Error::InvalidPath(temp_path.clone())
-        })?;
+        let temp_path_str = temp_path
+            .to_str()
+            .ok_or_else(|| rusqlite::Error::InvalidPath(temp_path.clone()))?;
 
         // Helper closure to ensure temp_path is cleaned up on any failure
         let execute_snapshot = || -> Result<()> {
@@ -73,7 +77,8 @@ impl BackupManager {
                     .write(true)
                     .open(&temp_path)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-                file.sync_all().map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                file.sync_all()
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
             }
 
             // Integrity verification on the generated snapshot
@@ -107,11 +112,14 @@ impl BackupManager {
 
         // Compute SHA-256 checksum and write companion .sha256 file
         let checksum = {
-            let mut file = File::open(&temp_path).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            let mut file = File::open(&temp_path)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
             let mut hasher = Sha256::new();
             let mut buffer = [0u8; 8192];
             loop {
-                let count = file.read(&mut buffer).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                let count = file
+                    .read(&mut buffer)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
                 if count == 0 {
                     break;
                 }
@@ -122,9 +130,14 @@ impl BackupManager {
 
         let checksum_path = dest_dir.join(format!("{}.sha256", filename_stem));
         let write_checksum = || -> Result<()> {
-            let mut checksum_file = File::create(&checksum_path).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            checksum_file.write_all(checksum.as_bytes()).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            checksum_file.sync_all().map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            let mut checksum_file = File::create(&checksum_path)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            checksum_file
+                .write_all(checksum.as_bytes())
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            checksum_file
+                .sync_all()
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
             Ok(())
         };
 
@@ -150,10 +163,8 @@ impl BackupManager {
     pub fn validate_and_reconcile_staged_restore<P: AsRef<Path>>(
         staged_path: P,
     ) -> Result<RecoveryReport> {
-        let conn = Connection::open_with_flags(
-            staged_path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )?;
+        let conn =
+            Connection::open_with_flags(staged_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
 
         let mut foreign_key_violations = Vec::new();
         let mut duplicate_invoices = Vec::new();
@@ -162,9 +173,15 @@ impl BackupManager {
         // 1. Structural integrity check
         let mut stmt = conn.prepare("PRAGMA integrity_check;")?;
         let mut rows = stmt.query([])?;
-        let ok_str: String = rows.next()?.map(|r| r.get(0)).unwrap_or(Ok("failed".into()))?;
+        let ok_str: String = rows
+            .next()?
+            .map(|r| r.get(0))
+            .unwrap_or(Ok("failed".into()))?;
         if ok_str != "ok" {
-            rejected_or_quarantined_records.push(format!("Structural corruption: PRAGMA integrity_check returned '{}'", ok_str));
+            rejected_or_quarantined_records.push(format!(
+                "Structural corruption: PRAGMA integrity_check returned '{}'",
+                ok_str
+            ));
         }
 
         // 2. Foreign Key constraints check
@@ -174,7 +191,10 @@ impl BackupManager {
             let table: String = row.get(0)?;
             let rowid: i64 = row.get(1)?;
             let parent_table: String = row.get(2)?;
-            let msg = format!("FK violation in '{}' (rowid: {}) referencing parent '{}'", table, rowid, parent_table);
+            let msg = format!(
+                "FK violation in '{}' (rowid: {}) referencing parent '{}'",
+                table, rowid, parent_table
+            );
             foreign_key_violations.push(msg.clone());
             rejected_or_quarantined_records.push(msg);
         }
@@ -187,16 +207,23 @@ impl BackupManager {
         while let Some(row) = inv_rows.next()? {
             let inv_num: String = row.get(0)?;
             let count: i64 = row.get(1)?;
-            let msg = format!("Duplicate invoice collision: '{}' appears {} times", inv_num, count);
+            let msg = format!(
+                "Duplicate invoice collision: '{}' appears {} times",
+                inv_num, count
+            );
             duplicate_invoices.push(inv_num);
             rejected_or_quarantined_records.push(msg);
         }
 
         // 4. Counts and completeness
-        let total_sales_count: i64 = conn.query_row("SELECT COUNT(*) FROM sales;", [], |r| r.get(0))?;
-        let total_outbox_count: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox;", [], |r| r.get(0))?;
-        let total_cash_movements: i64 = conn.query_row("SELECT COUNT(*) FROM cash_movements;", [], |r| r.get(0))?;
-        let total_stock_movements: i64 = conn.query_row("SELECT COUNT(*) FROM stock_movements;", [], |r| r.get(0))?;
+        let total_sales_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM sales;", [], |r| r.get(0))?;
+        let total_outbox_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM sync_outbox;", [], |r| r.get(0))?;
+        let total_cash_movements: i64 =
+            conn.query_row("SELECT COUNT(*) FROM cash_movements;", [], |r| r.get(0))?;
+        let total_stock_movements: i64 =
+            conn.query_row("SELECT COUNT(*) FROM stock_movements;", [], |r| r.get(0))?;
 
         // 5. Sync outbox consistency: Every sale must have an outbox event
         if total_outbox_count < total_sales_count {
@@ -208,16 +235,18 @@ impl BackupManager {
         }
 
         // 6. Aggregate completeness: physical line items must have corresponding stock movements
-        let orphan_physical_items: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sale_items si
+        let orphan_physical_items: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sale_items si
              WHERE si.stock_deduction_delta < 0
                AND NOT EXISTS (
                    SELECT 1 FROM stock_movements sm 
                    WHERE sm.reference_id = si.sale_id AND sm.product_id = si.product_id
                );",
-            [],
-            |r| r.get(0),
-        ).unwrap_or(0);
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
 
         if orphan_physical_items > 0 {
             let msg = format!(
@@ -278,7 +307,8 @@ impl BackupManager {
                 .map(|d| d.as_millis())
                 .unwrap_or(0);
             let backup_copy = target_path.with_extension(format!("pre_restore_{}.bak", now_millis));
-            fs::copy(target_path, &backup_copy).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            fs::copy(target_path, &backup_copy)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         }
 
         // 3. Staged atomic copy: copy to .tmp.restore first, flush, then rename
@@ -287,7 +317,8 @@ impl BackupManager {
             let _ = fs::remove_file(&staging_path);
         }
 
-        fs::copy(backup_file, &staging_path).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        fs::copy(backup_file, &staging_path)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
         // Media flush
         {
@@ -295,16 +326,19 @@ impl BackupManager {
                 .write(true)
                 .open(&staging_path)
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            file.sync_all().map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            file.sync_all()
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         }
 
         // On Windows, remove existing target_path before rename if it exists
         if target_path.exists() {
-            fs::remove_file(target_path).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            fs::remove_file(target_path)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         }
 
         // Move to target
-        fs::rename(&staging_path, target_path).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        fs::rename(&staging_path, target_path)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
         Ok(report)
     }
@@ -318,7 +352,8 @@ impl BackupManager {
     ) -> Result<ScheduledBackupResult, String> {
         let backup_dir = backup_dir.as_ref();
         if !backup_dir.exists() {
-            fs::create_dir_all(backup_dir).map_err(|e| format!("Failed to create backup dir: {}", e))?;
+            fs::create_dir_all(backup_dir)
+                .map_err(|e| format!("Failed to create backup dir: {}", e))?;
         }
 
         let now_secs = std::time::SystemTime::now()
@@ -349,7 +384,10 @@ impl BackupManager {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                    if file_name.starts_with("malgudi_auto_backup_") && file_name.ends_with(".db") && !file_name.ends_with(".tmp.db") {
+                    if file_name.starts_with("malgudi_auto_backup_")
+                        && file_name.ends_with(".db")
+                        && !file_name.ends_with(".tmp.db")
+                    {
                         auto_backups.push(path);
                     }
                 }
@@ -394,4 +432,3 @@ pub struct ScheduledBackupResult {
     pub total_retained: usize,
     pub pruned_count: usize,
 }
-

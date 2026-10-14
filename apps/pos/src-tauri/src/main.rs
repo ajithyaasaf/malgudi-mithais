@@ -1,14 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::Mutex;
 use malgudi_pos_native::auth::{
     self, AuditEventRecord, AuthStatusResponse, CreateUserPayload, LoginPayload,
     ProvisionOwnerPayload, SessionInfo, SwitchCashierPayload, UserRecord,
 };
 use malgudi_pos_native::db::DatabaseManager;
 use malgudi_pos_native::inventory::{
-    self, AdjustStockPayload, CreateProductPayload, ProductRecord,
-    StockMovementRecord, UpdateProductPayload, VoidSalePayload,
+    self, AdjustStockPayload, CreateProductPayload, ProductRecord, StockMovementRecord,
+    UpdateProductPayload, VoidSalePayload,
 };
 use malgudi_pos_native::reports::{
     self, CashDrawerReport, DailySalesSummary, FinancialReportsAggregate, GstReport,
@@ -19,6 +18,7 @@ use malgudi_pos_native::transaction::{
     self, finalize_sale_atomic, FinalizeSalePayload, FinalizeSaleResult,
 };
 use rusqlite::Connection;
+use std::sync::Mutex;
 
 pub struct AppState {
     pub db: Mutex<Connection>,
@@ -140,7 +140,10 @@ fn auth_get_status(
     state: tauri::State<AppState>,
     session_token: Option<String>,
 ) -> Result<AuthStatusResponse, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     let is_prov = auth::is_provisioned(&conn)?;
     let active_session = if let Some(token) = session_token {
         auth::validate_session_and_permission(&conn, &token, "").ok()
@@ -159,16 +162,19 @@ fn auth_provision_owner(
     state: tauri::State<AppState>,
     payload: ProvisionOwnerPayload,
 ) -> Result<SessionInfo, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     auth::provision_first_owner(&conn, &payload)
 }
 
 #[tauri::command]
-fn auth_login(
-    state: tauri::State<AppState>,
-    payload: LoginPayload,
-) -> Result<SessionInfo, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+fn auth_login(state: tauri::State<AppState>, payload: LoginPayload) -> Result<SessionInfo, String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     auth::login(&conn, &payload)
 }
 
@@ -177,16 +183,19 @@ fn auth_switch_cashier(
     state: tauri::State<AppState>,
     payload: SwitchCashierPayload,
 ) -> Result<SessionInfo, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     auth::switch_cashier(&conn, &payload)
 }
 
 #[tauri::command]
-fn auth_logout(
-    state: tauri::State<AppState>,
-    session_token: String,
-) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+fn auth_logout(state: tauri::State<AppState>, session_token: String) -> Result<(), String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     auth::logout(&conn, &session_token)
 }
 
@@ -196,7 +205,10 @@ fn auth_create_user(
     session_token: String,
     payload: CreateUserPayload,
 ) -> Result<UserRecord, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     auth::create_user(&conn, &session_token, &payload)
 }
 
@@ -207,7 +219,10 @@ fn auth_update_user_status(
     user_id: String,
     status: String,
 ) -> Result<UserRecord, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     auth::update_user_status(&conn, &session_token, &user_id, &status)
 }
 
@@ -218,7 +233,10 @@ fn auth_reset_user_pin(
     user_id: String,
     new_pin: String,
 ) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     auth::reset_user_pin(&conn, &session_token, &user_id, &new_pin)
 }
 
@@ -227,7 +245,10 @@ fn auth_list_users(
     state: tauri::State<AppState>,
     session_token: String,
 ) -> Result<Vec<UserRecord>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     auth::list_users(&conn, &session_token)
 }
 
@@ -236,7 +257,10 @@ fn auth_get_security_logs(
     state: tauri::State<AppState>,
     session_token: String,
 ) -> Result<Vec<AuditEventRecord>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     auth::get_security_logs(&conn, &session_token)
 }
 
@@ -246,11 +270,15 @@ fn finalize_sale(
     session_token: String,
     mut payload: FinalizeSalePayload,
 ) -> Result<FinalizeSaleResult, String> {
-    let mut conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
-    
+    let mut conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+
     // Strict backend session & permission verification
-    let session = auth::validate_session_and_permission(&conn, &session_token, "billing:finalize_sale")
-        .map_err(|e| format!("Unauthorized: {}", e))?;
+    let session =
+        auth::validate_session_and_permission(&conn, &session_token, "billing:finalize_sale")
+            .map_err(|e| format!("Unauthorized: {}", e))?;
 
     // Enforce authentic actor identity & terminal context from validated session
     payload.cashier_id = session.user_id;
@@ -278,7 +306,10 @@ fn sync_get_branch_config(
     state: tauri::State<AppState>,
     _session_token: Option<String>,
 ) -> Result<sync::BranchConfig, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     let mut config = sync::get_branch_config(&conn)?;
 
     // Strict security guarantee: Never expose plaintext cloud API secrets over Tauri IPC to the webview
@@ -297,13 +328,19 @@ fn sync_set_branch_config(
     session_token: String,
     config: sync::BranchConfig,
 ) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     sync::save_branch_config(&conn, &session_token, &config)
 }
 
 #[tauri::command]
 fn sync_get_status(state: tauri::State<AppState>) -> Result<sync::SyncStatusInfo, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     sync::get_sync_status(&conn)
 }
 
@@ -312,7 +349,10 @@ fn sync_trigger_batch(
     state: tauri::State<AppState>,
     session_token: Option<String>,
 ) -> Result<sync::SyncBatchResult, String> {
-    let mut conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let mut conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     sync::sync_outbox_batch(&mut conn, session_token.as_deref())
 }
 
@@ -321,7 +361,10 @@ fn sync_inbound_catalog(
     state: tauri::State<AppState>,
     session_token: Option<String>,
 ) -> Result<sync::InboundCatalogSyncResult, String> {
-    let mut conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let mut conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     sync::sync_inbound_catalog(&mut conn, session_token.as_deref())
 }
 
@@ -330,7 +373,10 @@ fn sync_trigger_bidirectional(
     state: tauri::State<AppState>,
     session_token: Option<String>,
 ) -> Result<sync::BidirectionalSyncResult, String> {
-    let mut conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let mut conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     sync::sync_bidirectional(&mut conn, session_token.as_deref())
 }
 
@@ -339,9 +385,13 @@ fn get_recent_sales(
     state: tauri::State<AppState>,
     session_token: String,
 ) -> Result<Vec<PersistedSaleSummary>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
-    let _session = auth::validate_session_and_permission(&conn, &session_token, "billing:reprint_receipt")
-        .map_err(|e| format!("Unauthorized: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let _session =
+        auth::validate_session_and_permission(&conn, &session_token, "billing:reprint_receipt")
+            .map_err(|e| format!("Unauthorized: {}", e))?;
 
     let mut stmt = conn
         .prepare(
@@ -380,9 +430,13 @@ fn get_sale_details(
     session_token: String,
     invoice_or_sale_id: String,
 ) -> Result<DetailedSaleReceipt, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
-    let _session = auth::validate_session_and_permission(&conn, &session_token, "billing:reprint_receipt")
-        .map_err(|e| format!("Unauthorized: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let _session =
+        auth::validate_session_and_permission(&conn, &session_token, "billing:reprint_receipt")
+            .map_err(|e| format!("Unauthorized: {}", e))?;
 
     let sale_row = conn.query_row(
         "SELECT s.id, s.invoice_number, s.business_date, s.created_at, s.cashier_id, s.terminal_id, s.branch_id,
@@ -428,43 +482,47 @@ fn get_sale_details(
         auto_sync_enabled: true,
     });
 
-    let mut items_stmt = conn.prepare(
-        "SELECT si.product_id, COALESCE(p.name, si.product_id), COALESCE(p.tamil_name, ''),
+    let mut items_stmt = conn
+        .prepare(
+            "SELECT si.product_id, COALESCE(p.name, si.product_id), COALESCE(p.tamil_name, ''),
                 si.pricing_unit, si.quantity_input, si.unit_price_paise, si.taxable_paise,
                 si.cgst_paise, si.sgst_paise, si.total_tax_paise, si.gross_paise
          FROM sale_items si
          LEFT JOIN products p ON p.id = si.product_id
-         WHERE si.sale_id = ?1;"
-    ).map_err(|e| e.to_string())?;
+         WHERE si.sale_id = ?1;",
+        )
+        .map_err(|e| e.to_string())?;
 
-    let item_rows = items_stmt.query_map([&sale_id], |r| {
-        let pricing_unit: String = r.get(3)?;
-        let qty_input: i64 = r.get(4)?;
-        let qty_formatted = if pricing_unit == "PER_KG" {
-            if qty_input >= 1000 {
-                format!("{:.3} kg", (qty_input as f64) / 1000.0)
+    let item_rows = items_stmt
+        .query_map([&sale_id], |r| {
+            let pricing_unit: String = r.get(3)?;
+            let qty_input: i64 = r.get(4)?;
+            let qty_formatted = if pricing_unit == "PER_KG" {
+                if qty_input >= 1000 {
+                    format!("{:.3} kg", (qty_input as f64) / 1000.0)
+                } else {
+                    format!("{}g", qty_input)
+                }
             } else {
-                format!("{}g", qty_input)
-            }
-        } else {
-            format!("{} pcs", qty_input)
-        };
+                format!("{} pcs", qty_input)
+            };
 
-        Ok(DetailedReceiptItem {
-            product_id: r.get(0)?,
-            product_name: r.get(1)?,
-            tamil_name: r.get(2)?,
-            pricing_unit,
-            quantity_input: qty_input,
-            quantity_formatted: qty_formatted,
-            unit_price_paise: r.get(5)?,
-            taxable_paise: r.get(6)?,
-            cgst_paise: r.get(7)?,
-            sgst_paise: r.get(8)?,
-            total_tax_paise: r.get(9)?,
-            gross_paise: r.get(10)?,
+            Ok(DetailedReceiptItem {
+                product_id: r.get(0)?,
+                product_name: r.get(1)?,
+                tamil_name: r.get(2)?,
+                pricing_unit,
+                quantity_input: qty_input,
+                quantity_formatted: qty_formatted,
+                unit_price_paise: r.get(5)?,
+                taxable_paise: r.get(6)?,
+                cgst_paise: r.get(7)?,
+                sgst_paise: r.get(8)?,
+                total_tax_paise: r.get(9)?,
+                gross_paise: r.get(10)?,
+            })
         })
-    }).map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?;
 
     let mut items = Vec::new();
     for it in item_rows {
@@ -479,15 +537,17 @@ fn get_sale_details(
          WHERE sale_id = ?1;"
     ).map_err(|e| e.to_string())?;
 
-    let pay_rows = pay_stmt.query_map([&sale_id], |r| {
-        Ok(DetailedReceiptPayment {
-            payment_method: r.get(0)?,
-            allocated_amount_paise: r.get(1)?,
-            tendered_paise: r.get(2)?,
-            change_returned_paise: r.get(3)?,
-            net_amount_paise: r.get(4)?,
+    let pay_rows = pay_stmt
+        .query_map([&sale_id], |r| {
+            Ok(DetailedReceiptPayment {
+                payment_method: r.get(0)?,
+                allocated_amount_paise: r.get(1)?,
+                tendered_paise: r.get(2)?,
+                change_returned_paise: r.get(3)?,
+                net_amount_paise: r.get(4)?,
+            })
         })
-    }).map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?;
 
     let mut payments = Vec::new();
     for p in pay_rows {
@@ -525,12 +585,19 @@ fn cash_check_opening_float(
     state: tauri::State<AppState>,
     session_token: String,
 ) -> Result<OpeningFloatStatus, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     let session = auth::validate_session_and_permission(&conn, &session_token, "")
         .map_err(|e| format!("Unauthorized: {}", e))?;
 
     let now_iso = inventory::get_iso_now();
-    let today = if now_iso.len() >= 10 { now_iso[0..10].to_string() } else { "2026-10-14".to_string() };
+    let today = if now_iso.len() >= 10 {
+        now_iso[0..10].to_string()
+    } else {
+        "2026-10-14".to_string()
+    };
 
     let opening_float: Result<(i64, String), _> = conn.query_row(
         "SELECT amount_paise, created_at FROM cash_movements WHERE movement_type = 'OPENING_FLOAT' AND (session_id = ?1 OR SUBSTR(created_at, 1, 10) = ?2);",
@@ -571,16 +638,24 @@ fn cash_record_opening_float(
     amount_paise: i64,
     notes: Option<String>,
 ) -> Result<OpeningFloatStatus, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
-    let session = auth::validate_session_and_permission(&conn, &session_token, "billing:finalize_sale")
-        .map_err(|e| format!("Unauthorized: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let session =
+        auth::validate_session_and_permission(&conn, &session_token, "billing:finalize_sale")
+            .map_err(|e| format!("Unauthorized: {}", e))?;
 
     if amount_paise < 0 {
         return Err("Starting cash float cannot be negative.".to_string());
     }
 
     let now_iso = inventory::get_iso_now();
-    let today = if now_iso.len() >= 10 { now_iso[0..10].to_string() } else { "2026-10-14".to_string() };
+    let today = if now_iso.len() >= 10 {
+        now_iso[0..10].to_string()
+    } else {
+        "2026-10-14".to_string()
+    };
 
     let existing: i64 = conn.query_row(
         "SELECT COUNT(*) FROM cash_movements WHERE movement_type = 'OPENING_FLOAT' AND (session_id = ?1 OR SUBSTR(created_at, 1, 10) = ?2);",
@@ -592,7 +667,13 @@ fn cash_record_opening_float(
         return Err("Opening float has already been recorded for today.".to_string());
     }
 
-    let id = format!("mov_flt_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
+    let id = format!(
+        "mov_flt_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
     let branch_id = session.branch_id.clone();
     let ref_note = notes.unwrap_or_else(|| "Morning Opening Cash Float".to_string());
 
@@ -619,12 +700,19 @@ fn cash_record_day_close(
     counted_cash_paise: i64,
     notes: Option<String>,
 ) -> Result<DayEndSummary, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     let session = auth::validate_session_and_permission(&conn, &session_token, "")
         .map_err(|e| format!("Unauthorized: {}", e))?;
 
     let now_iso = inventory::get_iso_now();
-    let today = if now_iso.len() >= 10 { now_iso[0..10].to_string() } else { "2026-10-14".to_string() };
+    let today = if now_iso.len() >= 10 {
+        now_iso[0..10].to_string()
+    } else {
+        "2026-10-14".to_string()
+    };
     let branch_cfg = sync::get_branch_config(&conn).unwrap_or(sync::BranchConfig {
         branch_id: "IB".to_string(),
         branch_name: "Iyer Bungalow Branch (IB)".to_string(),
@@ -636,8 +724,16 @@ fn cash_record_day_close(
     });
     let branch_id = branch_cfg.branch_id.clone();
 
-    let id = format!("mov_cls_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
-    let ref_note = notes.clone().unwrap_or_else(|| "Day-End Cash Drawer Closure".to_string());
+    let id = format!(
+        "mov_cls_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
+    let ref_note = notes
+        .clone()
+        .unwrap_or_else(|| "Day-End Cash Drawer Closure".to_string());
 
     conn.execute(
         "INSERT INTO cash_movements (id, session_id, branch_id, movement_type, amount_paise, direction, reference_id, created_at)
@@ -657,11 +753,13 @@ fn cash_record_day_close(
     let pm = reports_agg.payment_summary;
     let gst = reports_agg.gst_report;
 
-    let pending_sync_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sync_outbox WHERE status = 'PENDING';",
-        [],
-        |r| r.get(0),
-    ).unwrap_or(0);
+    let pending_sync_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sync_outbox WHERE status = 'PENDING';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     let variance = counted_cash_paise - drawer.expected_closing_cash_paise;
 
@@ -700,7 +798,10 @@ fn get_day_end_report(
     session_token: String,
     target_date: String,
 ) -> Result<DayEndSummary, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     let session = auth::validate_session_and_permission(&conn, &session_token, "")
         .map_err(|e| format!("Unauthorized: {}", e))?;
 
@@ -727,13 +828,17 @@ fn get_day_end_report(
     let pm = reports_agg.payment_summary;
     let gst = reports_agg.gst_report;
 
-    let pending_sync_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sync_outbox WHERE status = 'PENDING';",
-        [],
-        |r| r.get(0),
-    ).unwrap_or(0);
+    let pending_sync_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sync_outbox WHERE status = 'PENDING';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
-    let counted = drawer.recorded_closing_cash_paise.unwrap_or(drawer.expected_closing_cash_paise);
+    let counted = drawer
+        .recorded_closing_cash_paise
+        .unwrap_or(drawer.expected_closing_cash_paise);
     let variance = drawer.variance_paise.unwrap_or(0);
 
     Ok(DayEndSummary {
@@ -767,10 +872,23 @@ fn get_day_end_report(
 
 #[tauri::command]
 fn get_database_info(state: tauri::State<AppState>) -> Result<DatabaseInfo, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
-    let journal_mode: String = conn.query_row("PRAGMA journal_mode;", [], |r| r.get(0)).unwrap_or_default();
-    let total_sales: i64 = conn.query_row("SELECT COUNT(*) FROM sales;", [], |r| r.get(0)).unwrap_or(0);
-    let pending_sync_count: i64 = conn.query_row("SELECT COUNT(*) FROM sync_outbox WHERE status = 'PENDING';", [], |r| r.get(0)).unwrap_or(0);
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let journal_mode: String = conn
+        .query_row("PRAGMA journal_mode;", [], |r| r.get(0))
+        .unwrap_or_default();
+    let total_sales: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sales;", [], |r| r.get(0))
+        .unwrap_or(0);
+    let pending_sync_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sync_outbox WHERE status = 'PENDING';",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
     let db_path = get_database_path().to_string_lossy().to_string();
     Ok(DatabaseInfo {
         db_path,
@@ -786,15 +904,23 @@ fn create_backup(
     session_token: String,
     dest_dir: Option<String>,
 ) -> Result<String, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
-    let _session = auth::validate_session_and_permission(&conn, &session_token, "admin:create_backup")
-        .map_err(|e| format!("Unauthorized: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let _session =
+        auth::validate_session_and_permission(&conn, &session_token, "admin:create_backup")
+            .map_err(|e| format!("Unauthorized: {}", e))?;
 
     let target_dir = dest_dir.unwrap_or_else(|| {
         let base_dir = std::env::var("LOCALAPPDATA")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::path::PathBuf::from("."));
-        base_dir.join("MalgudiMithaisPOS").join("backups").to_string_lossy().to_string()
+        base_dir
+            .join("MalgudiMithaisPOS")
+            .join("backups")
+            .to_string_lossy()
+            .to_string()
     });
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -805,7 +931,8 @@ fn create_backup(
         &conn,
         &target_dir,
         &filename_stem,
-    ).map_err(|e| format!("Backup creation failed: {}", e))?;
+    )
+    .map_err(|e| format!("Backup creation failed: {}", e))?;
 
     Ok(backup_path.to_string_lossy().to_string())
 }
@@ -817,15 +944,23 @@ fn backup_run_scheduled(
     dest_dir: Option<String>,
     max_retain: Option<usize>,
 ) -> Result<malgudi_pos_native::backup::ScheduledBackupResult, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
-    let _session = auth::validate_session_and_permission(&conn, &session_token, "admin:create_backup")
-        .map_err(|e| format!("Unauthorized: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let _session =
+        auth::validate_session_and_permission(&conn, &session_token, "admin:create_backup")
+            .map_err(|e| format!("Unauthorized: {}", e))?;
 
     let target_dir = dest_dir.unwrap_or_else(|| {
         let base_dir = std::env::var("LOCALAPPDATA")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::path::PathBuf::from("."));
-        base_dir.join("MalgudiMithaisPOS").join("backups").to_string_lossy().to_string()
+        base_dir
+            .join("MalgudiMithaisPOS")
+            .join("backups")
+            .to_string_lossy()
+            .to_string()
     });
 
     malgudi_pos_native::backup::BackupManager::run_scheduled_backup_with_retention(
@@ -841,7 +976,10 @@ fn inventory_list_products(
     branch_id: Option<String>,
     include_inactive: Option<bool>,
 ) -> Result<Vec<ProductRecord>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     let branch = branch_id.unwrap_or_else(|| {
         conn.query_row(
             "SELECT value FROM terminal_trust_state WHERE key = 'branch_id';",
@@ -859,7 +997,10 @@ fn inventory_create_product(
     session_token: String,
     payload: CreateProductPayload,
 ) -> Result<ProductRecord, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     inventory::create_product(&conn, &session_token, &payload)
 }
 
@@ -869,7 +1010,10 @@ fn inventory_update_product(
     session_token: String,
     payload: UpdateProductPayload,
 ) -> Result<ProductRecord, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     inventory::update_product(&conn, &session_token, &payload)
 }
 
@@ -880,7 +1024,10 @@ fn inventory_toggle_product_status(
     product_id: String,
     is_active: bool,
 ) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     inventory::toggle_product_status(&conn, &session_token, &product_id, is_active)
 }
 
@@ -890,7 +1037,10 @@ fn inventory_adjust_stock(
     session_token: String,
     payload: AdjustStockPayload,
 ) -> Result<StockMovementRecord, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     inventory::adjust_stock(&conn, &session_token, &payload)
 }
 
@@ -902,8 +1052,17 @@ fn inventory_list_movements(
     branch_id: Option<String>,
     limit: Option<u32>,
 ) -> Result<Vec<StockMovementRecord>, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
-    inventory::list_stock_movements(&conn, &session_token, product_id, branch_id, limit.unwrap_or(100))
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    inventory::list_stock_movements(
+        &conn,
+        &session_token,
+        product_id,
+        branch_id,
+        limit.unwrap_or(100),
+    )
 }
 
 #[tauri::command]
@@ -912,7 +1071,10 @@ fn inventory_void_sale(
     session_token: String,
     payload: VoidSalePayload,
 ) -> Result<(), String> {
-    let mut conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let mut conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     inventory::void_or_refund_sale(&mut conn, &session_token, &payload)
 }
 
@@ -922,7 +1084,10 @@ fn reports_get_financial_reports(
     session_token: String,
     filter: ReportFilterPayload,
 ) -> Result<FinancialReportsAggregate, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     reports::get_financial_reports_aggregate(&conn, &session_token, &filter)
 }
 
@@ -932,7 +1097,10 @@ fn reports_get_daily_sales(
     session_token: String,
     filter: ReportFilterPayload,
 ) -> Result<DailySalesSummary, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     reports::get_daily_sales_report(&conn, &session_token, &filter)
 }
 
@@ -942,7 +1110,10 @@ fn reports_get_payment_summary(
     session_token: String,
     filter: ReportFilterPayload,
 ) -> Result<PaymentSummaryReport, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     reports::get_payment_summary_report(&conn, &session_token, &filter)
 }
 
@@ -952,7 +1123,10 @@ fn reports_get_gst_report(
     session_token: String,
     filter: ReportFilterPayload,
 ) -> Result<GstReport, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     reports::get_gst_report(&conn, &session_token, &filter)
 }
 
@@ -962,7 +1136,10 @@ fn reports_get_product_sales(
     session_token: String,
     filter: ReportFilterPayload,
 ) -> Result<ProductSalesReport, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     reports::get_product_sales_report(&conn, &session_token, &filter)
 }
 
@@ -972,7 +1149,10 @@ fn reports_get_cash_drawer(
     session_token: String,
     filter: ReportFilterPayload,
 ) -> Result<CashDrawerReport, String> {
-    let conn = state.db.lock().map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
     reports::get_cash_drawer_report(&conn, &session_token, &filter)
 }
 
@@ -1010,7 +1190,10 @@ fn main() {
     let conn = match DatabaseManager::open_writable(&db_path) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[FATAL] Database initialization / integrity check failed: {}", e);
+            eprintln!(
+                "[FATAL] Database initialization / integrity check failed: {}",
+                e
+            );
             // Non-destructive corruption handling:
             // Quarantine corrupted database with timestamp: .corrupted.<timestamp>.bak
             // Never automatically delete or overwrite the original database!
@@ -1021,12 +1204,18 @@ fn main() {
 
             if db_path.exists() {
                 let quarantine_path = db_path.with_extension(format!("corrupted.{}.bak", now_secs));
-                eprintln!("[QUARANTINE] Preserving corrupted database to: {}", quarantine_path.display());
+                eprintln!(
+                    "[QUARANTINE] Preserving corrupted database to: {}",
+                    quarantine_path.display()
+                );
                 let _ = std::fs::copy(&db_path, &quarantine_path);
 
                 let wal_path = std::path::PathBuf::from(format!("{}-wal", db_path.display()));
                 if wal_path.exists() {
-                    let _ = std::fs::copy(&wal_path, db_path.with_extension(format!("corrupted.{}.wal.bak", now_secs)));
+                    let _ = std::fs::copy(
+                        &wal_path,
+                        db_path.with_extension(format!("corrupted.{}.wal.bak", now_secs)),
+                    );
                 }
             }
 
@@ -1044,6 +1233,8 @@ fn main() {
     sync::start_background_sync_worker(db_path, 20);
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             db: Mutex::new(conn),
         })
@@ -1096,4 +1287,3 @@ fn main() {
             }
         });
 }
-

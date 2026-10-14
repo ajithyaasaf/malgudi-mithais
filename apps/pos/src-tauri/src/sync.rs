@@ -1,10 +1,10 @@
+use crate::auth::validate_session_and_permission;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
-use crate::auth::validate_session_and_permission;
 
 static BACKGROUND_WORKER_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -167,7 +167,13 @@ pub fn get_branch_config(conn: &Connection) -> Result<BranchConfig, String> {
 
     let raw_name = get_val("branch_name");
     let branch_name = match raw_name {
-        Some(ref name) if !name.contains("Town Hall") && !name.contains("West Veli") && !name.trim().is_empty() => name.clone(),
+        Some(ref name)
+            if !name.contains("Town Hall")
+                && !name.contains("West Veli")
+                && !name.trim().is_empty() =>
+        {
+            name.clone()
+        }
         _ => {
             let correct = if branch_id == "IB" {
                 "Iyer Bungalow Branch (IB)".to_string()
@@ -200,9 +206,13 @@ pub fn get_branch_config(conn: &Connection) -> Result<BranchConfig, String> {
         .or_else(|| get_val("cloud_api_key"))
         .unwrap_or_else(|| {
             #[cfg(debug_assertions)]
-            { "malgudi_sync_secret_token_2026".to_string() }
+            {
+                "malgudi_sync_secret_token_2026".to_string()
+            }
             #[cfg(not(debug_assertions))]
-            { String::new() }
+            {
+                String::new()
+            }
         });
 
     let auto_sync_enabled = get_val("auto_sync_enabled")
@@ -255,8 +265,15 @@ pub fn save_branch_config(
             .map_err(|e| format!("Failed to save cloud_api_key: {}", e))?;
     }
 
-    set_val("auto_sync_enabled", if config.auto_sync_enabled { "true" } else { "false" })
-        .map_err(|e| format!("Failed to save auto_sync_enabled: {}", e))?;
+    set_val(
+        "auto_sync_enabled",
+        if config.auto_sync_enabled {
+            "true"
+        } else {
+            "false"
+        },
+    )
+    .map_err(|e| format!("Failed to save auto_sync_enabled: {}", e))?;
 
     crate::auth::record_audit_event(
         conn,
@@ -318,7 +335,8 @@ pub fn get_sync_status(conn: &Connection) -> Result<SyncStatusInfo, String> {
     let last_sync_error = get_val("last_sync_error");
 
     let last_inbound_sync_timestamp = get_val("last_inbound_sync_timestamp");
-    let last_inbound_sync_status = get_val("last_inbound_sync_status").unwrap_or_else(|| "IDLE".to_string());
+    let last_inbound_sync_status =
+        get_val("last_inbound_sync_status").unwrap_or_else(|| "IDLE".to_string());
     let last_inbound_sync_error = get_val("last_inbound_sync_error");
     let last_inbound_catalog_version: i64 = get_val("last_inbound_catalog_version")
         .and_then(|v| v.parse().ok())
@@ -430,7 +448,10 @@ pub fn sync_outbox_batch(
         events: req_items,
     };
 
-    let target_url = format!("{}/api/v1/sync/batch", config.cloud_api_url.trim_end_matches('/'));
+    let target_url = format!(
+        "{}/api/v1/sync/batch",
+        config.cloud_api_url.trim_end_matches('/')
+    );
 
     if config.cloud_api_key.trim().is_empty() {
         return Ok(SyncBatchResult {
@@ -805,7 +826,10 @@ pub fn sync_inbound_catalog(
                 applied_count: 0,
                 skipped_stale_count: 0,
                 latest_version: last_version,
-                message: format!("Inbound sync offline: {}. Billing continues uninterrupted.", err_msg),
+                message: format!(
+                    "Inbound sync offline: {}. Billing continues uninterrupted.",
+                    err_msg
+                ),
                 last_error: Some(err_msg),
             })
         }

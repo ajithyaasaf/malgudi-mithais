@@ -39,7 +39,11 @@ fn test_owner_provisioning_and_duplicate_rejection() {
 
     // Verify Argon2id hash is stored, NOT plaintext PIN
     let pin_hash: String = conn
-        .query_row("SELECT pin_hash FROM users WHERE username = 'owner_boss';", [], |r| r.get(0))
+        .query_row(
+            "SELECT pin_hash FROM users WHERE username = 'owner_boss';",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     assert!(pin_hash.starts_with("$argon2id$"));
     assert!(!pin_hash.contains("889900"));
@@ -239,7 +243,8 @@ fn test_cashier_handover_preserves_cash_session_and_drawer() {
         incoming_username: "kavitha".to_string(),
         incoming_pin: "445566".to_string(),
     };
-    let session_kavitha = auth::switch_cashier(&conn, &handover_payload).expect("Cashier handover failed");
+    let session_kavitha =
+        auth::switch_cashier(&conn, &handover_payload).expect("Cashier handover failed");
 
     // Invariants:
     // a. Incoming cashier is now Kavitha
@@ -250,7 +255,10 @@ fn test_cashier_handover_preserves_cash_session_and_drawer() {
     assert_eq!(session_kavitha.session_id, "sess_shift_morning_01");
     // c. Previous token is invalidated
     let old_token_check = auth::validate_session_and_permission(&conn, &session_anand.token, "");
-    assert!(old_token_check.is_err(), "Previous cashier's session must be invalidated");
+    assert!(
+        old_token_check.is_err(),
+        "Previous cashier's session must be invalidated"
+    );
 
     // d. Check audit trail recorded handover
     let handover_audit_count: i64 = conn
@@ -310,16 +318,31 @@ fn test_rbac_permissions_cashier_denied_admin_operations() {
     .unwrap();
 
     // 1. Cashier is permitted to perform billing
-    let billing_check = auth::validate_session_and_permission(&conn, &cashier_session.token, "billing:finalize_sale");
-    assert!(billing_check.is_ok(), "Cashier must have billing:finalize_sale permission");
+    let billing_check = auth::validate_session_and_permission(
+        &conn,
+        &cashier_session.token,
+        "billing:finalize_sale",
+    );
+    assert!(
+        billing_check.is_ok(),
+        "Cashier must have billing:finalize_sale permission"
+    );
 
     // 2. Cashier is DENIED admin operations
-    let user_mgmt_check = auth::validate_session_and_permission(&conn, &cashier_session.token, "admin:manage_users");
-    assert!(user_mgmt_check.is_err(), "Cashier must be blocked from admin:manage_users");
+    let user_mgmt_check =
+        auth::validate_session_and_permission(&conn, &cashier_session.token, "admin:manage_users");
+    assert!(
+        user_mgmt_check.is_err(),
+        "Cashier must be blocked from admin:manage_users"
+    );
     assert!(user_mgmt_check.unwrap_err().contains("FORBIDDEN"));
 
-    let backup_check = auth::validate_session_and_permission(&conn, &cashier_session.token, "admin:create_backup");
-    assert!(backup_check.is_err(), "Cashier must be blocked from admin:create_backup");
+    let backup_check =
+        auth::validate_session_and_permission(&conn, &cashier_session.token, "admin:create_backup");
+    assert!(
+        backup_check.is_err(),
+        "Cashier must be blocked from admin:create_backup"
+    );
     assert!(backup_check.unwrap_err().contains("FORBIDDEN"));
 
     // 3. Cashier attempting to create user directly via Rust function is rejected
@@ -366,7 +389,9 @@ fn test_last_owner_protection() {
         "DISABLED",
     );
     assert!(disable_err.is_err());
-    assert!(disable_err.unwrap_err().contains("CANNOT_DISABLE_LAST_OWNER"));
+    assert!(disable_err
+        .unwrap_err()
+        .contains("CANNOT_DISABLE_LAST_OWNER"));
 
     let _ = fs::remove_file(db_path);
 }
@@ -421,7 +446,10 @@ fn test_pin_reset_invalidates_active_sessions() {
 
     // Old session token is now invalid!
     let session_check = auth::validate_session_and_permission(&conn, &cashier_session.token, "");
-    assert!(session_check.is_err(), "Session must be terminated upon PIN reset");
+    assert!(
+        session_check.is_err(),
+        "Session must be terminated upon PIN reset"
+    );
 
     // Old PIN fails
     let old_pin_login = auth::login(

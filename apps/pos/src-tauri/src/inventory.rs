@@ -1,8 +1,8 @@
+use crate::auth::{record_audit_event, validate_session_and_permission};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use sha2::{Digest, Sha256};
-use crate::auth::{validate_session_and_permission, record_audit_event};
+use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProductRecord {
@@ -104,7 +104,11 @@ pub fn get_iso_now() -> String {
     let mut d = days as i64;
     let mut y = 1970;
     loop {
-        let leap = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 1 } else { 0 };
+        let leap = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+            1
+        } else {
+            0
+        };
         let days_in_y = 365 + leap;
         if d < days_in_y {
             break;
@@ -112,7 +116,11 @@ pub fn get_iso_now() -> String {
         d -= days_in_y;
         y += 1;
     }
-    let leap = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 1 } else { 0 };
+    let leap = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+        1
+    } else {
+        0
+    };
     let month_days = [31, 28 + leap, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut mon = 1;
     for &md in &month_days {
@@ -160,7 +168,9 @@ pub fn list_products(
          ORDER BY p.category_id, p.name;"
     };
 
-    let mut stmt = conn.prepare(query).map_err(|e| format!("Query prepare failed: {}", e))?;
+    let mut stmt = conn
+        .prepare(query)
+        .map_err(|e| format!("Query prepare failed: {}", e))?;
     let rows = stmt
         .query_map([branch_id], |r| {
             let is_active_int: i64 = r.get(13)?;
@@ -228,7 +238,9 @@ pub fn create_product(
 
     // Check SKU uniqueness
     let exists: bool = conn
-        .query_row("SELECT 1 FROM products WHERE sku = ?1;", [sku], |_| Ok(true))
+        .query_row("SELECT 1 FROM products WHERE sku = ?1;", [sku], |_| {
+            Ok(true)
+        })
         .unwrap_or(false);
     if exists {
         return Err(format!("A product with SKU '{}' already exists", sku));
@@ -287,10 +299,17 @@ pub fn create_product(
                  current_quantity = excluded.current_quantity,
                  updated_at = excluded.updated_at;",
             params![branch, product_id, initial_qty, payload.inventory_unit, now],
-        ).map_err(|e| format!("Failed to initialize stock balance: {}", e))?;
+        )
+        .map_err(|e| format!("Failed to initialize stock balance: {}", e))?;
     }
 
-    record_audit_event(conn, "PRODUCT_CREATED", "PRODUCT", &product_id, &session.user_id)?;
+    record_audit_event(
+        conn,
+        "PRODUCT_CREATED",
+        "PRODUCT",
+        &product_id,
+        &session.user_id,
+    )?;
 
     Ok(ProductRecord {
         id: product_id,
@@ -391,9 +410,16 @@ pub fn update_product(
             now,
             payload.id,
         ],
-    ).map_err(|e| format!("Failed to update product: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to update product: {}", e))?;
 
-    record_audit_event(conn, "PRODUCT_UPDATED", "PRODUCT", &payload.id, &session.user_id)?;
+    record_audit_event(
+        conn,
+        "PRODUCT_UPDATED",
+        "PRODUCT",
+        &payload.id,
+        &session.user_id,
+    )?;
 
     // Fetch updated record with branch balance
     let current_stock: i64 = conn
@@ -405,7 +431,11 @@ pub fn update_product(
         .unwrap_or(0);
 
     let created_at: String = conn
-        .query_row("SELECT created_at FROM products WHERE id = ?1;", [&payload.id], |r| r.get(0))
+        .query_row(
+            "SELECT created_at FROM products WHERE id = ?1;",
+            [&payload.id],
+            |r| r.get(0),
+        )
         .unwrap_or_else(|_| now.clone());
 
     Ok(ProductRecord {
@@ -423,7 +453,13 @@ pub fn update_product(
         tax_rate_bps: payload.tax_rate_bps,
         hsn_code: hsn.to_string(),
         is_active: payload.is_active,
-        version: conn.query_row("SELECT COALESCE(version, 1) FROM products WHERE id = ?1;", [&payload.id], |r| r.get(0)).unwrap_or(1),
+        version: conn
+            .query_row(
+                "SELECT COALESCE(version, 1) FROM products WHERE id = ?1;",
+                [&payload.id],
+                |r| r.get(0),
+            )
+            .unwrap_or(1),
         current_stock,
         stock_unit: payload.inventory_unit.clone(),
         created_at,
@@ -446,9 +482,14 @@ pub fn toggle_product_status(
     conn.execute(
         "UPDATE products SET is_active = ?1, updated_at = ?2 WHERE id = ?3;",
         params![is_active_int, now, product_id],
-    ).map_err(|e| format!("Failed to toggle product status: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to toggle product status: {}", e))?;
 
-    let action = if is_active { "PRODUCT_ACTIVATED" } else { "PRODUCT_DEACTIVATED" };
+    let action = if is_active {
+        "PRODUCT_ACTIVATED"
+    } else {
+        "PRODUCT_DEACTIVATED"
+    };
     record_audit_event(conn, action, "PRODUCT", product_id, &session.user_id)?;
 
     Ok(())
@@ -465,7 +506,9 @@ pub fn adjust_stock(
 
     let reason = payload.reason.trim();
     if reason.is_empty() {
-        return Err("MANDATORY_FIELD: A valid reason is required for stock adjustments.".to_string());
+        return Err(
+            "MANDATORY_FIELD: A valid reason is required for stock adjustments.".to_string(),
+        );
     }
 
     let allowed_types = [
@@ -479,13 +522,18 @@ pub fn adjust_stock(
         "RECONCILIATION_ADJUSTMENT",
     ];
     if !allowed_types.contains(&payload.movement_type.as_str()) {
-        return Err(format!("Invalid movement type: '{}'", payload.movement_type));
+        return Err(format!(
+            "Invalid movement type: '{}'",
+            payload.movement_type
+        ));
     }
 
     // Enforce correct sign for specific movement types
     let delta = match payload.movement_type.as_str() {
         "WASTAGE_DAMAGE" | "WASTAGE_EXPIRED" | "TRANSFER_OUT" => -payload.quantity_delta.abs(),
-        "RECEIPT_PRODUCTION" | "RECEIPT_SUPPLIER" | "OPENING_STOCK" | "TRANSFER_IN" => payload.quantity_delta.abs(),
+        "RECEIPT_PRODUCTION" | "RECEIPT_SUPPLIER" | "OPENING_STOCK" | "TRANSFER_IN" => {
+            payload.quantity_delta.abs()
+        }
         _ => payload.quantity_delta, // RECONCILIATION_ADJUSTMENT can be positive or negative
     };
 
@@ -495,7 +543,11 @@ pub fn adjust_stock(
 
     // Verify product exists and matches unit
     let product_exists: bool = conn
-        .query_row("SELECT 1 FROM products WHERE id = ?1;", [&payload.product_id], |_| Ok(true))
+        .query_row(
+            "SELECT 1 FROM products WHERE id = ?1;",
+            [&payload.product_id],
+            |_| Ok(true),
+        )
         .unwrap_or(false);
     if !product_exists {
         return Err(format!("Product '{}' not found", payload.product_id));
@@ -504,7 +556,14 @@ pub fn adjust_stock(
     let sm_id = format!("sm_{}", Uuid::now_v7());
     let now = get_iso_now();
     let ref_id = payload.reference_id.clone().unwrap_or_else(|| {
-        format!("ADJ-{}", Uuid::now_v7().to_string().chars().take(8).collect::<String>())
+        format!(
+            "ADJ-{}",
+            Uuid::now_v7()
+                .to_string()
+                .chars()
+                .take(8)
+                .collect::<String>()
+        )
     });
 
     conn.execute(
@@ -531,8 +590,15 @@ pub fn adjust_stock(
          ON CONFLICT(branch_id, product_id) DO UPDATE SET
              current_quantity = current_quantity + excluded.current_quantity,
              updated_at = excluded.updated_at;",
-        params![payload.branch_id, payload.product_id, delta, payload.unit, now],
-    ).map_err(|e| format!("Failed to update stock balance: {}", e))?;
+        params![
+            payload.branch_id,
+            payload.product_id,
+            delta,
+            payload.unit,
+            now
+        ],
+    )
+    .map_err(|e| format!("Failed to update stock balance: {}", e))?;
 
     // Outbox event for cloud synchronization
     let event_id = format!("sync_sm_{}", Uuid::now_v7());
@@ -547,7 +613,8 @@ pub fn adjust_stock(
         "reason": reason,
         "actor_id": session.user_id,
         "created_at": now
-    })).unwrap_or_default();
+    }))
+    .unwrap_or_default();
 
     let mut hasher = Sha256::new();
     hasher.update(payload_json.as_bytes());
@@ -564,7 +631,10 @@ pub fn adjust_stock(
         "STOCK_ADJUSTED",
         "PRODUCT",
         &payload.product_id,
-        &format!("{}: delta={} unit={} reason={}", session.user_id, delta, payload.unit, reason),
+        &format!(
+            "{}: delta={} unit={} reason={}",
+            session.user_id, delta, payload.unit, reason
+        ),
     )?;
 
     Ok(StockMovementRecord {
@@ -591,7 +661,11 @@ pub fn list_stock_movements(
 ) -> Result<Vec<StockMovementRecord>, String> {
     let _session = validate_session_and_permission(conn, session_token, "admin:manage_inventory")?;
 
-    let effective_limit = if limit == 0 || limit > 200 { 100 } else { limit };
+    let effective_limit = if limit == 0 || limit > 200 {
+        100
+    } else {
+        limit
+    };
 
     let mut query = "SELECT id, branch_id, product_id, movement_type, quantity_delta, unit, reference_id, reason, actor_id, created_at FROM stock_movements WHERE 1=1".to_string();
     let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
@@ -613,7 +687,9 @@ pub fn list_stock_movements(
     query.push_str(" ORDER BY created_at DESC LIMIT ?;");
     params_vec.push(rusqlite::types::Value::Integer(effective_limit as i64));
 
-    let mut stmt = conn.prepare(&query).map_err(|e| format!("Failed to prepare query: {}", e))?;
+    let mut stmt = conn
+        .prepare(&query)
+        .map_err(|e| format!("Failed to prepare query: {}", e))?;
     let rows = stmt
         .query_map(rusqlite::params_from_iter(params_vec), |r| {
             Ok(StockMovementRecord {
@@ -651,10 +727,14 @@ pub fn void_or_refund_sale(
 
     let reason = payload.reason.trim();
     if reason.is_empty() {
-        return Err("MANDATORY_FIELD: A valid reason is required to void or refund a sale.".to_string());
+        return Err(
+            "MANDATORY_FIELD: A valid reason is required to void or refund a sale.".to_string(),
+        );
     }
 
-    let tx = conn.transaction().map_err(|e| format!("Transaction error: {}", e))?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("Transaction error: {}", e))?;
 
     // 1. Verify sale exists and is not already VOIDED
     let sale_info: Option<(String, String, String, i64, String)> = tx
@@ -665,13 +745,17 @@ pub fn void_or_refund_sale(
         )
         .ok();
 
-    let (branch_id, session_id, current_sale_status, _net_payable, _payment_status) = match sale_info {
-        Some(info) => info,
-        None => return Err(format!("Sale '{}' not found", payload.sale_id)),
-    };
+    let (branch_id, session_id, current_sale_status, _net_payable, _payment_status) =
+        match sale_info {
+            Some(info) => info,
+            None => return Err(format!("Sale '{}' not found", payload.sale_id)),
+        };
 
     if current_sale_status == "VOIDED" {
-        return Err(format!("Sale '{}' is already voided. Duplicate reversal rejected.", payload.sale_id));
+        return Err(format!(
+            "Sale '{}' is already voided. Duplicate reversal rejected.",
+            payload.sale_id
+        ));
     }
 
     let now = get_iso_now();
@@ -683,7 +767,9 @@ pub fn void_or_refund_sale(
         ).map_err(|e| format!("Prepare stock reversal query failed: {}", e))?;
 
         let rows = sm_stmt
-            .query_map([&payload.sale_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .query_map([&payload.sale_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
             .map_err(|e| format!("Query map error: {}", e))?
             .filter_map(|r| r.ok())
             .collect();
@@ -719,7 +805,8 @@ pub fn void_or_refund_sale(
                  current_quantity = current_quantity + excluded.current_quantity,
                  updated_at = excluded.updated_at;",
             params![branch_id, product_id, reversal_qty, unit, now],
-        ).map_err(|e| format!("Failed to increment stock balance on void: {}", e))?;
+        )
+        .map_err(|e| format!("Failed to increment stock balance on void: {}", e))?;
     }
 
     // 4. Reverse cash movements if cash was received for this sale
@@ -752,7 +839,8 @@ pub fn void_or_refund_sale(
     tx.execute(
         "UPDATE sales SET sale_status = 'VOIDED', payment_status = 'REFUNDED' WHERE id = ?1;",
         [&payload.sale_id],
-    ).map_err(|e| format!("Failed to update sale status: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to update sale status: {}", e))?;
 
     // 6. Record audit event
     tx.execute(
@@ -764,7 +852,8 @@ pub fn void_or_refund_sale(
             session.user_id,
             now,
         ],
-    ).map_err(|e| format!("Failed to record audit event: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to record audit event: {}", e))?;
 
     // 7. Enqueue durable RETURN event in sync_outbox for central cloud sync
     let return_event_id = format!("sync_ret_{}", Uuid::now_v7());
@@ -774,7 +863,8 @@ pub fn void_or_refund_sale(
         "reason": reason,
         "voided_by": session.user_id,
         "voided_at": now
-    })).unwrap_or_default();
+    }))
+    .unwrap_or_default();
     let mut hasher = Sha256::new();
     hasher.update(return_payload.as_bytes());
     let payload_hash = format!("{:x}", hasher.finalize());
@@ -785,7 +875,8 @@ pub fn void_or_refund_sale(
         params![return_event_id, payload.sale_id, return_payload, payload_hash, now],
     ).map_err(|e| format!("Failed to record void outbox event: {}", e))?;
 
-    tx.commit().map_err(|e| format!("Commit void failed: {}", e))?;
+    tx.commit()
+        .map_err(|e| format!("Commit void failed: {}", e))?;
 
     Ok(())
 }

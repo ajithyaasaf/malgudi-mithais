@@ -4,7 +4,10 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 fn user_error(msg: &str) -> rusqlite::Error {
-    rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(std::io::ErrorKind::Other, msg)))
+    rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        msg,
+    )))
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -113,7 +116,7 @@ pub fn finalize_sale_atomic(
             "UPDATE invoice_series 
              SET current_seq = current_seq + 1 
              WHERE series_code = ?1 AND financial_year = ?2 
-             RETURNING current_seq;"
+             RETURNING current_seq;",
         )?;
         seq_stmt.query_row([&payload.series_code, &fy], |r| r.get(0))?
     };
@@ -124,7 +127,10 @@ pub fn finalize_sale_atomic(
     }
 
     // Boundary 2: Insert parent `sales` record
-    let sale_id = payload.sale_id.clone().unwrap_or_else(|| Uuid::now_v7().to_string());
+    let sale_id = payload
+        .sale_id
+        .clone()
+        .unwrap_or_else(|| Uuid::now_v7().to_string());
     let now_iso = chrono_lite_iso8601();
     tx.execute(
         "INSERT INTO sales (
@@ -294,7 +300,7 @@ pub fn finalize_sale_atomic(
     let event_id = Uuid::now_v7().to_string();
     let audit_id = Uuid::now_v7().to_string();
     let payload_json = serde_json::to_string(payload).unwrap_or_default();
-    
+
     let mut hasher = Sha256::new();
     hasher.update(payload_json.as_bytes());
     let payload_hash = format!("{:x}", hasher.finalize());
@@ -331,4 +337,3 @@ pub fn finalize_sale_atomic(
 fn chrono_lite_iso8601() -> String {
     crate::inventory::get_iso_now()
 }
-
