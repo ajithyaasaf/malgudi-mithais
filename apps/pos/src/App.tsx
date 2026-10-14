@@ -38,6 +38,87 @@ export interface FinalizeSaleResult {
   created_at: string;
 }
 
+export interface DetailedReceiptItem {
+  product_id: string;
+  product_name: string;
+  tamil_name: string;
+  pricing_unit: string;
+  quantity_input: number;
+  quantity_formatted: string;
+  unit_price_paise: number;
+  taxable_paise: number;
+  cgst_paise: number;
+  sgst_paise: number;
+  total_tax_paise: number;
+  gross_paise: number;
+}
+
+export interface DetailedReceiptPayment {
+  payment_method: string;
+  allocated_amount_paise: number;
+  tendered_paise: number;
+  change_returned_paise: number;
+  net_amount_paise: number;
+}
+
+export interface DetailedSaleReceipt {
+  sale_id: string;
+  invoice_number: string;
+  business_date: string;
+  created_at: string;
+  cashier_name: string;
+  terminal_id: string;
+  branch_id: string;
+  branch_name: string;
+  subtotal_taxable_paise: number;
+  total_cgst_paise: number;
+  total_sgst_paise: number;
+  round_off_paise: number;
+  net_payable_paise: number;
+  sale_status: string;
+  payment_status: string;
+  items: DetailedReceiptItem[];
+  payments: DetailedReceiptPayment[];
+  items_count?: number;
+}
+
+export interface OpeningFloatStatus {
+  has_opening_float: boolean;
+  opening_float_paise: number;
+  session_id: string;
+  business_date: string;
+  recorded_at?: string | null;
+  is_day_closed: boolean;
+}
+
+export interface DayEndSummary {
+  business_date: string;
+  branch_name: string;
+  terminal_id: string;
+  session_id: string;
+  closed_by_user: string;
+  closed_at: string;
+  opening_float_paise: number;
+  cash_sales_paise: number;
+  cash_refunds_paise: number;
+  expected_closing_cash_paise: number;
+  counted_closing_cash_paise: number;
+  variance_paise: number;
+  variance_notes?: string | null;
+  total_bills_recorded: number;
+  active_bills_count: number;
+  voided_bills_count: number;
+  gross_sales_paise: number;
+  net_sales_paise: number;
+  cash_realized_paise: number;
+  upi_realized_paise: number;
+  total_taxable_paise: number;
+  total_cgst_paise: number;
+  total_sgst_paise: number;
+  total_tax_paise: number;
+  pending_sync_count: number;
+}
+
 export interface DBProductRecord {
   id: string;
   name: string;
@@ -77,6 +158,24 @@ export function toProductDefinition(rec: DBProductRecord): ProductDefinition {
     hsn_code: rec.hsn_code,
     is_active: rec.is_active,
   };
+}
+
+export function formatDateTime(dateStr: string | number | undefined | null): string {
+  if (!dateStr) return '-';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return String(dateStr);
+    return d.toLocaleString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+  } catch {
+    return String(dateStr);
+  }
 }
 
 export interface StockMovementRecord {
@@ -584,7 +683,7 @@ export const App: React.FC = () => {
   // --- Reports State ---
   const [reportsLoading, setReportsLoading] = useState<boolean>(false);
   const [reportsError, setReportsError] = useState<string | null>(null);
-  const [activeReportView, setActiveReportView] = useState<'daily' | 'payments' | 'gst' | 'products' | 'drawer'>('daily');
+  const [activeReportView, setActiveReportView] = useState<'daily' | 'payments' | 'gst' | 'products' | 'drawer' | 'zreport'>('daily');
   const [reportStartDate, setReportStartDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [reportEndDate, setReportEndDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [reportsData, setReportsData] = useState<FinancialReportsAggregate | null>(null);
@@ -717,11 +816,11 @@ export const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
-  // Weight Entry Dialog state (for PER_KG products)
+  // Weight Entry Dialog state (for PER_KG and unit products)
   const [weightModalProduct, setWeightModalProduct] = useState<DBProductRecord | null>(null);
-  const [weightModalGrams, setWeightModalGrams] = useState<number>(375);
-  const [weightModalUnit, setWeightModalUnit] = useState<'g' | 'kg'>('g');
-  const [weightModalKgInput, setWeightModalKgInput] = useState<string>('0.375');
+  const [weightModalGrams, setWeightModalGrams] = useState<number>(250);
+  const [weightModalUnit, setWeightModalUnit] = useState<'g' | 'kg' | 'pc'>('g');
+  const [weightModalKgInput, setWeightModalKgInput] = useState<string>('0.25');
   const [weightModalCartIndex, setWeightModalCartIndex] = useState<number | null>(null);
 
   // --- 3. Active Order / Cart State ---
@@ -744,9 +843,10 @@ export const App: React.FC = () => {
     return 'CASHIER_ASSERTION_PERMITTED';
   });
 
-  // Automatically derive cash allocated to bill (No cashier input needed)
-  const derivedCashAllocatedRupees = Math.max(0, Math.round(totalGrossPaise / 100) - upiAllocatedRupees);
-  const changeReturnedPaise = Math.max(0, (cashTenderedRupees - derivedCashAllocatedRupees) * 100);
+  // Automatically derive cash allocated to bill (Exact paise arithmetic — zero split tender mismatch)
+  const derivedCashAllocatedPaise = Math.max(0, totalGrossPaise - Math.round(upiAllocatedRupees * 100));
+  const derivedCashAllocatedRupees = derivedCashAllocatedPaise / 100;
+  const changeReturnedPaise = Math.max(0, Math.round(cashTenderedRupees * 100) - derivedCashAllocatedPaise);
 
   // Store settlement policy updater for Owner/Admin Settings
   const handleUpdateSettlementPolicy = (newPolicy: SettlementPolicy) => {
@@ -763,8 +863,232 @@ export const App: React.FC = () => {
   const [isFinalizing, setIsFinalizing] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [persistedHistory, setPersistedHistory] = useState<FinalizeSaleResult[]>([]);
-  const [activeReceiptModal, setActiveReceiptModal] = useState<FinalizeSaleResult | null>(null);
+  const [activeReceiptModal, setActiveReceiptModal] = useState<DetailedSaleReceipt | null>(null);
   const [dbInfo, setDbInfo] = useState<{ db_path: string; is_wal_active: boolean; total_sales: number; pending_sync_count: number } | null>(null);
+
+  // --- Opening Cash Float (Morning Drawer Float) State ---
+  const [isOpeningFloatModalOpen, setIsOpeningFloatModalOpen] = useState<boolean>(false);
+  const [openingFloatStatus, setOpeningFloatStatus] = useState<OpeningFloatStatus | null>(null);
+  const [openingFloatInput, setOpeningFloatInput] = useState<string>('2000');
+  const [openingFloatNotes, setOpeningFloatNotes] = useState<string>('');
+  const [isOpeningFloatSubmitting, setIsOpeningFloatSubmitting] = useState<boolean>(false);
+
+  // --- Day-End Close (Z-Report) State ---
+  const [isDayCloseModalOpen, setIsDayCloseModalOpen] = useState<boolean>(false);
+  const [liveDrawerExpectedPaise, setLiveDrawerExpectedPaise] = useState<number>(0);
+  const [countedClosingCashInput, setCountedClosingCashInput] = useState<string>('');
+  const [dayCloseNotes, setDayCloseNotes] = useState<string>('');
+  const [isDayCloseSubmitting, setIsDayCloseSubmitting] = useState<boolean>(false);
+  const [activeZReportModal, setActiveZReportModal] = useState<DayEndSummary | null>(null);
+  const [archiveZReportDate, setArchiveZReportDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [archiveZReportLoading, setArchiveZReportLoading] = useState<boolean>(false);
+  const [archiveZReportData, setArchiveZReportData] = useState<DayEndSummary | null>(null);
+
+  // Helper: Open Detailed Receipt Reprint (Fetches line items & payments from SQLite)
+  const handleOpenReceiptReprint = async (invoiceNumber: string, fallbackSummary?: FinalizeSaleResult) => {
+    if (isTauriRuntime) {
+      try {
+        const detailed = await window.__TAURI__!.core.invoke<DetailedSaleReceipt>('get_sale_details', {
+          sessionToken: currentSession?.token,
+          invoiceOrSaleId: invoiceNumber,
+        });
+        setActiveReceiptModal(detailed);
+        return;
+      } catch (e) {
+        console.error('Failed to get sale details via Tauri:', e);
+      }
+    }
+
+    if (fallbackSummary) {
+      const mockReceipt: DetailedSaleReceipt = {
+        sale_id: fallbackSummary.sale_id,
+        invoice_number: fallbackSummary.invoice_number,
+        business_date: fallbackSummary.created_at.substring(0, 10),
+        created_at: fallbackSummary.created_at,
+        cashier_name: currentSession?.display_name || 'Staff Cashier',
+        terminal_id: currentSession?.terminal_id || 'T1',
+        branch_id: currentSession?.branch_id || 'IB',
+        branch_name: syncConfig?.branch_name || 'Iyer Bungalow Branch (IB)',
+        subtotal_taxable_paise: Math.round(fallbackSummary.net_payable_paise / 1.05),
+        total_cgst_paise: Math.round((fallbackSummary.net_payable_paise - Math.round(fallbackSummary.net_payable_paise / 1.05)) / 2),
+        total_sgst_paise: Math.round((fallbackSummary.net_payable_paise - Math.round(fallbackSummary.net_payable_paise / 1.05)) / 2),
+        round_off_paise: 0,
+        net_payable_paise: fallbackSummary.net_payable_paise,
+        sale_status: fallbackSummary.sale_status || 'FINALIZED',
+        payment_status: fallbackSummary.payment_status || 'SETTLED',
+        items: [],
+        payments: [
+          {
+            payment_method: fallbackSummary.cash_retained_paise > 0 ? 'CASH' : 'UPI',
+            allocated_amount_paise: fallbackSummary.net_payable_paise,
+            tendered_paise: fallbackSummary.cash_retained_paise || fallbackSummary.net_payable_paise,
+            change_returned_paise: 0,
+            net_amount_paise: fallbackSummary.net_payable_paise,
+          }
+        ],
+      };
+      setActiveReceiptModal(mockReceipt);
+    }
+  };
+
+  // Helper: Check Opening Float Status for Today
+  const checkOpeningFloatStatus = async (token?: string) => {
+    const activeToken = token || currentSession?.token;
+    if (!activeToken || !isTauriRuntime) return;
+    try {
+      const status = await window.__TAURI__!.core.invoke<OpeningFloatStatus>('cash_check_opening_float', {
+        sessionToken: activeToken,
+      });
+      setOpeningFloatStatus(status);
+      if (!status.has_opening_float && !status.is_day_closed) {
+        setIsOpeningFloatModalOpen(true);
+      }
+    } catch (e) {
+      console.error('Failed to check opening float:', e);
+    }
+  };
+
+  // Handler: Confirm Morning Opening Float
+  const handleConfirmOpeningFloat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentSession) return;
+    const amountRupees = parseFloat(openingFloatInput);
+    if (isNaN(amountRupees) || amountRupees < 0) {
+      alert('Please enter a valid non-negative starting cash float.');
+      return;
+    }
+    const amountPaise = Math.round(amountRupees * 100);
+    setIsOpeningFloatSubmitting(true);
+    try {
+      if (isTauriRuntime) {
+        const res = await window.__TAURI__!.core.invoke<OpeningFloatStatus>('cash_record_opening_float', {
+          sessionToken: currentSession.token,
+          amountPaise,
+          notes: openingFloatNotes.trim() || undefined,
+        });
+        setOpeningFloatStatus(res);
+      } else {
+        setOpeningFloatStatus({
+          has_opening_float: true,
+          opening_float_paise: amountPaise,
+          session_id: currentSession.session_id,
+          business_date: new Date().toISOString().substring(0, 10),
+          recorded_at: new Date().toISOString(),
+          is_day_closed: false,
+        });
+      }
+      setIsOpeningFloatModalOpen(false);
+    } catch (err: any) {
+      alert('Error recording starting cash float: ' + (err.message || String(err)));
+    } finally {
+      setIsOpeningFloatSubmitting(false);
+    }
+  };
+
+  // Handler: Open Day-End Close Modal with Live Expected Cash
+  const handleOpenDayCloseModal = async () => {
+    if (!currentSession) return;
+    setIsDayCloseModalOpen(true);
+    setCountedClosingCashInput('');
+    setDayCloseNotes('');
+    if (isTauriRuntime) {
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const drawerReport = await window.__TAURI__!.core.invoke<any>('reports_get_cash_drawer', {
+          sessionToken: currentSession.token,
+          filter: {
+            start_date: today,
+            end_date: today,
+            branch_id: currentSession.branch_id || 'IB',
+          },
+        });
+        if (drawerReport) {
+          setLiveDrawerExpectedPaise(drawerReport.expected_closing_cash_paise);
+          setCountedClosingCashInput((drawerReport.expected_closing_cash_paise / 100).toFixed(2));
+        }
+      } catch (e) {
+        console.error('Failed to pre-fill closing cash:', e);
+      }
+    }
+  };
+
+  // Handler: Execute Day Close & Produce Z-Report
+  const handleExecuteDayClose = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentSession) return;
+    const countedRupees = parseFloat(countedClosingCashInput);
+    if (isNaN(countedRupees) || countedRupees < 0) {
+      alert('Please enter a valid non-negative counted physical cash amount.');
+      return;
+    }
+    setIsDayCloseSubmitting(true);
+    try {
+      if (isTauriRuntime) {
+        const summary = await window.__TAURI__!.core.invoke<DayEndSummary>('cash_record_day_close', {
+          sessionToken: currentSession.token,
+          countedCashPaise: Math.round(countedRupees * 100),
+          notes: dayCloseNotes.trim() || undefined,
+        });
+        setIsDayCloseModalOpen(false);
+        setActiveZReportModal(summary);
+        if (openingFloatStatus) {
+          setOpeningFloatStatus({ ...openingFloatStatus, is_day_closed: true });
+        }
+      } else {
+        const today = new Date().toISOString().split('T')[0];
+        const mockSummary: DayEndSummary = {
+          business_date: today,
+          branch_name: syncConfig?.branch_name || 'Iyer Bungalow Branch (IB)',
+          terminal_id: currentSession.terminal_id || 'T1',
+          session_id: currentSession.session_id,
+          closed_by_user: currentSession.username,
+          closed_at: new Date().toISOString(),
+          opening_float_paise: (openingFloatStatus?.opening_float_paise || 200000),
+          cash_sales_paise: totalGrossPaise,
+          cash_refunds_paise: 0,
+          expected_closing_cash_paise: (openingFloatStatus?.opening_float_paise || 200000) + totalGrossPaise,
+          counted_closing_cash_paise: Math.round(countedRupees * 100),
+          variance_paise: Math.round(countedRupees * 100) - ((openingFloatStatus?.opening_float_paise || 200000) + totalGrossPaise),
+          variance_notes: dayCloseNotes.trim() || null,
+          total_bills_recorded: persistedHistory.length,
+          active_bills_count: persistedHistory.filter(h => h.sale_status !== 'VOIDED').length,
+          voided_bills_count: persistedHistory.filter(h => h.sale_status === 'VOIDED').length,
+          gross_sales_paise: totalGrossPaise,
+          net_sales_paise: totalGrossPaise,
+          cash_realized_paise: totalGrossPaise,
+          upi_realized_paise: 0,
+          total_taxable_paise: Math.round(totalGrossPaise / 1.05),
+          total_cgst_paise: Math.round((totalGrossPaise - Math.round(totalGrossPaise / 1.05)) / 2),
+          total_sgst_paise: Math.round((totalGrossPaise - Math.round(totalGrossPaise / 1.05)) / 2),
+          total_tax_paise: totalGrossPaise - Math.round(totalGrossPaise / 1.05),
+          pending_sync_count: 0,
+        };
+        setIsDayCloseModalOpen(false);
+        setActiveZReportModal(mockSummary);
+      }
+    } catch (err: any) {
+      alert('Failed to record day close: ' + (err.message || String(err)));
+    } finally {
+      setIsDayCloseSubmitting(false);
+    }
+  };
+
+  // Handler: Load Historical Z-Report for Any Past Date
+  const handleLoadArchiveZReport = async (targetDate: string) => {
+    if (!currentSession || !isTauriRuntime) return;
+    setArchiveZReportLoading(true);
+    try {
+      const summary = await window.__TAURI__!.core.invoke<DayEndSummary>('get_day_end_report', {
+        sessionToken: currentSession.token,
+        targetDate,
+      });
+      setArchiveZReportData(summary);
+    } catch (err: any) {
+      alert('Failed to load Z-Report: ' + (err.message || String(err)));
+    } finally {
+      setArchiveZReportLoading(false);
+    }
+  };
 
   // Initial Authentication Check
   useEffect(() => {
@@ -779,8 +1103,7 @@ export const App: React.FC = () => {
 
   // Open Payment Modal helper: synchronizes tender with current total
   const openPaymentModal = () => {
-    const currentTotalRupees = Math.round(totalGrossPaise / 100);
-    setCashTenderedRupees(currentTotalRupees);
+    setCashTenderedRupees(totalGrossPaise / 100);
     setUpiAllocatedRupees(0);
     setIsPaymentModalOpen(true);
   };
@@ -863,6 +1186,7 @@ export const App: React.FC = () => {
         const info = await window.__TAURI__!.core.invoke<any>('get_database_info');
         setDbInfo(info);
         await refreshCatalog(token);
+        await checkOpeningFloatStatus(token);
       } catch (err: any) {
         setErrorMessage('Failed to load session sales: ' + (err.message || String(err)));
       }
@@ -1685,6 +2009,23 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleOpenItemEditModal = (idx: number, item: SaleItemAllocation, prod?: DBProductRecord) => {
+    const productRecord = prod || catalog.find(p => p.id === item.product_id);
+    if (!productRecord) return;
+    setWeightModalProduct(productRecord);
+    setWeightModalCartIndex(idx);
+    if (productRecord.pricing_unit === 'PER_KG') {
+      const g = Math.round(item.quantity_input / 1000);
+      setWeightModalGrams(g);
+      setWeightModalKgInput((g / 1000).toString());
+      setWeightModalUnit('g');
+    } else {
+      setWeightModalGrams(item.quantity_input);
+      setWeightModalKgInput(item.quantity_input.toString());
+      setWeightModalUnit('pc');
+    }
+  };
+
   const addItemWithQuantity = (product: DBProductRecord, quantityInput: number, weightSource: WeightInputSource) => {
     try {
       const prodDef = toProductDefinition(product);
@@ -1720,9 +2061,13 @@ export const App: React.FC = () => {
   const handleWeightModalSubmit = () => {
     if (!weightModalProduct || weightModalGrams <= 0) return;
     try {
+      const qtyInput = weightModalProduct.pricing_unit === 'PER_KG'
+        ? Math.round(weightModalGrams * 1000)
+        : weightModalGrams;
+
       const newItem = calculateLineItem({
         product: toProductDefinition(weightModalProduct),
-        quantityInput: Math.round(weightModalGrams * 1000),
+        quantityInput: qtyInput,
         weightInputSource: 'MANUAL_KEYPAD',
       });
       if (weightModalCartIndex !== null && weightModalCartIndex >= 0) {
@@ -1732,7 +2077,16 @@ export const App: React.FC = () => {
           return next;
         });
       } else {
-        setCartItems(prev => [...prev, newItem]);
+        const existingIdx = cartItems.findIndex(i => i.product_id === weightModalProduct.id);
+        if (existingIdx >= 0) {
+          setCartItems(prev => {
+            const next = [...prev];
+            next[existingIdx] = newItem;
+            return next;
+          });
+        } else {
+          setCartItems(prev => [...prev, newItem]);
+        }
       }
       setWeightModalProduct(null);
       setWeightModalCartIndex(null);
@@ -1833,47 +2187,65 @@ export const App: React.FC = () => {
       }
 
       const totalPaise = totalGrossPaise;
-      const totalRupees = Math.round(totalPaise / 100);
       const payments: PaymentTenderAllocation[] = [];
-
-      let activeCashTendered = override?.cashTendered !== undefined ? override.cashTendered : cashTenderedRupees;
-      let activeUpiAllocated = override?.upiAllocated !== undefined ? override.upiAllocated : upiAllocatedRupees;
-      let activeCashAllocated = override?.cashAllocated !== undefined
-        ? override.cashAllocated
-        : Math.max(0, totalRupees - activeUpiAllocated);
 
       let activeUpiSource = override?.upiVerificationSource || upiVerificationSource;
 
-      // Auto-reconcile cash if UPI is not used and cash didn't match after cart quantity adjustments
-      if (activeCashAllocated * 100 + activeUpiAllocated * 100 !== totalPaise && activeUpiAllocated === 0) {
-        activeCashAllocated = totalRupees;
-        activeCashTendered = Math.max(activeCashTendered, activeCashAllocated);
+      // 1. Determine UPI allocation in paise
+      let activeUpiAllocatedPaise = 0;
+      if (override?.upiAllocated !== undefined) {
+        activeUpiAllocatedPaise = Math.round(override.upiAllocated * 100);
+      } else if (upiAllocatedRupees > 0) {
+        activeUpiAllocatedPaise = Math.round(upiAllocatedRupees * 100);
       }
 
-      const activeChangePaise = Math.max(0, (activeCashTendered - activeCashAllocated) * 100);
+      // If UPI covers full bill amount
+      if (activeUpiAllocatedPaise >= totalPaise || (override?.upiAllocated !== undefined && override.cashAllocated === 0)) {
+        activeUpiAllocatedPaise = totalPaise;
+      }
 
-      if (activeCashAllocated > 0) {
+      // 2. Determine Cash allocation in paise
+      let activeCashAllocatedPaise = 0;
+      if (activeUpiAllocatedPaise >= totalPaise) {
+        activeCashAllocatedPaise = 0;
+      } else if (activeUpiAllocatedPaise === 0) {
+        // Pure cash sale: guarantees 100% exact paise allocation
+        activeCashAllocatedPaise = totalPaise;
+      } else {
+        // Split sale: cash absorbs remainder to guarantee exact balance
+        activeCashAllocatedPaise = Math.max(0, totalPaise - activeUpiAllocatedPaise);
+      }
+
+      // 3. Determine Cash tendered and change returned in paise
+      let rawTendered = override?.cashTendered !== undefined ? override.cashTendered : cashTenderedRupees;
+      let activeCashTenderedPaise = activeCashAllocatedPaise > 0
+        ? Math.max(Math.round(rawTendered * 100), activeCashAllocatedPaise)
+        : 0;
+
+      const activeChangePaise = Math.max(0, activeCashTenderedPaise - activeCashAllocatedPaise);
+
+      if (activeCashAllocatedPaise > 0) {
         payments.push({
           id: `pay_cash_${Date.now()}`,
           payment_method: 'CASH',
-          allocated_amount_paise: activeCashAllocated * 100,
-          tendered_paise: activeCashTendered * 100,
+          allocated_amount_paise: activeCashAllocatedPaise,
+          tendered_paise: activeCashTenderedPaise,
           change_returned_paise: activeChangePaise,
-          net_amount_paise: activeCashAllocated * 100,
+          net_amount_paise: activeCashAllocatedPaise,
           outcome: 'SUCCESS',
           verification_source: 'PHYSICAL_CASH_DRAWER',
         });
       }
 
-      if (activeUpiAllocated > 0) {
+      if (activeUpiAllocatedPaise > 0) {
         const isGatewayConfirmed = activeUpiSource === 'GATEWAY_API';
         payments.push({
           id: `pay_upi_${Date.now()}`,
           payment_method: isGatewayConfirmed ? 'UPI_GATEWAY_DYNAMIC' : 'UPI_MANUAL_RECORDED',
-          allocated_amount_paise: activeUpiAllocated * 100,
-          tendered_paise: activeUpiAllocated * 100,
+          allocated_amount_paise: activeUpiAllocatedPaise,
+          tendered_paise: activeUpiAllocatedPaise,
           change_returned_paise: 0,
-          net_amount_paise: activeUpiAllocated * 100,
+          net_amount_paise: activeUpiAllocatedPaise,
           outcome: 'SUCCESS',
           verification_source: activeUpiSource,
           is_gateway_confirmed: isGatewayConfirmed,
@@ -1954,8 +2326,8 @@ export const App: React.FC = () => {
           payload_hash: rawResult.payload_hash,
           items_count: cartItems.length,
           net_payable_paise: totalGrossPaise,
-          cash_retained_paise: activeCashAllocated * 100,
-          upi_settled_paise: activeUpiAllocated * 100,
+          cash_retained_paise: activeCashAllocatedPaise,
+          upi_settled_paise: activeUpiAllocatedPaise,
           sale_status: 'COMPLETED',
           payment_status: lifecycleEval.derivedPaymentStatus,
           created_at: new Date().toISOString(),
@@ -1969,16 +2341,79 @@ export const App: React.FC = () => {
           payload_hash: `sha256_${Date.now()}`,
           items_count: cartItems.length,
           net_payable_paise: totalGrossPaise,
-          cash_retained_paise: activeCashAllocated * 100,
-          upi_settled_paise: activeUpiAllocated * 100,
+          cash_retained_paise: activeCashAllocatedPaise,
+          upi_settled_paise: activeUpiAllocatedPaise,
           sale_status: 'COMPLETED',
           payment_status: lifecycleEval.derivedPaymentStatus,
           created_at: new Date().toISOString(),
         };
       }
 
+      const detailedItems: DetailedReceiptItem[] = cartItems.map(item => {
+        const prod = catalog.find(p => p.id === item.product_id);
+        const qtyInput = item.pricing_unit === 'PER_KG' ? Math.round(item.quantity_input / 1000) : item.quantity_input;
+        const qtyFormatted = item.pricing_unit === 'PER_KG'
+          ? (qtyInput >= 1000 ? `${(qtyInput / 1000).toFixed(3)} kg` : `${qtyInput}g`)
+          : `${qtyInput} pcs`;
+
+        return {
+          product_id: item.product_id,
+          product_name: prod ? prod.name : item.product_id,
+          tamil_name: prod ? prod.tamil_name : '',
+          pricing_unit: item.pricing_unit,
+          quantity_input: qtyInput,
+          quantity_formatted: qtyFormatted,
+          unit_price_paise: prod ? prod.base_price_paise : 0,
+          taxable_paise: item.taxable_paise,
+          cgst_paise: item.cgst_paise,
+          sgst_paise: item.sgst_paise,
+          total_tax_paise: item.total_tax_paise,
+          gross_paise: item.gross_paise,
+        };
+      });
+
+      const detailedPayments: DetailedReceiptPayment[] = [];
+      if (activeCashAllocatedPaise > 0) {
+        detailedPayments.push({
+          payment_method: 'CASH',
+          allocated_amount_paise: activeCashAllocatedPaise,
+          tendered_paise: activeCashTenderedPaise,
+          change_returned_paise: activeChangePaise,
+          net_amount_paise: activeCashAllocatedPaise,
+        });
+      }
+      if (activeUpiAllocatedPaise > 0) {
+        detailedPayments.push({
+          payment_method: 'UPI',
+          allocated_amount_paise: activeUpiAllocatedPaise,
+          tendered_paise: activeUpiAllocatedPaise,
+          change_returned_paise: 0,
+          net_amount_paise: activeUpiAllocatedPaise,
+        });
+      }
+
+      const detailedReceipt: DetailedSaleReceipt = {
+        sale_id: committedRecord.sale_id,
+        invoice_number: committedRecord.invoice_number,
+        business_date: new Date().toISOString().substring(0, 10),
+        created_at: committedRecord.created_at,
+        cashier_name: currentSession.display_name,
+        terminal_id: currentSession.terminal_id,
+        branch_id: currentSession.branch_id,
+        branch_name: syncConfig?.branch_name || 'Iyer Bungalow Branch (IB)',
+        subtotal_taxable_paise: subtotalTaxablePaise,
+        total_cgst_paise: totalCgstPaise,
+        total_sgst_paise: totalSgstPaise,
+        round_off_paise: 0,
+        net_payable_paise: totalGrossPaise,
+        sale_status: committedRecord.sale_status || 'COMPLETED',
+        payment_status: committedRecord.payment_status || 'SETTLED',
+        items: detailedItems,
+        payments: detailedPayments,
+      };
+
       setPersistedHistory(prev => [committedRecord, ...prev]);
-      setActiveReceiptModal(committedRecord);
+      setActiveReceiptModal(detailedReceipt);
       setIsPaymentModalOpen(false);
       setIsUpiModalOpen(false);
       setUpiSimulatedVerified(false);
@@ -1997,7 +2432,7 @@ export const App: React.FC = () => {
   // --- Quick 1-Tap Payment Handlers ---
   const handleExactCashSale = () => {
     if (cartItems.length === 0 || isFinalizing) return;
-    const totalRupees = Math.round(totalGrossPaise / 100);
+    const totalRupees = totalGrossPaise / 100;
     handleFinalizeSale({
       cashTendered: totalRupees,
       cashAllocated: totalRupees,
@@ -2007,7 +2442,7 @@ export const App: React.FC = () => {
 
   const handleQuickUpiFinalize = () => {
     if (cartItems.length === 0 || isFinalizing) return;
-    const totalRupees = Math.round(totalGrossPaise / 100);
+    const totalRupees = totalGrossPaise / 100;
     const source: PaymentVerificationSource = settlementPolicy === 'STRICT_GATEWAY_ONLY' ? 'GATEWAY_API' : 'SOUNDBOX_BROADCAST';
     handleFinalizeSale({
       cashTendered: 0,
@@ -2468,6 +2903,26 @@ export const App: React.FC = () => {
             }}
           >
             🔄 Shift Handover
+          </button>
+
+          <button
+            onClick={handleOpenDayCloseModal}
+            title="Perform Day-End Register Closure & Print 80mm Z-Report"
+            style={{
+              padding: '5px 10px',
+              fontSize: 12,
+              fontWeight: 700,
+              backgroundColor: '#8B1E2D',
+              color: '#fff',
+              border: '1px solid #6F1623',
+              borderRadius: 4,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            🌙 Day Close & Z-Report
           </button>
 
           <button
@@ -3128,10 +3583,16 @@ export const App: React.FC = () => {
                     { id: 'gst', label: '🧾 GST Tax Slabs & Invoices' },
                     { id: 'products', label: '🏷️ Product & Category Sales' },
                     { id: 'drawer', label: '🗄️ Cash Drawer & Movements' },
+                    { id: 'zreport', label: '📋 Day-End Z-Reports' },
                   ].map(tab => (
                     <button
                       key={tab.id}
-                      onClick={() => setActiveReportView(tab.id as any)}
+                      onClick={() => {
+                        setActiveReportView(tab.id as any);
+                        if (tab.id === 'zreport' && !archiveZReportData) {
+                          handleLoadArchiveZReport(archiveZReportDate);
+                        }
+                      }}
                       style={{
                         padding: '8px 16px',
                         fontSize: 13,
@@ -3705,6 +4166,251 @@ export const App: React.FC = () => {
                     </div>
                   </div>
                 )}
+
+                {/* VIEW 6: Day-End Closure & Z-Report Historical Archive */}
+                {activeReportView === 'zreport' && (
+                  <div>
+                    {/* Date Selector Banner */}
+                    <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 16, marginBottom: 20 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                        <div>
+                          <h4 style={{ margin: 0, color: '#8B1E2D', fontSize: 15, fontWeight: 800 }}>
+                            📋 Historical Day-End Z-Report Archive (முடிவு ரொக்கம் & தணிக்கை அறிக்கை)
+                          </h4>
+                          <div style={{ fontSize: 11, color: '#666', marginTop: 3 }}>
+                            Inspect official end-of-day register closures, cash variance audits, and reprint 80mm thermal Z-slips for any date.
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const today = new Date().toISOString().split('T')[0];
+                              setArchiveZReportDate(today);
+                              handleLoadArchiveZReport(today);
+                            }}
+                            style={{ padding: '6px 12px', fontSize: 12, fontWeight: 600, backgroundColor: '#FFF9F0', border: '1px solid #8B1E2D', borderRadius: 4, color: '#8B1E2D', cursor: 'pointer' }}
+                          >
+                            Today
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const yest = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+                              setArchiveZReportDate(yest);
+                              handleLoadArchiveZReport(yest);
+                            }}
+                            style={{ padding: '6px 12px', fontSize: 12, fontWeight: 600, backgroundColor: '#FFF9F0', border: '1px solid #8B1E2D', borderRadius: 4, color: '#8B1E2D', cursor: 'pointer' }}
+                          >
+                            Yesterday
+                          </button>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 6 }}>
+                            <input
+                              type="date"
+                              value={archiveZReportDate}
+                              onChange={e => setArchiveZReportDate(e.target.value)}
+                              style={{ padding: '6px 10px', fontSize: 12, border: '1px solid #ccc', borderRadius: 4 }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleLoadArchiveZReport(archiveZReportDate)}
+                              disabled={archiveZReportLoading}
+                              style={{
+                                padding: '6px 14px',
+                                fontSize: 12,
+                                fontWeight: 700,
+                                backgroundColor: '#8B1E2D',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: 4,
+                                cursor: archiveZReportLoading ? 'not-allowed' : 'pointer',
+                              }}
+                            >
+                              {archiveZReportLoading ? '⏳ Loading...' : '🔍 Fetch Z-Report'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Report Output */}
+                    {archiveZReportLoading ? (
+                      <div style={{ textAlign: 'center', padding: '40px 20px', color: '#666', backgroundColor: '#fff', borderRadius: 8, border: '1px solid #ddd' }}>
+                        <div style={{ fontSize: 24, marginBottom: 8 }}>⏳</div>
+                        <div style={{ fontWeight: 600 }}>Aggregating authoritative Day-End Z-Report records from SQLite...</div>
+                      </div>
+                    ) : archiveZReportData ? (
+                      <div>
+                        {/* Summary Top Bar */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFF9F0', border: '2px solid #8B1E2D', borderRadius: 8, padding: '14px 18px', marginBottom: 20 }}>
+                          <div>
+                            <div style={{ fontSize: 17, fontWeight: 800, color: '#8B1E2D' }}>
+                              🏛️ Malgudi Mithais • Day-End Z-Report for {archiveZReportData.business_date}
+                            </div>
+                            <div style={{ fontSize: 12, color: '#555', marginTop: 4 }}>
+                              Branch: <strong>{archiveZReportData.branch_name}</strong> • Terminal: <strong>{archiveZReportData.terminal_id}</strong> • Closed by: <strong>{archiveZReportData.closed_by_user}</strong> ({archiveZReportData.closed_at ? formatDateTime(archiveZReportData.closed_at) : 'Auto-rollover / Session active'})
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setActiveZReportModal(archiveZReportData)}
+                            style={{
+                              padding: '9px 18px',
+                              backgroundColor: '#8B1E2D',
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: 6,
+                              fontWeight: 700,
+                              fontSize: 13,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              boxShadow: '0 2px 4px rgba(139,30,45,0.2)',
+                            }}
+                          >
+                            🖨️ View & Print 80mm Thermal Z-Slip
+                          </button>
+                        </div>
+
+                        {/* 4 Cards Grid */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 20 }}>
+                          {/* Card 1: Cash Drawer Variance */}
+                          <div style={{ backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: 16 }}>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: '#8B1E2D', marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 6 }}>
+                              💵 Cash Drawer Reconciliation
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                              <span style={{ color: '#666' }}>Opening Cash Float:</span>
+                              <strong>₹{(archiveZReportData.opening_float_paise / 100).toFixed(2)}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                              <span style={{ color: '#666' }}>(+) Cash Sales In:</span>
+                              <strong style={{ color: '#2E7D32' }}>+₹{(archiveZReportData.cash_sales_paise / 100).toFixed(2)}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                              <span style={{ color: '#666' }}>(-) Cash Refunds Out:</span>
+                              <strong style={{ color: '#C62828' }}>-₹{(archiveZReportData.cash_refunds_paise / 100).toFixed(2)}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6, borderTop: '1px dashed #ccc', paddingTop: 6 }}>
+                              <span style={{ color: '#444', fontWeight: 600 }}>Expected Drawer Cash:</span>
+                              <strong>₹{(archiveZReportData.expected_closing_cash_paise / 100).toFixed(2)}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 10 }}>
+                              <span style={{ color: '#444', fontWeight: 600 }}>Counted Closing Cash:</span>
+                              <strong>₹{(archiveZReportData.counted_closing_cash_paise / 100).toFixed(2)}</strong>
+                            </div>
+
+                            <div style={{
+                              padding: '8px 10px',
+                              borderRadius: 6,
+                              backgroundColor: archiveZReportData.variance_paise === 0 ? '#E8F5E9' : archiveZReportData.variance_paise > 0 ? '#FFF8E1' : '#FFEBEE',
+                              color: archiveZReportData.variance_paise === 0 ? '#2E7D32' : archiveZReportData.variance_paise > 0 ? '#F57F17' : '#C62828',
+                              fontWeight: 700,
+                              fontSize: 12,
+                              textAlign: 'center',
+                            }}>
+                              {archiveZReportData.variance_paise === 0
+                                ? '✨ PERFECT MATCH (₹0.00 Variance)'
+                                : archiveZReportData.variance_paise > 0
+                                ? `▲ OVERAGE: +₹${(archiveZReportData.variance_paise / 100).toFixed(2)}`
+                                : `▼ SHORTAGE: -₹${(Math.abs(archiveZReportData.variance_paise) / 100).toFixed(2)}`}
+                            </div>
+                            {archiveZReportData.variance_notes && (
+                              <div style={{ fontSize: 11, color: '#666', marginTop: 8, fontStyle: 'italic' }}>
+                                Notes: {archiveZReportData.variance_notes}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Card 2: Sales & Volume */}
+                          <div style={{ backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: 16 }}>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: '#8B1E2D', marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 6 }}>
+                              📊 Sales & Invoice Volumes
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                              <span style={{ color: '#666' }}>Total Bills Generated:</span>
+                              <strong>{archiveZReportData.total_bills_recorded}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                              <span style={{ color: '#666' }}>Active Settled Bills:</span>
+                              <strong style={{ color: '#2E7D32' }}>{archiveZReportData.active_bills_count}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                              <span style={{ color: '#666' }}>Voided / Cancelled:</span>
+                              <strong style={{ color: archiveZReportData.voided_bills_count > 0 ? '#C62828' : '#666' }}>{archiveZReportData.voided_bills_count}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6, borderTop: '1px dashed #ccc', paddingTop: 6 }}>
+                              <span style={{ color: '#444', fontWeight: 600 }}>Gross Sales Turnover:</span>
+                              <strong style={{ fontSize: 13, color: '#8B1E2D' }}>₹{(archiveZReportData.gross_sales_paise / 100).toFixed(2)}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                              <span style={{ color: '#444', fontWeight: 600 }}>Net Realized Revenue:</span>
+                              <strong style={{ fontSize: 13, color: '#2E7D32' }}>₹{(archiveZReportData.net_sales_paise / 100).toFixed(2)}</strong>
+                            </div>
+                          </div>
+
+                          {/* Card 3: Payment Tender Breakdown */}
+                          <div style={{ backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: 16 }}>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: '#8B1E2D', marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 6 }}>
+                              💳 Payment Method Split
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 8 }}>
+                              <span style={{ color: '#666' }}>💵 Cash Payments:</span>
+                              <strong>₹{(archiveZReportData.cash_realized_paise / 100).toFixed(2)}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 8 }}>
+                              <span style={{ color: '#666' }}>📱 UPI / Soundbox:</span>
+                              <strong>₹{(archiveZReportData.upi_realized_paise / 100).toFixed(2)}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, borderTop: '1px dashed #ccc', paddingTop: 8 }}>
+                              <span style={{ color: '#444', fontWeight: 700 }}>Total Collections:</span>
+                              <strong style={{ color: '#8B1E2D' }}>
+                                ₹{((archiveZReportData.cash_realized_paise + archiveZReportData.upi_realized_paise) / 100).toFixed(2)}
+                              </strong>
+                            </div>
+                          </div>
+
+                          {/* Card 4: GST Tax Breakdown */}
+                          <div style={{ backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: 16 }}>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: '#8B1E2D', marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 6 }}>
+                              🧾 GST Tax Breakdown (5%)
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                              <span style={{ color: '#666' }}>Taxable Sales (Ex-Tax):</span>
+                              <strong>₹{(archiveZReportData.total_taxable_paise / 100).toFixed(2)}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                              <span style={{ color: '#666' }}>CGST (2.5%):</span>
+                              <strong>₹{(archiveZReportData.total_cgst_paise / 100).toFixed(2)}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                              <span style={{ color: '#666' }}>SGST (2.5%):</span>
+                              <strong>₹{(archiveZReportData.total_sgst_paise / 100).toFixed(2)}</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, borderTop: '1px dashed #ccc', paddingTop: 6 }}>
+                              <span style={{ color: '#444', fontWeight: 700 }}>Total GST Payable:</span>
+                              <strong style={{ color: '#2E7D32' }}>₹{(archiveZReportData.total_tax_paise / 100).toFixed(2)}</strong>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ textAlign: 'center', padding: '40px 20px', color: '#666', backgroundColor: '#fff', borderRadius: 8, border: '1px solid #ddd' }}>
+                        <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
+                        <div style={{ fontWeight: 700, fontSize: 15, color: '#333', marginBottom: 4 }}>
+                          No Day-End Z-Report Loaded Yet
+                        </div>
+                        <div style={{ fontSize: 13, color: '#666', maxWidth: 440, margin: '0 auto' }}>
+                          Select any date above and click <strong>Fetch Z-Report</strong> to view the register closure records, cash drawer variances, and reprint 80mm thermal receipts.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -3713,17 +4419,46 @@ export const App: React.FC = () => {
               <div>
                 {/* Store Terminal Payment Settlement Mode */}
             <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 16, marginBottom: 20 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                 <h3 style={{ fontSize: 14, margin: 0, color: '#8B1E2D', fontWeight: 800 }}>
                   💳 Payment Settlement Mode (Retail Counter)
                 </h3>
-                <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 12, backgroundColor: '#E8F5E9', color: '#2E7D32', fontWeight: 'bold' }}>
-                  Active: Shop Soundbox & Cash
+                <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 12, backgroundColor: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#E3F2FD' : '#E8F5E9', color: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#1565C0' : '#2E7D32', fontWeight: 'bold' }}>
+                  Active: {settlementPolicy === 'STRICT_GATEWAY_ONLY' ? 'Strict Gateway Webhook' : 'Shop Soundbox & Cash'}
                 </span>
               </div>
-              <p style={{ fontSize: 12, color: '#666', margin: 0, lineHeight: 1.5 }}>
-                Standard retail operation active. Cashiers record payments as <strong>Cash</strong> or <strong>UPI</strong> based on physical counter soundbox voice alerts (PhonePe / GPay / Paytm). No external webhook delays or simulator buttons required.
-              </p>
+              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13, flex: 1, minWidth: 260 }}>
+                  <input
+                    type="radio"
+                    name="ownerSettlementPolicy"
+                    checked={settlementPolicy === 'CASHIER_ASSERTION_PERMITTED'}
+                    onChange={() => handleUpdateSettlementPolicy('CASHIER_ASSERTION_PERMITTED')}
+                    style={{ marginTop: 2 }}
+                  />
+                  <div>
+                    <strong style={{ fontSize: 13, color: '#1F1F1F', display: 'block' }}>Soundbox Audio Alert (Standard Retail)</strong>
+                    <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                      Cashiers record UPI payments after hearing the counter soundbox voice alert (PhonePe/Paytm/GPay).
+                    </div>
+                  </div>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13, flex: 1, minWidth: 260 }}>
+                  <input
+                    type="radio"
+                    name="ownerSettlementPolicy"
+                    checked={settlementPolicy === 'STRICT_GATEWAY_ONLY'}
+                    onChange={() => handleUpdateSettlementPolicy('STRICT_GATEWAY_ONLY')}
+                    style={{ marginTop: 2 }}
+                  />
+                  <div>
+                    <strong style={{ fontSize: 13, color: '#1F1F1F', display: 'block' }}>Strict Bank Gateway Only</strong>
+                    <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                      Requires automated bank webhook confirmation before invoices can be finalized.
+                    </div>
+                  </div>
+                </label>
+              </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 24, marginBottom: 24 }}>
@@ -4561,7 +5296,11 @@ export const App: React.FC = () => {
                       >
                         {/* Title & Delete */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <div>
+                          <div
+                            onClick={() => handleOpenItemEditModal(idx, item, prod)}
+                            style={{ cursor: 'pointer', flex: 1 }}
+                            title="Click to edit quantity or weight"
+                          >
                             <div style={{ fontWeight: 700, fontSize: 13, color: '#1F1F1F' }}>
                               {name}
                             </div>
@@ -4634,15 +5373,7 @@ export const App: React.FC = () => {
                                 />
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    if (prod && prod.pricing_unit === 'PER_KG') {
-                                      setWeightModalProduct(prod);
-                                      const g = Math.round(item.quantity_input / 1000);
-                                      setWeightModalGrams(g);
-                                      setWeightModalKgInput((g / 1000).toString());
-                                      setWeightModalCartIndex(idx);
-                                    }
-                                  }}
+                                  onClick={() => handleOpenItemEditModal(idx, item, prod)}
                                   style={{
                                     border: 'none',
                                     background: 'none',
@@ -4659,23 +5390,22 @@ export const App: React.FC = () => {
                               </div>
                             ) : (
                               <button
-                                onClick={() => {
-                                  if (prod && prod.pricing_unit === 'PER_KG') {
-                                    setWeightModalProduct(prod);
-                                    setWeightModalGrams(Math.round(item.quantity_input / 1000));
-                                    setWeightModalCartIndex(idx);
-                                  }
-                                }}
+                                type="button"
+                                onClick={() => handleOpenItemEditModal(idx, item, prod)}
                                 style={{
                                   border: 'none',
                                   background: 'none',
                                   fontWeight: 700,
                                   fontSize: 12,
-                                  color: '#1F1F1F',
+                                  color: '#8B1E2D',
                                   minWidth: 56,
                                   textAlign: 'center',
-                                  cursor: 'default',
+                                  cursor: 'pointer',
+                                  padding: '2px 4px',
+                                  borderRadius: 4,
+                                  backgroundColor: '#fff',
                                 }}
+                                title="Click to open quantity keypad / presets"
                               >
                                 {item.quantity_input} {item.pricing_unit === 'PER_PACK' ? 'pack' : 'pc'}
                               </button>
@@ -4880,274 +5610,420 @@ export const App: React.FC = () => {
               boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
-              <div>
-                <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 18 }}>{weightModalProduct.name}</h3>
-                <div style={{ fontSize: 12, color: '#666' }}>{weightModalProduct.tamil_name} • ₹{(weightModalProduct.base_price_paise / 100).toFixed(0)}/kg</div>
-              </div>
-              <button
-                onClick={() => setWeightModalProduct(null)}
-                style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
-              >
-                ✕
-              </button>
-            </div>
+            {(() => {
+              const isPerKg = weightModalProduct.pricing_unit === 'PER_KG';
+              const unitLabel = isPerKg ? 'kg' : weightModalProduct.pricing_unit === 'PER_PACK' ? 'pack' : 'pc';
 
-            {/* Unit Selector Toggle (g vs kg) */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, backgroundColor: '#FFFDF9', padding: '6px 12px', borderRadius: 8, border: '1px solid #EAD8C7' }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: '#6F1623' }}>Select Unit:</span>
-              <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1.5px solid #8B1E2D' }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setWeightModalUnit('g');
-                  }}
-                  style={{
-                    padding: '5px 14px',
-                    fontSize: 12,
-                    fontWeight: 700,
-                    border: 'none',
-                    backgroundColor: weightModalUnit === 'g' ? '#8B1E2D' : '#FFF9F0',
-                    color: weightModalUnit === 'g' ? '#fff' : '#8B1E2D',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Grams (g)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setWeightModalUnit('kg');
-                    setWeightModalKgInput((weightModalGrams / 1000).toString());
-                  }}
-                  style={{
-                    padding: '5px 14px',
-                    fontSize: 12,
-                    fontWeight: 700,
-                    border: 'none',
-                    backgroundColor: weightModalUnit === 'kg' ? '#8B1E2D' : '#FFF9F0',
-                    color: weightModalUnit === 'kg' ? '#fff' : '#8B1E2D',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Kilograms (kg)
-                </button>
-              </div>
-            </div>
+              return (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+                    <div>
+                      <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 18 }}>{weightModalProduct.name}</h3>
+                      <div style={{ fontSize: 12, color: '#666' }}>
+                        {weightModalProduct.tamil_name} • ₹{(weightModalProduct.base_price_paise / 100).toFixed(0)}/{unitLabel}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setWeightModalProduct(null)}
+                      style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
+                    >
+                      ✕
+                    </button>
+                  </div>
 
-            {/* Quick Weight Chips */}
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 11, fontWeight: 'bold', color: '#555', marginBottom: 6 }}>QUICK WEIGHT PRESETS</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
-                {(weightModalUnit === 'kg'
-                  ? [
-                      { label: '0.1 kg (100g)', g: 100, kg: '0.1' },
-                      { label: '0.25 kg (250g)', g: 250, kg: '0.25' },
-                      { label: '0.5 kg (500g)', g: 500, kg: '0.5' },
-                      { label: '0.75 kg (750g)', g: 750, kg: '0.75' },
-                      { label: '1.0 kg', g: 1000, kg: '1' },
-                      { label: '2.0 kg', g: 2000, kg: '2' },
-                    ]
-                  : [
-                      { label: '100 g', g: 100, kg: '0.1' },
-                      { label: '250 g', g: 250, kg: '0.25' },
-                      { label: '375 g', g: 375, kg: '0.375' },
-                      { label: '500 g', g: 500, kg: '0.5' },
-                      { label: '750 g', g: 750, kg: '0.75' },
-                      { label: '1000 g (1kg)', g: 1000, kg: '1' },
-                    ]
-                ).map(p => (
-                  <button
-                    key={p.label}
-                    type="button"
-                    onClick={() => {
-                      setWeightModalGrams(p.g);
-                      setWeightModalKgInput(p.kg);
-                    }}
-                    style={{
-                      padding: '8px 4px',
-                      borderRadius: 6,
-                      border: weightModalGrams === p.g ? '2px solid #8B1E2D' : '1px solid #ccc',
-                      backgroundColor: weightModalGrams === p.g ? '#8B1E2D' : '#fff',
-                      color: weightModalGrams === p.g ? '#fff' : '#1F1F1F',
-                      fontWeight: 'bold',
-                      fontSize: 12,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+                  {isPerKg ? (
+                    <>
+                      {/* Unit Selector Toggle (g vs kg) */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, backgroundColor: '#FFFDF9', padding: '6px 12px', borderRadius: 8, border: '1px solid #EAD8C7' }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: '#6F1623' }}>Select Unit:</span>
+                        <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1.5px solid #8B1E2D' }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setWeightModalUnit('g');
+                            }}
+                            style={{
+                              padding: '5px 14px',
+                              fontSize: 12,
+                              fontWeight: 700,
+                              border: 'none',
+                              backgroundColor: weightModalUnit === 'g' ? '#8B1E2D' : '#FFF9F0',
+                              color: weightModalUnit === 'g' ? '#fff' : '#8B1E2D',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Grams (g)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setWeightModalUnit('kg');
+                              setWeightModalKgInput((weightModalGrams / 1000).toString());
+                            }}
+                            style={{
+                              padding: '5px 14px',
+                              fontSize: 12,
+                              fontWeight: 700,
+                              border: 'none',
+                              backgroundColor: weightModalUnit === 'kg' ? '#8B1E2D' : '#FFF9F0',
+                              color: weightModalUnit === 'kg' ? '#fff' : '#8B1E2D',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Kilograms (kg)
+                          </button>
+                        </div>
+                      </div>
 
-            {/* Weight Display & Live Calculated Total */}
-            <div
-              style={{
-                backgroundColor: '#fff',
-                border: '1.5px solid #8B1E2D',
-                borderRadius: 8,
-                padding: '10px 14px',
-                marginBottom: 14,
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <div>
-                <span style={{ fontSize: 11, color: '#666', display: 'block', fontWeight: 600 }}>
-                  {weightModalUnit === 'kg' ? 'WEIGHT (TYPE IN KG)' : 'WEIGHT (TYPE IN GRAMS)'}
-                </span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                  {weightModalUnit === 'kg' ? (
-                    <input
-                      type="number"
-                      step="0.001"
-                      value={weightModalKgInput}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setWeightModalKgInput(val);
-                        const num = parseFloat(val) || 0;
-                        setWeightModalGrams(Math.round(num * 1000));
-                      }}
-                      autoFocus
-                      placeholder="0.0"
-                      style={{
-                        width: 110,
-                        padding: '4px 8px',
-                        fontSize: 20,
-                        fontWeight: 900,
-                        color: '#1F1F1F',
-                        border: '1.5px solid #8B1E2D',
-                        borderRadius: 6,
-                      }}
-                    />
+                      {/* Quick Weight Chips */}
+                      <div style={{ marginBottom: 14 }}>
+                        <div style={{ fontSize: 11, fontWeight: 'bold', color: '#555', marginBottom: 6 }}>QUICK WEIGHT PRESETS</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+                          {(weightModalUnit === 'kg'
+                            ? [
+                                { label: '0.1 kg (100g)', g: 100, kg: '0.1' },
+                                { label: '0.25 kg (250g)', g: 250, kg: '0.25' },
+                                { label: '0.5 kg (500g)', g: 500, kg: '0.5' },
+                                { label: '0.75 kg (750g)', g: 750, kg: '0.75' },
+                                { label: '1.0 kg', g: 1000, kg: '1' },
+                                { label: '2.0 kg', g: 2000, kg: '2' },
+                              ]
+                            : [
+                                { label: '100 g', g: 100, kg: '0.1' },
+                                { label: '250 g', g: 250, kg: '0.25' },
+                                { label: '375 g', g: 375, kg: '0.375' },
+                                { label: '500 g', g: 500, kg: '0.5' },
+                                { label: '750 g', g: 750, kg: '0.75' },
+                                { label: '1000 g (1kg)', g: 1000, kg: '1' },
+                              ]
+                          ).map(p => (
+                            <button
+                              key={p.label}
+                              type="button"
+                              onClick={() => {
+                                setWeightModalGrams(p.g);
+                                setWeightModalKgInput(p.kg);
+                              }}
+                              style={{
+                                padding: '8px 4px',
+                                borderRadius: 6,
+                                border: weightModalGrams === p.g ? '2px solid #8B1E2D' : '1px solid #ccc',
+                                backgroundColor: weightModalGrams === p.g ? '#8B1E2D' : '#fff',
+                                color: weightModalGrams === p.g ? '#fff' : '#1F1F1F',
+                                fontWeight: 'bold',
+                                fontSize: 12,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Weight Display & Live Calculated Total */}
+                      <div
+                        style={{
+                          backgroundColor: '#fff',
+                          border: '1.5px solid #8B1E2D',
+                          borderRadius: 8,
+                          padding: '10px 14px',
+                          marginBottom: 14,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <div>
+                          <span style={{ fontSize: 11, color: '#666', display: 'block', fontWeight: 600 }}>
+                            {weightModalUnit === 'kg' ? 'WEIGHT (TYPE IN KG)' : 'WEIGHT (TYPE IN GRAMS)'}
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                            {weightModalUnit === 'kg' ? (
+                              <input
+                                type="number"
+                                step="0.001"
+                                value={weightModalKgInput}
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  setWeightModalKgInput(val);
+                                  const num = parseFloat(val) || 0;
+                                  setWeightModalGrams(Math.round(num * 1000));
+                                }}
+                                autoFocus
+                                placeholder="0.0"
+                                style={{
+                                  width: 110,
+                                  padding: '4px 8px',
+                                  fontSize: 20,
+                                  fontWeight: 900,
+                                  color: '#1F1F1F',
+                                  border: '1.5px solid #8B1E2D',
+                                  borderRadius: 6,
+                                }}
+                              />
+                            ) : (
+                              <input
+                                type="number"
+                                step="1"
+                                value={weightModalGrams || ''}
+                                onChange={e => {
+                                  const g = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                  setWeightModalGrams(g);
+                                  setWeightModalKgInput((g / 1000).toString());
+                                }}
+                                autoFocus
+                                placeholder="0"
+                                style={{
+                                  width: 110,
+                                  padding: '4px 8px',
+                                  fontSize: 20,
+                                  fontWeight: 900,
+                                  color: '#1F1F1F',
+                                  border: '1.5px solid #8B1E2D',
+                                  borderRadius: 6,
+                                }}
+                              />
+                            )}
+                            <span style={{ fontSize: 16, fontWeight: 800, color: '#8B1E2D' }}>
+                              {weightModalUnit === 'kg' ? 'kg' : 'grams'}
+                            </span>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <span style={{ fontSize: 11, color: '#666', display: 'block' }}>LINE TOTAL</span>
+                          <span style={{ fontSize: 20, fontWeight: 900, color: '#8B1E2D' }}>
+                            ₹{((weightModalProduct.base_price_paise * (weightModalGrams / 1000)) / 100).toFixed(2)}
+                          </span>
+                          <span style={{ fontSize: 11, color: '#888', display: 'block' }}>
+                            {weightModalUnit === 'kg' ? `${weightModalGrams} g` : `${(weightModalGrams / 1000).toFixed(3)} kg`}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Numeric Keypad for Custom Weight */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 16 }}>
+                        {['1', '2', '3', '4', '5', '6', '7', '8', '9', weightModalUnit === 'kg' ? '.' : 'C', '0', '⌫'].map(k => (
+                          <button
+                            key={k}
+                            type="button"
+                            onClick={() => {
+                              if (k === 'C') {
+                                setWeightModalGrams(0);
+                                setWeightModalKgInput('0');
+                              } else if (k === '⌫') {
+                                if (weightModalUnit === 'kg') {
+                                  const next = weightModalKgInput.length > 1 ? weightModalKgInput.slice(0, -1) : '0';
+                                  setWeightModalKgInput(next);
+                                  setWeightModalGrams(Math.round((parseFloat(next) || 0) * 1000));
+                                } else {
+                                  const g = Math.floor(weightModalGrams / 10);
+                                  setWeightModalGrams(g);
+                                  setWeightModalKgInput((g / 1000).toString());
+                                }
+                              } else if (k === '.') {
+                                if (weightModalUnit === 'kg' && !weightModalKgInput.includes('.')) {
+                                  setWeightModalKgInput(prev => (prev === '0' || prev === '' ? '0.' : prev + '.'));
+                                }
+                              } else {
+                                // Digit
+                                if (weightModalUnit === 'kg') {
+                                  const next = weightModalKgInput === '0' ? k : weightModalKgInput + k;
+                                  setWeightModalKgInput(next);
+                                  setWeightModalGrams(Math.round((parseFloat(next) || 0) * 1000));
+                                } else {
+                                  const g = parseInt(`${weightModalGrams}${k}`, 10) || parseInt(k, 10);
+                                  setWeightModalGrams(g);
+                                  setWeightModalKgInput((g / 1000).toString());
+                                }
+                              }
+                            }}
+                            style={{
+                              padding: '10px',
+                              fontSize: 16,
+                              fontWeight: 'bold',
+                              backgroundColor: '#fff',
+                              border: '1px solid #ddd',
+                              borderRadius: 6,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {k}
+                          </button>
+                        ))}
+                      </div>
+                    </>
                   ) : (
-                    <input
-                      type="number"
-                      step="1"
-                      value={weightModalGrams || ''}
-                      onChange={e => {
-                        const g = Math.max(0, parseInt(e.target.value, 10) || 0);
-                        setWeightModalGrams(g);
-                        setWeightModalKgInput((g / 1000).toString());
-                      }}
-                      autoFocus
-                      placeholder="0"
-                      style={{
-                        width: 110,
-                        padding: '4px 8px',
-                        fontSize: 20,
-                        fontWeight: 900,
-                        color: '#1F1F1F',
-                        border: '1.5px solid #8B1E2D',
-                        borderRadius: 6,
-                      }}
-                    />
+                    <>
+                      {/* Quick Quantity Chips for Unit/Pack items */}
+                      <div style={{ marginBottom: 14 }}>
+                        <div style={{ fontSize: 11, fontWeight: 'bold', color: '#555', marginBottom: 6 }}>QUICK QUANTITY PRESETS</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+                          {[
+                            { label: '1 pc', val: 1 },
+                            { label: '2 pcs', val: 2 },
+                            { label: '3 pcs', val: 3 },
+                            { label: '5 pcs', val: 5 },
+                            { label: '10 pcs', val: 10 },
+                            { label: '20 pcs', val: 20 },
+                          ].map(p => (
+                            <button
+                              key={p.label}
+                              type="button"
+                              onClick={() => {
+                                setWeightModalGrams(p.val);
+                                setWeightModalKgInput(p.val.toString());
+                              }}
+                              style={{
+                                padding: '8px 4px',
+                                borderRadius: 6,
+                                border: weightModalGrams === p.val ? '2px solid #8B1E2D' : '1px solid #ccc',
+                                backgroundColor: weightModalGrams === p.val ? '#8B1E2D' : '#fff',
+                                color: weightModalGrams === p.val ? '#fff' : '#1F1F1F',
+                                fontWeight: 'bold',
+                                fontSize: 12,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Quantity Display & Live Calculated Total */}
+                      <div
+                        style={{
+                          backgroundColor: '#fff',
+                          border: '1.5px solid #8B1E2D',
+                          borderRadius: 8,
+                          padding: '10px 14px',
+                          marginBottom: 14,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <div>
+                          <span style={{ fontSize: 11, color: '#666', display: 'block', fontWeight: 600 }}>
+                            QUANTITY ({weightModalProduct.pricing_unit === 'PER_PACK' ? 'PACKS' : 'PIECES'})
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                            <input
+                              type="number"
+                              step="1"
+                              min="1"
+                              value={weightModalGrams || ''}
+                              onChange={e => {
+                                const qty = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                setWeightModalGrams(qty);
+                                setWeightModalKgInput(qty.toString());
+                              }}
+                              autoFocus
+                              placeholder="0"
+                              style={{
+                                width: 110,
+                                padding: '4px 8px',
+                                fontSize: 20,
+                                fontWeight: 900,
+                                color: '#1F1F1F',
+                                border: '1.5px solid #8B1E2D',
+                                borderRadius: 6,
+                              }}
+                            />
+                            <span style={{ fontSize: 16, fontWeight: 800, color: '#8B1E2D' }}>
+                              {weightModalProduct.pricing_unit === 'PER_PACK' ? 'pack(s)' : 'pc(s)'}
+                            </span>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <span style={{ fontSize: 11, color: '#666', display: 'block' }}>LINE TOTAL</span>
+                          <span style={{ fontSize: 20, fontWeight: 900, color: '#8B1E2D' }}>
+                            ₹{((weightModalProduct.base_price_paise * weightModalGrams) / 100).toFixed(2)}
+                          </span>
+                          <span style={{ fontSize: 11, color: '#888', display: 'block' }}>
+                            {weightModalGrams} {weightModalProduct.pricing_unit === 'PER_PACK' ? 'pack(s)' : 'pc(s)'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Numeric Keypad for Custom Quantity */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 16 }}>
+                        {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫'].map(k => (
+                          <button
+                            key={k}
+                            type="button"
+                            onClick={() => {
+                              if (k === 'C') {
+                                setWeightModalGrams(0);
+                                setWeightModalKgInput('0');
+                              } else if (k === '⌫') {
+                                const qty = Math.floor(weightModalGrams / 10);
+                                setWeightModalGrams(qty);
+                                setWeightModalKgInput(qty.toString());
+                              } else {
+                                const qty = parseInt(`${weightModalGrams}${k}`, 10) || parseInt(k, 10);
+                                setWeightModalGrams(qty);
+                                setWeightModalKgInput(qty.toString());
+                              }
+                            }}
+                            style={{
+                              padding: '10px',
+                              fontSize: 16,
+                              fontWeight: 'bold',
+                              backgroundColor: '#fff',
+                              border: '1px solid #ddd',
+                              borderRadius: 6,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {k}
+                          </button>
+                        ))}
+                      </div>
+                    </>
                   )}
-                  <span style={{ fontSize: 16, fontWeight: 800, color: '#8B1E2D' }}>
-                    {weightModalUnit === 'kg' ? 'kg' : 'grams'}
-                  </span>
-                </div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <span style={{ fontSize: 11, color: '#666', display: 'block' }}>LINE TOTAL</span>
-                <span style={{ fontSize: 20, fontWeight: 900, color: '#8B1E2D' }}>
-                  ₹{((weightModalProduct.base_price_paise * (weightModalGrams / 1000)) / 100).toFixed(2)}
-                </span>
-                <span style={{ fontSize: 11, color: '#888', display: 'block' }}>
-                  {weightModalUnit === 'kg' ? `${weightModalGrams} g` : `${(weightModalGrams / 1000).toFixed(3)} kg`}
-                </span>
-              </div>
-            </div>
 
-            {/* Numeric Keypad for Custom Weight */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 16 }}>
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9', weightModalUnit === 'kg' ? '.' : 'C', '0', '⌫'].map(k => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => {
-                    if (k === 'C') {
-                      setWeightModalGrams(0);
-                      setWeightModalKgInput('0');
-                    } else if (k === '⌫') {
-                      if (weightModalUnit === 'kg') {
-                        const next = weightModalKgInput.length > 1 ? weightModalKgInput.slice(0, -1) : '0';
-                        setWeightModalKgInput(next);
-                        setWeightModalGrams(Math.round((parseFloat(next) || 0) * 1000));
-                      } else {
-                        const g = Math.floor(weightModalGrams / 10);
-                        setWeightModalGrams(g);
-                        setWeightModalKgInput((g / 1000).toString());
-                      }
-                    } else if (k === '.') {
-                      if (weightModalUnit === 'kg' && !weightModalKgInput.includes('.')) {
-                        setWeightModalKgInput(prev => (prev === '0' || prev === '' ? '0.' : prev + '.'));
-                      }
-                    } else {
-                      // Digit
-                      if (weightModalUnit === 'kg') {
-                        const next = weightModalKgInput === '0' ? k : weightModalKgInput + k;
-                        setWeightModalKgInput(next);
-                        setWeightModalGrams(Math.round((parseFloat(next) || 0) * 1000));
-                      } else {
-                        const g = parseInt(`${weightModalGrams}${k}`, 10) || parseInt(k, 10);
-                        setWeightModalGrams(g);
-                        setWeightModalKgInput((g / 1000).toString());
-                      }
-                    }
-                  }}
-                  style={{
-                    padding: '10px',
-                    fontSize: 16,
-                    fontWeight: 'bold',
-                    backgroundColor: '#fff',
-                    border: '1px solid #ddd',
-                    borderRadius: 6,
-                    cursor: 'pointer',
-                  }}
-                >
-                  {k}
-                </button>
-              ))}
-            </div>
-
-            {/* Modal Actions */}
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button
-                type="button"
-                onClick={handleWeightModalSubmit}
-                disabled={weightModalGrams <= 0}
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  backgroundColor: weightModalGrams > 0 ? '#8B1E2D' : '#ccc',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 6,
-                  fontWeight: 'bold',
-                  fontSize: 15,
-                  cursor: weightModalGrams > 0 ? 'pointer' : 'not-allowed',
-                }}
-              >
-                {weightModalCartIndex !== null ? 'Update Weight' : '+ Add to Order'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setWeightModalProduct(null)}
-                style={{
-                  padding: '12px 18px',
-                  backgroundColor: '#ddd',
-                  border: 'none',
-                  borderRadius: 6,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                Cancel
-              </button>
-            </div>
+                  {/* Modal Actions */}
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button
+                      type="button"
+                      onClick={handleWeightModalSubmit}
+                      disabled={weightModalGrams <= 0}
+                      style={{
+                        flex: 1,
+                        padding: '12px',
+                        backgroundColor: weightModalGrams > 0 ? '#8B1E2D' : '#ccc',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 6,
+                        fontWeight: 'bold',
+                        fontSize: 15,
+                        cursor: weightModalGrams > 0 ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      {weightModalCartIndex !== null
+                        ? (isPerKg ? 'Update Weight' : 'Update Quantity')
+                        : '+ Add to Order'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWeightModalProduct(null)}
+                      style={{
+                        padding: '12px 18px',
+                        backgroundColor: '#ddd',
+                        border: 'none',
+                        borderRadius: 6,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -5241,7 +6117,7 @@ export const App: React.FC = () => {
               {/* Quick Cash Note Presets */}
               <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
                 {[
-                  { label: `Exact ₹${(totalGrossPaise / 100).toFixed(0)}`, val: Math.round(totalGrossPaise / 100) },
+                  { label: `Exact ₹${(totalGrossPaise / 100).toFixed(2)}`, val: totalGrossPaise / 100 },
                   { label: '₹100', val: 100 },
                   { label: '₹200', val: 200 },
                   { label: '₹500', val: 500 },
@@ -5295,9 +6171,9 @@ export const App: React.FC = () => {
 
             {/* Split Tender Balance Status */}
             {(() => {
-              const allocatedTotal = derivedCashAllocatedRupees * 100 + upiAllocatedRupees * 100;
-              const diff = totalGrossPaise - allocatedTotal;
-              const isBalanced = diff === 0;
+              const allocatedTotalPaise = derivedCashAllocatedPaise + Math.round(upiAllocatedRupees * 100);
+              const diffPaise = totalGrossPaise - allocatedTotalPaise;
+              const isBalanced = diffPaise === 0;
 
               return (
                 <div
@@ -5313,8 +6189,8 @@ export const App: React.FC = () => {
                     justifyContent: 'space-between',
                   }}
                 >
-                  <span>{isBalanced ? '✓ Tender Fully Reconciled' : diff > 0 ? `⚠ Remaining to Allocate: ₹${(diff / 100).toFixed(2)}` : `⚠ Over-allocated by ₹${(Math.abs(diff) / 100).toFixed(2)}`}</span>
-                  <span>Total Allocated: ₹{(allocatedTotal / 100).toFixed(2)}</span>
+                  <span>{isBalanced ? '✓ Tender Fully Reconciled' : diffPaise > 0 ? `⚠ Remaining to Allocate: ₹${(diffPaise / 100).toFixed(2)}` : `⚠ Over-allocated by ₹${(Math.abs(diffPaise) / 100).toFixed(2)}`}</span>
+                  <span>Total Allocated: ₹{(allocatedTotalPaise / 100).toFixed(2)}</span>
                 </div>
               );
             })()}
@@ -5550,11 +6426,11 @@ export const App: React.FC = () => {
                               </span>
                             )}
                           </td>
-                          <td style={{ padding: 8, color: '#666' }}>{new Date(s.created_at).toLocaleTimeString()}</td>
+                          <td style={{ padding: 8, color: '#666', whiteSpace: 'nowrap' }}>{formatDateTime(s.created_at)}</td>
                           <td style={{ padding: 8, textAlign: 'right' }}>
                             <button
                               onClick={() => {
-                                setActiveReceiptModal(s);
+                                handleOpenReceiptReprint(s.invoice_number, s);
                                 setIsHistoryModalOpen(false);
                               }}
                               style={{
@@ -5672,52 +6548,156 @@ export const App: React.FC = () => {
       {/* MODAL 5: Tax Invoice Receipt Modal                        */}
       {/* ========================================================= */}
       {activeReceiptModal && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1300 }}>
-          <div style={{ backgroundColor: '#fff', padding: 24, borderRadius: 8, width: 380, fontFamily: 'monospace', fontSize: 13, boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>
-            <div style={{ textAlign: 'center', borderBottom: '1px dashed #000', paddingBottom: 8, marginBottom: 8 }}>
-              <div style={{ fontWeight: 'bold', fontSize: 16 }}>MALGUDI MITHAIS</div>
-              <div>West Veli Street, Madurai - 625001</div>
-              <div>GSTIN: 33AAAAA0000A1Z5</div>
-            </div>
-
-            <div style={{ marginBottom: 8 }}>
-              <div><strong>Invoice:</strong> {activeReceiptModal.invoice_number}</div>
-              <div><strong>Cashier:</strong> {currentSession.display_name}</div>
-              <div><strong>Terminal:</strong> {currentSession.branch_id}/{currentSession.terminal_id}</div>
-              <div><strong>Date:</strong> {new Date(activeReceiptModal.created_at).toLocaleString()}</div>
-              <div><strong>Status:</strong> {activeReceiptModal.payment_status}</div>
-            </div>
-
-            <div style={{ borderBottom: '1px dashed #000', borderTop: '1px dashed #000', padding: '6px 0', marginBottom: 8 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
-                <span>Total Net Payable:</span>
-                <span>₹{(activeReceiptModal.net_payable_paise / 100).toFixed(2)}</span>
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1300, padding: 16 }}>
+          <div style={{ backgroundColor: '#fff', padding: 22, borderRadius: 8, width: 380, maxWidth: '95vw', fontFamily: 'monospace', fontSize: 12, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
+            {/* Printable Receipt Area */}
+            <div id="receipt-print-area">
+              <div style={{ textAlign: 'center', borderBottom: '1px dashed #000', paddingBottom: 8, marginBottom: 8 }}>
+                <div style={{ fontWeight: 'bold', fontSize: 16, letterSpacing: 0.5 }}>MALGUDI MITHAIS</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#333', marginTop: 2 }}>
+                  {activeReceiptModal.branch_name || 'Iyer Bungalow Branch (IB)'}
+                </div>
+                <div style={{ fontSize: 11, color: '#555' }}>West Veli Street, Madurai - 625001</div>
+                <div style={{ fontSize: 11, color: '#555' }}>GSTIN: 33AAAAA0000A1Z5</div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 4 }}>
-                <span>Net Cash Inflow:</span>
-                <span>₹{(activeReceiptModal.cash_retained_paise / 100).toFixed(2)}</span>
+
+              {activeReceiptModal.sale_status === 'VOIDED' && (
+                <div style={{ backgroundColor: '#FFEBEE', color: '#B71C1C', fontWeight: 900, textAlign: 'center', padding: '6px 0', margin: '6px 0', border: '1px dashed #B71C1C', fontSize: 13, letterSpacing: 1 }}>
+                  *** VOIDED / REFUNDED ***
+                </div>
+              )}
+
+              <div style={{ marginBottom: 8, fontSize: 11, lineHeight: 1.5 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span><strong>Invoice:</strong> {activeReceiptModal.invoice_number}</span>
+                  <span><strong>Status:</strong> {activeReceiptModal.payment_status}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span><strong>Cashier:</strong> {activeReceiptModal.cashier_name}</span>
+                  <span><strong>Terminal:</strong> {activeReceiptModal.branch_id}/{activeReceiptModal.terminal_id}</span>
+                </div>
+                <div><strong>Date:</strong> {formatDateTime(activeReceiptModal.created_at)}</div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                <span>UPI Payment:</span>
-                <span>₹{(activeReceiptModal.upi_settled_paise / 100).toFixed(2)}</span>
+
+              {/* Itemized Table */}
+              <div style={{ borderTop: '1px dashed #000', borderBottom: '1px dashed #000', padding: '6px 0', marginBottom: 8 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px dashed #aaa', textAlign: 'left' }}>
+                      <th style={{ paddingBottom: 4 }}>Item</th>
+                      <th style={{ paddingBottom: 4, textAlign: 'center' }}>Qty</th>
+                      <th style={{ paddingBottom: 4, textAlign: 'right' }}>Rate</th>
+                      <th style={{ paddingBottom: 4, textAlign: 'right' }}>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeReceiptModal.items && activeReceiptModal.items.length > 0 ? (
+                      activeReceiptModal.items.map((it, idx) => (
+                        <tr key={idx} style={{ verticalAlign: 'top', borderBottom: '1px dotted #eee' }}>
+                          <td style={{ padding: '4px 0' }}>
+                            <div style={{ fontWeight: 600 }}>{it.product_name}</div>
+                            {it.tamil_name && <div style={{ fontSize: 10, color: '#666' }}>{it.tamil_name}</div>}
+                          </td>
+                          <td style={{ padding: '4px 0', textAlign: 'center', whiteSpace: 'nowrap' }}>{it.quantity_formatted}</td>
+                          <td style={{ padding: '4px 0', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            ₹{(it.unit_price_paise / 100).toFixed(0)}
+                          </td>
+                          <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                            ₹{(it.gross_paise / 100).toFixed(2)}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={4} style={{ textAlign: 'center', padding: '8px 0', color: '#666' }}>
+                          Items Billed: {activeReceiptModal.items_count || 1}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Tax & Net Totals */}
+              <div style={{ borderBottom: '1px dashed #000', paddingBottom: 6, marginBottom: 8, fontSize: 11 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
+                  <span>Taxable Subtotal:</span>
+                  <span>₹{(activeReceiptModal.subtotal_taxable_paise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
+                  <span>CGST (2.5%):</span>
+                  <span>₹{(activeReceiptModal.total_cgst_paise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
+                  <span>SGST (2.5%):</span>
+                  <span>₹{(activeReceiptModal.total_sgst_paise / 100).toFixed(2)}</span>
+                </div>
+                {activeReceiptModal.round_off_paise !== 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
+                    <span>Round-off:</span>
+                    <span>₹{(activeReceiptModal.round_off_paise / 100).toFixed(2)}</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: 15, marginTop: 4, color: '#8B1E2D', borderTop: '1px solid #ddd', paddingTop: 4 }}>
+                  <span>TOTAL NET PAYABLE:</span>
+                  <span>₹{(activeReceiptModal.net_payable_paise / 100).toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Payment Tender Breakdown */}
+              <div style={{ borderBottom: '1px dashed #000', paddingBottom: 6, marginBottom: 8, fontSize: 11 }}>
+                {activeReceiptModal.payments && activeReceiptModal.payments.length > 0 ? (
+                  activeReceiptModal.payments.map((p, idx) => (
+                    <div key={idx} style={{ marginBottom: 2 }}>
+                      {p.payment_method === 'CASH' ? (
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span>💵 Cash Tendered:</span>
+                            <span>₹{(p.tendered_paise / 100).toFixed(2)}</span>
+                          </div>
+                          {p.change_returned_paise > 0 && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#2E7D32' }}>
+                              <span>Change Returned:</span>
+                              <span>₹{(p.change_returned_paise / 100).toFixed(2)}</span>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>📱 UPI / Soundbox:</span>
+                          <span>₹{(p.net_amount_paise / 100).toFixed(2)}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Payment Method:</span>
+                    <span>{activeReceiptModal.payment_status}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Retail Customer Greetings */}
+              <div style={{ textAlign: 'center', fontSize: 11, color: '#444', margin: '10px 0 6px 0' }}>
+                <div style={{ fontWeight: 700 }}>Thank you for choosing Malgudi Mithais!</div>
+                <div style={{ fontSize: 10, color: '#777', marginTop: 2 }}>Sweetening your celebrations • Visit again!</div>
               </div>
             </div>
 
-            <div style={{ textAlign: 'center', fontSize: 11, color: '#666', marginBottom: 12 }}>
-              Outbox Event: {activeReceiptModal.event_id}<br />
-              Reprinting is safe and never finalizes twice.
-            </div>
-
-            <div style={{ display: 'flex', gap: 10 }}>
+            {/* Modal Actions */}
+            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
               <button
+                type="button"
                 onClick={() => window.print()}
-                style={{ flex: 1, padding: 8, backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold' }}
+                style={{ flex: 1, padding: '10px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
               >
-                Send to Printer
+                🖨️ Send to Printer
               </button>
               <button
+                type="button"
                 onClick={() => setActiveReceiptModal(null)}
-                style={{ padding: 8, backgroundColor: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer' }}
+                style={{ padding: '10px 18px', backgroundColor: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
               >
                 Close
               </button>
@@ -5829,6 +6809,534 @@ export const App: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 5C: Morning Opening Cash Float Modal (தொடக்க ரொக்கம்) */}
+      {/* ========================================================= */}
+      {isOpeningFloatModalOpen && currentSession && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1240, padding: 16 }}>
+          <div style={{ backgroundColor: '#fff', border: '2px solid #8B1E2D', borderRadius: 12, width: 480, maxWidth: '95vw', padding: 24, boxShadow: '0 12px 32px rgba(139,30,45,0.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: 12, marginBottom: 16 }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 18, fontWeight: 800 }}>
+                  ☀️ Morning Opening Cash Float (தொடக்க ரொக்கம்)
+                </h3>
+                <div style={{ fontSize: 12, color: '#666', marginTop: 3 }}>
+                  Branch: <strong>{syncConfig?.branch_name || currentSession.branch_id}</strong> • Terminal: <strong>{currentSession.terminal_id || 'T1'}</strong>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsOpeningFloatModalOpen(false)}
+                style={{ background: 'none', border: 'none', fontSize: 20, color: '#999', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmOpeningFloat}>
+              {/* Role-based Identity Verification */}
+              {currentSession.role === 'ADMIN' ? (
+                <div style={{ backgroundColor: '#FFF9F0', border: '1px solid #EAD8C7', borderRadius: 8, padding: '10px 14px', marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#8B1E2D', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    👑 Store Owner Session
+                  </div>
+                  <div style={{ fontSize: 13, color: '#333', marginTop: 2, fontWeight: 600 }}>
+                    {currentSession.display_name} (No staff verification required)
+                  </div>
+                </div>
+              ) : (
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 6 }}>
+                    👤 Cashier / Staff Name (பணியாளர் பெயர்)
+                  </label>
+                  <input
+                    type="text"
+                    defaultValue={currentSession.display_name}
+                    readOnly
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: 6,
+                      border: '1px solid #ccc',
+                      backgroundColor: '#FAF9F8',
+                      fontSize: 14,
+                      fontWeight: 600,
+                      color: '#444',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                  <div style={{ fontSize: 11, color: '#777', marginTop: 4 }}>
+                    Cash drawer starting float will be attributed to this staff member's register shift.
+                  </div>
+                </div>
+              )}
+
+              {/* Starting Cash Amount */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#1F1F1F', marginBottom: 6 }}>
+                  💵 Starting Cash in Drawer (தொடக்க இருப்பு பணம்) <span style={{ color: '#8B1E2D' }}>*</span>
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: 14, top: 10, fontSize: 18, fontWeight: 700, color: '#8B1E2D' }}>₹</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    required
+                    value={openingFloatInput}
+                    onChange={e => setOpeningFloatInput(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px 10px 36px',
+                      borderRadius: 6,
+                      border: '2px solid #8B1E2D',
+                      fontSize: 20,
+                      fontWeight: 800,
+                      color: '#8B1E2D',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                {/* Quick Float Denomination Buttons */}
+                <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                  {[
+                    { label: '₹1,000', val: 1000 },
+                    { label: '₹2,000', val: 2000 },
+                    { label: '₹3,000', val: 3000 },
+                    { label: '₹5,000', val: 5000 },
+                  ].map(btn => (
+                    <button
+                      key={btn.val}
+                      type="button"
+                      onClick={() => setOpeningFloatInput(btn.val.toString())}
+                      style={{
+                        padding: '5px 10px',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        backgroundColor: '#FFF9F0',
+                        border: '1px solid #D0C0B0',
+                        borderRadius: 4,
+                        color: '#6F1623',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {btn.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = parseFloat(openingFloatInput) || 0;
+                      setOpeningFloatInput((cur + 500).toString());
+                    }}
+                    style={{
+                      padding: '5px 10px',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      backgroundColor: '#f5f5f5',
+                      border: '1px solid #ccc',
+                      borderRadius: 4,
+                      color: '#333',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    +₹500
+                  </button>
+                </div>
+              </div>
+
+              {/* Float Notes / Breakdown */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#555', marginBottom: 4 }}>
+                  Notes / Denomination Breakdown (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 500x2, 200x3, 100x4"
+                  value={openingFloatNotes}
+                  onChange={e => setOpeningFloatNotes(e.target.value)}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 13, boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', borderTop: '1px solid #eee', paddingTop: 14 }}>
+                <button
+                  type="button"
+                  onClick={() => setIsOpeningFloatModalOpen(false)}
+                  style={{ padding: '9px 16px', border: '1px solid #ccc', borderRadius: 6, backgroundColor: '#f5f5f5', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+                >
+                  Skip for Now
+                </button>
+                <button
+                  type="submit"
+                  disabled={isOpeningFloatSubmitting}
+                  style={{
+                    padding: '9px 22px',
+                    backgroundColor: '#8B1E2D',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    cursor: isOpeningFloatSubmitting ? 'not-allowed' : 'pointer',
+                    fontSize: 14,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  {isOpeningFloatSubmitting ? '⏳ Recording...' : '✓ Confirm Starting Float'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 5D: Day-End Cash Drawer Closure Modal (முடிவு ரொக்கம்) */}
+      {/* ========================================================= */}
+      {isDayCloseModalOpen && currentSession && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1240, padding: 16 }}>
+          <div style={{ backgroundColor: '#fff', border: '2px solid #8B1E2D', borderRadius: 12, width: 520, maxWidth: '95vw', padding: 24, boxShadow: '0 12px 32px rgba(139,30,45,0.25)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: 12, marginBottom: 16 }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 18, fontWeight: 800 }}>
+                  🌙 Register Day-End Closure & Z-Report (முடிவு ரொக்கம்)
+                </h3>
+                <div style={{ fontSize: 12, color: '#666', marginTop: 3 }}>
+                  Branch: <strong>{syncConfig?.branch_name || currentSession.branch_id}</strong> • Business Date: <strong>{new Date().toISOString().split('T')[0]}</strong>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDayCloseModalOpen(false)}
+                style={{ background: 'none', border: 'none', fontSize: 20, color: '#999', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleExecuteDayClose}>
+              {/* Expected vs Counted Comparison Box */}
+              <div style={{ backgroundColor: '#FFF9F0', border: '1px solid #EAD8C7', borderRadius: 8, padding: 14, marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#555' }}>Expected Drawer Cash (கணக்கு இருப்பு):</span>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: '#8B1E2D' }}>
+                    ₹{(liveDrawerExpectedPaise / 100).toFixed(2)}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: '#777', lineHeight: 1.4 }}>
+                  Includes Morning Opening Float + Today's Cash Invoices recorded on this terminal.
+                </div>
+              </div>
+
+              {/* Physical Counted Cash Input */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <label style={{ fontSize: 13, fontWeight: 700, color: '#1F1F1F' }}>
+                    💵 Physical Counted Cash in Drawer (எண்ணிய ரொக்கம்) <span style={{ color: '#8B1E2D' }}>*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setCountedClosingCashInput((liveDrawerExpectedPaise / 100).toFixed(2))}
+                    style={{ fontSize: 11, color: '#8B1E2D', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700, textDecoration: 'underline' }}
+                  >
+                    Match Expected Cash
+                  </button>
+                </div>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: 14, top: 10, fontSize: 18, fontWeight: 700, color: '#8B1E2D' }}>₹</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    required
+                    value={countedClosingCashInput}
+                    onChange={e => setCountedClosingCashInput(e.target.value)}
+                    placeholder="0.00"
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px 10px 36px',
+                      borderRadius: 6,
+                      border: '2px solid #8B1E2D',
+                      fontSize: 20,
+                      fontWeight: 800,
+                      color: '#8B1E2D',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Live Variance Calculation Badge */}
+              {countedClosingCashInput !== '' && !isNaN(parseFloat(countedClosingCashInput)) && (
+                (() => {
+                  const countedPaise = Math.round(parseFloat(countedClosingCashInput) * 100);
+                  const variancePaise = countedPaise - liveDrawerExpectedPaise;
+                  return (
+                    <div style={{
+                      padding: '10px 14px',
+                      borderRadius: 6,
+                      backgroundColor: variancePaise === 0 ? '#E8F5E9' : variancePaise > 0 ? '#FFF8E1' : '#FFEBEE',
+                      border: `1px solid ${variancePaise === 0 ? '#C8E6C9' : variancePaise > 0 ? '#FFE082' : '#FFCDD2'}`,
+                      color: variancePaise === 0 ? '#2E7D32' : variancePaise > 0 ? '#F57F17' : '#C62828',
+                      fontWeight: 700,
+                      fontSize: 13,
+                      marginBottom: 16,
+                      textAlign: 'center',
+                    }}>
+                      {variancePaise === 0
+                        ? '✨ Perfectly Balanced (சரியான இருப்பு) — ₹0.00 Variance'
+                        : variancePaise > 0
+                        ? `▲ Cash Overage: +₹${(variancePaise / 100).toFixed(2)} (கூடுதல் ரொக்கம்)`
+                        : `▼ Cash Shortage: -₹${(Math.abs(variancePaise) / 100).toFixed(2)} (குறைவு ரொக்கம்)`}
+                    </div>
+                  );
+                })()
+              )}
+
+              {/* Discrepancy / Variance Reason */}
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#555', marginBottom: 4 }}>
+                  Closure Notes / Reason for Discrepancy (விளக்கம்)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Balanced, or ₹20 petty cash for milk/tea, round-off coins"
+                  value={dayCloseNotes}
+                  onChange={e => setDayCloseNotes(e.target.value)}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 13, boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', borderTop: '1px solid #eee', paddingTop: 14 }}>
+                <button
+                  type="button"
+                  onClick={() => setIsDayCloseModalOpen(false)}
+                  style={{ padding: '9px 16px', border: '1px solid #ccc', borderRadius: 6, backgroundColor: '#f5f5f5', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isDayCloseSubmitting}
+                  style={{
+                    padding: '9px 22px',
+                    backgroundColor: '#8B1E2D',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontWeight: 700,
+                    cursor: isDayCloseSubmitting ? 'not-allowed' : 'pointer',
+                    fontSize: 14,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  {isDayCloseSubmitting ? '⏳ Closing Register...' : '🌙 Confirm Close & Print Z-Report'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 5E: Day-End Z-Report 80mm Printable Slip Modal      */}
+      {/* ========================================================= */}
+      {activeZReportModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1250, padding: 16 }}>
+          <div style={{ backgroundColor: '#fff', borderRadius: 10, maxWidth: 440, width: '100%', maxHeight: '92vh', overflowY: 'auto', padding: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.3)', border: '2px solid #8B1E2D' }}>
+            
+            {/* Top Close Bar */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: 10, marginBottom: 14 }}>
+              <span style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D' }}>
+                📋 80mm Day-End Z-Report Slip
+              </span>
+              <button
+                type="button"
+                onClick={() => setActiveZReportModal(null)}
+                style={{ background: 'none', border: 'none', fontSize: 18, color: '#999', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* 80mm Thermal Receipt Content */}
+            <div id="z-report-thermal-slip" style={{ fontFamily: 'Courier New, monospace, sans-serif', fontSize: 12, lineHeight: 1.35, color: '#000', backgroundColor: '#fff', padding: '10px 4px' }}>
+              <div style={{ textAlign: 'center', marginBottom: 8 }}>
+                <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: -0.5 }}>மால்குடி மிட்டாய்ஸ்</div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>MALGUDI MITHAIS</div>
+                <div style={{ fontSize: 11, color: '#333' }}>{activeZReportModal.branch_name}</div>
+                <div style={{ fontSize: 11, color: '#444' }}>Terminal: {activeZReportModal.terminal_id} | Session: {activeZReportModal.session_id}</div>
+                <div style={{ fontSize: 11, color: '#444' }}>Date: {activeZReportModal.business_date}</div>
+                <div style={{ fontSize: 10, color: '#666' }}>Closed At: {activeZReportModal.closed_at ? formatDateTime(activeZReportModal.closed_at) : 'Active'}</div>
+                <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+                <div style={{ fontSize: 13, fontWeight: 900, textTransform: 'uppercase' }}>*** END OF DAY Z-REPORT ***</div>
+                <div style={{ fontSize: 11, fontWeight: 700 }}>முடிவு தணிக்கை அறிக்கை</div>
+                <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+              </div>
+
+              {/* Section 1: Cash Drawer Reconciliation */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4 }}>1. CASH RECONCILIATION</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Opening Cash Float:</span>
+                  <span>₹{(activeZReportModal.opening_float_paise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>(+) Cash Sales In:</span>
+                  <span>₹{(activeZReportModal.cash_sales_paise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>(-) Cash Refunds:</span>
+                  <span>₹{(activeZReportModal.cash_refunds_paise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ borderTop: '1px dotted #000', margin: '4px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+                  <span>Expected Drawer Cash:</span>
+                  <span>₹{(activeZReportModal.expected_closing_cash_paise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+                  <span>Counted Closing Cash:</span>
+                  <span>₹{(activeZReportModal.counted_closing_cash_paise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ borderTop: '1px dashed #000', margin: '4px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: 13 }}>
+                  <span>DRAWER VARIANCE:</span>
+                  <span>
+                    {activeZReportModal.variance_paise === 0
+                      ? '₹0.00 (EXACT)'
+                      : activeZReportModal.variance_paise > 0
+                      ? `+₹${(activeZReportModal.variance_paise / 100).toFixed(2)} (OVER)`
+                      : `-₹${(Math.abs(activeZReportModal.variance_paise) / 100).toFixed(2)} (SHORT)`}
+                  </span>
+                </div>
+                {activeZReportModal.variance_notes && (
+                  <div style={{ fontSize: 10, marginTop: 2, fontStyle: 'italic' }}>
+                    Note: {activeZReportModal.variance_notes}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+
+              {/* Section 2: Sales & Volume */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4 }}>2. SALES & BILL VOLUME</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Total Bills Printed:</span>
+                  <span>{activeZReportModal.total_bills_recorded}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Active Settled Bills:</span>
+                  <span>{activeZReportModal.active_bills_count}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Voided/Cancelled Bills:</span>
+                  <span>{activeZReportModal.voided_bills_count}</span>
+                </div>
+                <div style={{ borderTop: '1px dotted #000', margin: '4px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800 }}>
+                  <span>GROSS TURNOVER:</span>
+                  <span>₹{(activeZReportModal.gross_sales_paise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800 }}>
+                  <span>NET REVENUE:</span>
+                  <span>₹{(activeZReportModal.net_sales_paise / 100).toFixed(2)}</span>
+                </div>
+              </div>
+
+              <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+
+              {/* Section 3: Tender Realization */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4 }}>3. PAYMENT METHOD BREAKDOWN</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Cash Realized:</span>
+                  <span>₹{(activeZReportModal.cash_realized_paise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>UPI / Digital Realized:</span>
+                  <span>₹{(activeZReportModal.upi_realized_paise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ borderTop: '1px dotted #000', margin: '4px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800 }}>
+                  <span>TOTAL REALIZED:</span>
+                  <span>₹{((activeZReportModal.cash_realized_paise + activeZReportModal.upi_realized_paise) / 100).toFixed(2)}</span>
+                </div>
+              </div>
+
+              <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+
+              {/* Section 4: GST Breakdown */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4 }}>4. GST AUDIT (5% COMPOSITE)</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Taxable Value (Ex-Tax):</span>
+                  <span>₹{(activeZReportModal.total_taxable_paise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>CGST (2.5%):</span>
+                  <span>₹{(activeZReportModal.total_cgst_paise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>SGST (2.5%):</span>
+                  <span>₹{(activeZReportModal.total_sgst_paise / 100).toFixed(2)}</span>
+                </div>
+                <div style={{ borderTop: '1px dotted #000', margin: '4px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800 }}>
+                  <span>TOTAL GST:</span>
+                  <span>₹{(activeZReportModal.total_tax_paise / 100).toFixed(2)}</span>
+                </div>
+              </div>
+
+              <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+              
+              <div style={{ textAlign: 'center', fontSize: 11, marginTop: 8 }}>
+                <div>Closed by: <strong>{activeZReportModal.closed_by_user}</strong></div>
+                <div>Offline Sync Outbox: {activeZReportModal.pending_sync_count} events pending</div>
+                <div style={{ marginTop: 6, fontWeight: 700 }}>*** END OF OFFICIAL Z-SLIP ***</div>
+              </div>
+            </div>
+
+            {/* Print & Close Actions */}
+            <div style={{ display: 'flex', gap: 10, marginTop: 16, borderTop: '1px solid #eee', paddingTop: 14 }}>
+              <button
+                type="button"
+                onClick={() => setActiveZReportModal(null)}
+                style={{ flex: 1, padding: '10px', border: '1px solid #ccc', borderRadius: 6, backgroundColor: '#f5f5f5', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                style={{
+                  flex: 1.5,
+                  padding: '10px',
+                  backgroundColor: '#8B1E2D',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 6,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  fontSize: 14,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                }}
+              >
+                🖨️ Print 80mm Z-Slip
+              </button>
+            </div>
           </div>
         </div>
       )}
