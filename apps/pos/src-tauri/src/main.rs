@@ -88,6 +88,12 @@ pub struct DetailedSaleReceipt {
     pub payment_status: String,
     pub items: Vec<DetailedReceiptItem>,
     pub payments: Vec<DetailedReceiptPayment>,
+    #[serde(default)]
+    pub customer_name: Option<String>,
+    #[serde(default)]
+    pub customer_phone: Option<String>,
+    #[serde(default)]
+    pub customer_location: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -381,7 +387,8 @@ fn get_sale_details(
     let sale_row = conn.query_row(
         "SELECT s.id, s.invoice_number, s.business_date, s.created_at, s.cashier_id, s.terminal_id, s.branch_id,
                 s.subtotal_taxable_paise, s.total_cgst_paise, s.total_sgst_paise, s.round_off_paise, s.net_payable_paise,
-                s.sale_status, s.payment_status, COALESCE(u.display_name, s.cashier_id) as cashier_name
+                s.sale_status, s.payment_status, COALESCE(u.display_name, s.cashier_id) as cashier_name,
+                s.customer_name, s.customer_phone, s.customer_location
          FROM sales s
          LEFT JOIN users u ON u.id = s.cashier_id
          WHERE s.id = ?1 OR s.invoice_number = ?1;",
@@ -403,6 +410,9 @@ fn get_sale_details(
                 r.get::<_, String>(12)?,
                 r.get::<_, String>(13)?,
                 r.get::<_, String>(14)?,
+                r.get::<_, Option<String>>(15)?,
+                r.get::<_, Option<String>>(16)?,
+                r.get::<_, Option<String>>(17)?,
             ))
         },
     ).map_err(|e| format!("Sale not found: {}", e))?;
@@ -504,6 +514,9 @@ fn get_sale_details(
         payment_status: sale_row.13,
         items,
         payments,
+        customer_name: sale_row.15,
+        customer_phone: sale_row.16,
+        customer_location: sale_row.17,
     })
 }
 

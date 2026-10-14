@@ -65,6 +65,9 @@ fn sample_sale(sale_id: &str, _invoice_num: &str) -> FinalizeSalePayload {
             }
         ],
         cashier_id: "usr_owner".into(),
+        customer_name: None,
+        customer_phone: None,
+        customer_location: None,
     }
 }
 

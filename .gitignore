@@ -31,6 +31,8 @@ apps/api/dist/
 apps/pos/src-tauri/target/
 target/
 **/target/
+**/target*/
+target-tests/
 *.exe
 *.msi
 *.dll

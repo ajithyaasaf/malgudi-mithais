@@ -294,6 +294,9 @@ fn test_billing_stock_deduction_and_void_reversal() {
             verified_by_user_id: Some("admin_owner".to_string()),
         }],
         cashier_id: "admin_owner".to_string(),
+        customer_name: None,
+        customer_phone: None,
+        customer_location: None,
     };
 
     let sale_res = finalize_sale_atomic(&mut conn, &sale_payload, None).expect("Sale finalization failed");

@@ -99,6 +99,9 @@ fn test_daily_sales_report_accuracy_and_void_exclusion() {
             verified_by_user_id: None,
         }],
         cashier_id: "usr_owner".to_string(),
+        customer_name: None,
+        customer_phone: None,
+        customer_location: None,
     };
     finalize_sale_atomic(&mut conn, &sale1, None).expect("Sale 1 should succeed");
 
@@ -145,6 +148,9 @@ fn test_daily_sales_report_accuracy_and_void_exclusion() {
             verified_by_user_id: None,
         }],
         cashier_id: "usr_owner".to_string(),
+        customer_name: None,
+        customer_phone: None,
+        customer_location: None,
     };
     finalize_sale_atomic(&mut conn, &sale2, None).expect("Sale 2 should succeed");
 
@@ -192,6 +198,9 @@ fn test_daily_sales_report_accuracy_and_void_exclusion() {
             verified_by_user_id: None,
         }],
         cashier_id: "usr_owner".to_string(),
+        customer_name: None,
+        customer_phone: None,
+        customer_location: None,
     };
     finalize_sale_atomic(&mut conn, &sale3, None).expect("Sale 3 should succeed");
 
@@ -284,6 +293,9 @@ fn test_payment_summary_and_split_reporting() {
             },
         ],
         cashier_id: "usr_owner".to_string(),
+        customer_name: None,
+        customer_phone: None,
+        customer_location: None,
     };
     finalize_sale_atomic(&mut conn, &split_sale, None).expect("Split sale should succeed");
 
@@ -349,6 +361,9 @@ fn test_gst_report_slabs_and_invoice_details() {
             verified_by_user_id: None,
         }],
         cashier_id: "usr_owner".to_string(),
+        customer_name: None,
+        customer_phone: None,
+        customer_location: None,
     };
     finalize_sale_atomic(&mut conn, &sale, None).expect("Sale should succeed");
 
@@ -435,6 +450,9 @@ fn test_product_sales_ranking_and_category_breakdown() {
             verified_by_user_id: None,
         }],
         cashier_id: "usr_owner".to_string(),
+        customer_name: None,
+        customer_phone: None,
+        customer_location: None,
     };
     finalize_sale_atomic(&mut conn, &sale, None).expect("Sale should succeed");
 
@@ -509,6 +527,9 @@ fn test_cash_drawer_report_movements_and_variance() {
             verified_by_user_id: None,
         }],
         cashier_id: "usr_owner".to_string(),
+        customer_name: None,
+        customer_phone: None,
+        customer_location: None,
     };
     finalize_sale_atomic(&mut conn, &sale, None).expect("Sale should succeed");
 

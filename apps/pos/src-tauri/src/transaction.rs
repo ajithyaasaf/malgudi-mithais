@@ -36,7 +36,7 @@ pub struct SalePaymentInput {
     pub verified_by_user_id: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct FinalizeSalePayload {
     pub sale_id: Option<String>,
     pub branch_id: String,
@@ -56,6 +56,12 @@ pub struct FinalizeSalePayload {
     pub items: Vec<SaleItemInput>,
     pub payments: Vec<SalePaymentInput>,
     pub cashier_id: String,
+    #[serde(default)]
+    pub customer_name: Option<String>,
+    #[serde(default)]
+    pub customer_phone: Option<String>,
+    #[serde(default)]
+    pub customer_location: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -125,9 +131,9 @@ pub fn finalize_sale_atomic(
             id, invoice_number, branch_id, counter_id, terminal_id, session_id,
             business_date, tax_policy_version, subtotal_taxable_paise, total_cgst_paise,
             total_sgst_paise, total_igst_paise, round_off_paise, net_payable_paise,
-            sale_status, payment_status, sync_status, created_at
+            sale_status, payment_status, sync_status, customer_name, customer_phone, customer_location, created_at
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'FINALIZED', 'SETTLED', 'SYNC_PENDING', ?15
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'FINALIZED', 'SETTLED', 'SYNC_PENDING', ?15, ?16, ?17, ?18
         );",
         rusqlite::params![
             sale_id,
@@ -144,6 +150,9 @@ pub fn finalize_sale_atomic(
             payload.total_igst_paise,
             payload.round_off_paise,
             payload.net_payable_paise,
+            payload.customer_name,
+            payload.customer_phone,
+            payload.customer_location,
             now_iso
         ],
     )?;

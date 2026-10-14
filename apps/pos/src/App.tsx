@@ -80,6 +80,9 @@ export interface DetailedSaleReceipt {
   items: DetailedReceiptItem[];
   payments: DetailedReceiptPayment[];
   items_count?: number;
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  customer_location?: string | null;
 }
 
 export interface OpeningFloatStatus {
@@ -875,9 +878,22 @@ export const App: React.FC = () => {
   const [openingFloatNotes, setOpeningFloatNotes] = useState<string>('');
   const [isOpeningFloatSubmitting, setIsOpeningFloatSubmitting] = useState<boolean>(false);
 
+  // --- Optional Customer Info State ---
+  const [customerInfo, setCustomerInfo] = useState<{
+    name: string;
+    phone: string;
+    location: string;
+  } | null>(null);
+  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState<boolean>(false);
+  const [customerForm, setCustomerForm] = useState({ name: '', phone: '', location: '' });
+  const [customerPhoneError, setCustomerPhoneError] = useState<string | null>(null);
+
   // --- Day-End Close (Z-Report) State ---
   const [isDayCloseModalOpen, setIsDayCloseModalOpen] = useState<boolean>(false);
   const [liveDrawerExpectedPaise, setLiveDrawerExpectedPaise] = useState<number>(0);
+  const [liveDrawerOpeningPaise, setLiveDrawerOpeningPaise] = useState<number>(0);
+  const [liveDrawerCashSalesPaise, setLiveDrawerCashSalesPaise] = useState<number>(0);
+  const [isManualVarianceExpanded, setIsManualVarianceExpanded] = useState<boolean>(false);
   const [countedClosingCashInput, setCountedClosingCashInput] = useState<string>('');
   const [dayCloseNotes, setDayCloseNotes] = useState<string>('');
   const [isDayCloseSubmitting, setIsDayCloseSubmitting] = useState<boolean>(false);
@@ -987,26 +1003,43 @@ export const App: React.FC = () => {
     }
   };
 
-  // Handler: Open Day-End Close Modal with Live Expected Cash
+  // Handler: Open Day-End Close Modal with Live Expected Cash (100% Pre-calculated)
   const handleOpenDayCloseModal = async () => {
     if (!currentSession) return;
     setIsDayCloseModalOpen(true);
-    setCountedClosingCashInput('');
+    setIsManualVarianceExpanded(false);
     setDayCloseNotes('');
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const fallbackOpening = openingFloatStatus?.opening_float_paise || 200000;
+    const fallbackCashSales = persistedHistory
+      .filter(h => h.sale_status !== 'VOIDED' && (h.created_at || '').startsWith(todayStr))
+      .reduce((sum, h) => sum + (h.cash_retained_paise || 0), 0);
+    const fallbackExpected = fallbackOpening + fallbackCashSales;
+
+    setLiveDrawerOpeningPaise(fallbackOpening);
+    setLiveDrawerCashSalesPaise(fallbackCashSales);
+    setLiveDrawerExpectedPaise(fallbackExpected);
+    setCountedClosingCashInput((fallbackExpected / 100).toFixed(2));
+
     if (isTauriRuntime) {
       try {
-        const today = new Date().toISOString().split('T')[0];
         const drawerReport = await window.__TAURI__!.core.invoke<any>('reports_get_cash_drawer', {
           sessionToken: currentSession.token,
           filter: {
-            start_date: today,
-            end_date: today,
+            start_date: todayStr,
+            end_date: todayStr,
             branch_id: currentSession.branch_id || 'IB',
           },
         });
         if (drawerReport) {
-          setLiveDrawerExpectedPaise(drawerReport.expected_closing_cash_paise);
-          setCountedClosingCashInput((drawerReport.expected_closing_cash_paise / 100).toFixed(2));
+          const opening = drawerReport.opening_float_paise || 0;
+          const cashSales = drawerReport.cash_sales_inflow_paise || 0;
+          const expected = drawerReport.expected_closing_cash_paise || (opening + cashSales);
+          setLiveDrawerOpeningPaise(opening);
+          setLiveDrawerCashSalesPaise(cashSales);
+          setLiveDrawerExpectedPaise(expected);
+          setCountedClosingCashInput((expected / 100).toFixed(2));
         }
       } catch (e) {
         console.error('Failed to pre-fill closing cash:', e);
@@ -1014,9 +1047,9 @@ export const App: React.FC = () => {
     }
   };
 
-  // Handler: Execute Day Close & Produce Z-Report
-  const handleExecuteDayClose = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Handler: Execute Day Close & Produce Z-Report (1-Click or Manual Variance)
+  const handleExecuteDayClose = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!currentSession) return;
     const countedRupees = parseFloat(countedClosingCashInput);
     if (isNaN(countedRupees) || countedRupees < 0) {
@@ -1124,13 +1157,17 @@ export const App: React.FC = () => {
             handleExactCashSale();
           }
         }
+      } else if (e.key === 'F2') {
+        e.preventDefault();
+        setIsCustomerModalOpen(prev => !prev);
       } else if (e.key === 'F4') {
         e.preventDefault();
         if (cartItems.length > 0) {
           openPaymentModal();
         }
       } else if (e.key === 'Escape') {
-        if (weightModalProduct) setWeightModalProduct(null);
+        if (isCustomerModalOpen) setIsCustomerModalOpen(false);
+        else if (weightModalProduct) setWeightModalProduct(null);
         else if (isUpiModalOpen) { setIsUpiModalOpen(false); setUpiSimulatedVerified(false); }
         else if (isPaymentModalOpen) setIsPaymentModalOpen(false);
         else if (isHistoryModalOpen) setIsHistoryModalOpen(false);
@@ -1140,7 +1177,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPaymentModalOpen, isUpiModalOpen, upiSimulatedVerified, weightModalProduct, isHistoryModalOpen, isSwitchModalOpen, activeReceiptModal, cartItems, totalGrossPaise, settlementPolicy]);
+  }, [isPaymentModalOpen, isUpiModalOpen, upiSimulatedVerified, weightModalProduct, isHistoryModalOpen, isSwitchModalOpen, activeReceiptModal, isCustomerModalOpen, cartItems, totalGrossPaise, settlementPolicy]);
 
   const checkInitialAuthStatus = async () => {
     setAuthLoading(true);
@@ -2326,6 +2363,9 @@ export const App: React.FC = () => {
           verified_by_user_id: p.verified_by_user_id || null,
         })),
         cashier_id: currentSession.user_id,
+        customer_name: customerInfo?.name?.trim() || null,
+        customer_phone: customerInfo?.phone?.trim() || null,
+        customer_location: customerInfo?.location?.trim() || null,
       };
 
       let committedRecord: FinalizeSaleResult;
@@ -2427,6 +2467,9 @@ export const App: React.FC = () => {
         payment_status: committedRecord.payment_status || 'SETTLED',
         items: detailedItems,
         payments: detailedPayments,
+        customer_name: customerInfo?.name?.trim() || null,
+        customer_phone: customerInfo?.phone?.trim() || null,
+        customer_location: customerInfo?.location?.trim() || null,
       };
 
       setPersistedHistory(prev => [committedRecord, ...prev]);
@@ -2435,6 +2478,8 @@ export const App: React.FC = () => {
       setIsUpiModalOpen(false);
       setUpiSimulatedVerified(false);
       setCartItems([]);
+      setCustomerInfo(null);
+      setCustomerForm({ name: '', phone: '', location: '' });
       setCashTenderedRupees(0);
       setUpiAllocatedRupees(0);
       refreshCatalog(currentSession?.token);
@@ -5374,21 +5419,104 @@ export const App: React.FC = () => {
                 </span>
               </div>
 
-              {cartItems.length > 0 && (
-                <button
-                  onClick={handleClearCart}
-                  style={{
-                    border: 'none',
-                    background: 'none',
-                    color: '#c62828',
-                    fontSize: 12,
-                    cursor: 'pointer',
-                    fontWeight: 600,
-                  }}
-                >
-                  Clear Order
-                </button>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {!customerInfo ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomerForm({ name: '', phone: '', location: '' });
+                      setCustomerPhoneError(null);
+                      setIsCustomerModalOpen(true);
+                    }}
+                    title="Add Customer Details (F2) - Optional"
+                    style={{
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      borderRadius: 14,
+                      border: '1px dashed #B8860B',
+                      backgroundColor: '#FFFDF0',
+                      color: '#8B1E2D',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <span>👤 + Customer</span>
+                    <span style={{ fontSize: 9, opacity: 0.75, backgroundColor: '#EAD8C7', padding: '1px 4px', borderRadius: 3 }}>F2</span>
+                  </button>
+                ) : (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      backgroundColor: '#E8F5E9',
+                      border: '1px solid #C8E6C9',
+                      borderRadius: 14,
+                      padding: '3px 8px 3px 10px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: '#2E7D32',
+                    }}
+                  >
+                    <span
+                      onClick={() => {
+                        setCustomerForm({
+                          name: customerInfo.name,
+                          phone: customerInfo.phone,
+                          location: customerInfo.location,
+                        });
+                        setCustomerPhoneError(null);
+                        setIsCustomerModalOpen(true);
+                      }}
+                      style={{ cursor: 'pointer' }}
+                      title="Click to edit customer details"
+                    >
+                      👤 {customerInfo.name || customerInfo.phone || 'Customer'}
+                      {customerInfo.phone && <span style={{ opacity: 0.75, fontSize: 10, marginLeft: 4 }}>({customerInfo.phone})</span>}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomerInfo(null);
+                        setCustomerForm({ name: '', phone: '', location: '' });
+                      }}
+                      title="Remove customer (revert to walk-in)"
+                      style={{
+                        border: 'none',
+                        background: 'none',
+                        cursor: 'pointer',
+                        color: '#c62828',
+                        fontSize: 12,
+                        padding: 0,
+                        marginLeft: 2,
+                        lineHeight: 1,
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
+                {cartItems.length > 0 && (
+                  <button
+                    onClick={handleClearCart}
+                    style={{
+                      border: 'none',
+                      background: 'none',
+                      color: '#c62828',
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Clear Order
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Scrollable Cart Items List */}
@@ -6682,6 +6810,198 @@ export const App: React.FC = () => {
       )}
 
       {/* ========================================================= */}
+      {/* MODAL 4B: Optional Customer Details Modal                 */}
+      {/* ========================================================= */}
+      {isCustomerModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1250, padding: 16 }}>
+          <div style={{ backgroundColor: '#fff', padding: 22, borderRadius: 10, width: 420, maxWidth: '95vw', boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #EBEBE6', paddingBottom: 10, marginBottom: 16 }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 17, fontWeight: 800 }}>
+                  👤 Customer Details (Optional)
+                </h3>
+                <div style={{ fontSize: 12, color: '#777', marginTop: 2 }}>
+                  வாடிக்கையாளர் விவரம் • Leave blank for regular walk-in
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCustomerModalOpen(false)}
+                style={{ background: 'none', border: 'none', fontSize: 20, color: '#999', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const phone = customerForm.phone.trim();
+                const name = customerForm.name.trim();
+                const location = customerForm.location.trim();
+
+                // If phone is entered, it MUST be a valid 10-digit Indian mobile number
+                if (phone.length > 0) {
+                  if (phone.length !== 10 || !/^[6-9]\d{9}$/.test(phone)) {
+                    setCustomerPhoneError('Please enter a valid 10-digit mobile number starting with 6, 7, 8, or 9');
+                    return;
+                  }
+                }
+
+                if (name || phone || location) {
+                  setCustomerInfo({
+                    name,
+                    phone,
+                    location,
+                  });
+                } else {
+                  setCustomerInfo(null);
+                }
+                setCustomerPhoneError(null);
+                setIsCustomerModalOpen(false);
+              }}
+            >
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
+                    📱 Mobile / Phone Number
+                  </label>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: customerPhoneError ? '#D32F2F' : customerForm.phone.length === 10 ? '#2E7D32' : '#888' }}>
+                    {customerForm.phone.length === 0
+                      ? 'Optional • 10 Digits'
+                      : customerForm.phone.length === 10 && !customerPhoneError
+                      ? '✓ Valid 10-Digit Mobile'
+                      : `${customerForm.phone.length}/10 digits`}
+                  </span>
+                </div>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <span style={{
+                    position: 'absolute',
+                    left: 10,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: '#555',
+                    backgroundColor: '#F0ECE6',
+                    padding: '3px 6px',
+                    borderRadius: 4,
+                    pointerEvents: 'none',
+                    userSelect: 'none',
+                  }}>
+                    🇮🇳 +91
+                  </span>
+                  <input
+                    type="tel"
+                    autoFocus
+                    maxLength={10}
+                    placeholder="98421 88888"
+                    value={customerForm.phone}
+                    onChange={(e) => {
+                      const cleaned = e.target.value.replace(/\D/g, '').slice(0, 10);
+                      setCustomerForm(prev => ({ ...prev, phone: cleaned }));
+                      if (cleaned.length === 0) {
+                        setCustomerPhoneError(null);
+                      } else if (!/^[6-9]/.test(cleaned)) {
+                        setCustomerPhoneError('Mobile number must begin with 6, 7, 8, or 9');
+                      } else if (cleaned.length < 10) {
+                        setCustomerPhoneError(`Enter full 10-digit mobile number (${cleaned.length}/10)`);
+                      } else {
+                        setCustomerPhoneError(null);
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '9px 12px 9px 74px',
+                      borderRadius: 6,
+                      border: customerPhoneError
+                        ? '2px solid #D32F2F'
+                        : customerForm.phone.length === 10
+                        ? '2px solid #2E7D32'
+                        : '1px solid #CCC',
+                      fontSize: 15,
+                      fontWeight: 700,
+                      letterSpacing: 1,
+                      boxSizing: 'border-box',
+                      outline: 'none',
+                    }}
+                  />
+                </div>
+                {customerPhoneError && (
+                  <div style={{ color: '#D32F2F', fontSize: 11, fontWeight: 600, marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span>⚠️</span> <span>{customerPhoneError}</span>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
+                    👤 Customer Name
+                  </label>
+                  <span style={{ fontSize: 11, color: '#888' }}>Optional</span>
+                </div>
+                <input
+                  type="text"
+                  maxLength={50}
+                  placeholder="e.g. Ramesh Kumar"
+                  value={customerForm.name}
+                  onChange={(e) => setCustomerForm(prev => ({ ...prev, name: e.target.value }))}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: 6, border: '1px solid #CCC', fontSize: 14, boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
+                    📍 Area / Landmark / Address
+                  </label>
+                  <span style={{ fontSize: 11, color: '#888' }}>Optional</span>
+                </div>
+                <input
+                  type="text"
+                  maxLength={100}
+                  placeholder="e.g. Iyer Bungalow / KK Nagar / Home Delivery"
+                  value={customerForm.location}
+                  onChange={(e) => setCustomerForm(prev => ({ ...prev, location: e.target.value }))}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: 6, border: '1px solid #CCC', fontSize: 14, boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', borderTop: '1px solid #eee', paddingTop: 14 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomerInfo(null);
+                    setCustomerForm({ name: '', phone: '', location: '' });
+                    setCustomerPhoneError(null);
+                    setIsCustomerModalOpen(false);
+                  }}
+                  style={{ padding: '8px 14px', border: '1px solid #ccc', borderRadius: 6, backgroundColor: '#f8f8f8', color: '#666', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+                >
+                  Clear (Walk-in)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomerPhoneError(null);
+                    setIsCustomerModalOpen(false);
+                  }}
+                  style={{ padding: '8px 14px', border: '1px solid #ccc', borderRadius: 6, backgroundColor: '#f5f5f5', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{ padding: '8px 18px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 700, cursor: 'pointer', fontSize: 13 }}
+                >
+                  ✓ Attach to Bill
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
       {/* MODAL 5: Tax Invoice Receipt Modal                        */}
       {/* ========================================================= */}
       {activeReceiptModal && (
@@ -6729,6 +7049,13 @@ export const App: React.FC = () => {
                   <span><strong>Terminal:</strong> {activeReceiptModal.branch_id}/{activeReceiptModal.terminal_id}</span>
                 </div>
                 <div><strong>Date:</strong> {formatDateTime(activeReceiptModal.created_at)}</div>
+                {(activeReceiptModal.customer_name || activeReceiptModal.customer_phone || activeReceiptModal.customer_location) && (
+                  <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px dotted #ccc', fontSize: 11, lineHeight: 1.4 }}>
+                    {activeReceiptModal.customer_name && <div><strong>Customer:</strong> {activeReceiptModal.customer_name}</div>}
+                    {activeReceiptModal.customer_phone && <div><strong>Phone:</strong> {activeReceiptModal.customer_phone}</div>}
+                    {activeReceiptModal.customer_location && <div><strong>Location:</strong> {activeReceiptModal.customer_location}</div>}
+                  </div>
+                )}
               </div>
 
               {/* Itemized Table */}
@@ -7174,96 +7501,134 @@ export const App: React.FC = () => {
             </div>
 
             <form onSubmit={handleExecuteDayClose}>
-              {/* Expected vs Counted Comparison Box */}
-              <div style={{ backgroundColor: '#FFF9F0', border: '1px solid #EAD8C7', borderRadius: 8, padding: 14, marginBottom: 16 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: '#555' }}>Expected Drawer Cash (கணக்கு இருப்பு):</span>
-                  <span style={{ fontSize: 16, fontWeight: 800, color: '#8B1E2D' }}>
-                    ₹{(liveDrawerExpectedPaise / 100).toFixed(2)}
-                  </span>
+              {/* Auto-Calculated Day Summary Card */}
+              <div style={{ backgroundColor: '#FDFBF7', border: '1px solid #EAD8C7', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#6A1A24', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>📊</span> <span>Calculated Cash In Drawer (தானியங்கி கணக்கீடு)</span>
                 </div>
-                <div style={{ fontSize: 11, color: '#777', lineHeight: 1.4 }}>
-                  Includes Morning Opening Float + Today's Cash Invoices recorded on this terminal.
-                </div>
-              </div>
 
-              {/* Physical Counted Cash Input */}
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <label style={{ fontSize: 13, fontWeight: 700, color: '#1F1F1F' }}>
-                    💵 Physical Counted Cash in Drawer (எண்ணிய ரொக்கம்) <span style={{ color: '#8B1E2D' }}>*</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setCountedClosingCashInput((liveDrawerExpectedPaise / 100).toFixed(2))}
-                    style={{ fontSize: 11, color: '#8B1E2D', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700, textDecoration: 'underline' }}
-                  >
-                    Match Expected Cash
-                  </button>
-                </div>
-                <div style={{ position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: 14, top: 10, fontSize: 18, fontWeight: 700, color: '#8B1E2D' }}>₹</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    required
-                    value={countedClosingCashInput}
-                    onChange={e => setCountedClosingCashInput(e.target.value)}
-                    placeholder="0.00"
-                    style={{
-                      width: '100%',
-                      padding: '10px 12px 10px 36px',
-                      borderRadius: 6,
-                      border: '2px solid #8B1E2D',
-                      fontSize: 20,
-                      fontWeight: 800,
-                      color: '#8B1E2D',
-                      boxSizing: 'border-box',
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Live Variance Calculation Badge */}
-              {countedClosingCashInput !== '' && !isNaN(parseFloat(countedClosingCashInput)) && (
-                (() => {
-                  const countedPaise = Math.round(parseFloat(countedClosingCashInput) * 100);
-                  const variancePaise = countedPaise - liveDrawerExpectedPaise;
-                  return (
-                    <div style={{
-                      padding: '10px 14px',
-                      borderRadius: 6,
-                      backgroundColor: variancePaise === 0 ? '#E8F5E9' : variancePaise > 0 ? '#FFF8E1' : '#FFEBEE',
-                      border: `1px solid ${variancePaise === 0 ? '#C8E6C9' : variancePaise > 0 ? '#FFE082' : '#FFCDD2'}`,
-                      color: variancePaise === 0 ? '#2E7D32' : variancePaise > 0 ? '#F57F17' : '#C62828',
-                      fontWeight: 700,
-                      fontSize: 13,
-                      marginBottom: 16,
-                      textAlign: 'center',
-                    }}>
-                      {variancePaise === 0
-                        ? '✨ Perfectly Balanced (சரியான இருப்பு) — ₹0.00 Variance'
-                        : variancePaise > 0
-                        ? `▲ Cash Overage: +₹${(variancePaise / 100).toFixed(2)} (கூடுதல் ரொக்கம்)`
-                        : `▼ Cash Shortage: -₹${(Math.abs(variancePaise) / 100).toFixed(2)} (குறைவு ரொக்கம்)`}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12, fontSize: 12 }}>
+                  <div style={{ backgroundColor: '#fff', border: '1px solid #EFEAE3', borderRadius: 6, padding: '8px 12px' }}>
+                    <div style={{ color: '#777', fontSize: 11 }}>🌅 Morning Opening Float</div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: '#333', marginTop: 2 }}>
+                      ₹{(liveDrawerOpeningPaise / 100).toFixed(2)}
                     </div>
-                  );
-                })()
-              )}
+                  </div>
+                  <div style={{ backgroundColor: '#fff', border: '1px solid #EFEAE3', borderRadius: 6, padding: '8px 12px' }}>
+                    <div style={{ color: '#777', fontSize: 11 }}>💵 Cash Sales Today</div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: '#2E7D32', marginTop: 2 }}>
+                      +₹{(liveDrawerCashSalesPaise / 100).toFixed(2)}
+                    </div>
+                  </div>
+                </div>
 
-              {/* Discrepancy / Variance Reason */}
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#555', marginBottom: 4 }}>
-                  Closure Notes / Reason for Discrepancy (விளக்கம்)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Balanced, or ₹20 petty cash for milk/tea, round-off coins"
-                  value={dayCloseNotes}
-                  onChange={e => setDayCloseNotes(e.target.value)}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 13, boxSizing: 'border-box' }}
-                />
+                <div style={{ backgroundColor: '#FFF4E5', border: '1px solid #FFE0B2', borderRadius: 6, padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#B25900', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      Expected Drawer Cash (கணக்கு இருப்பு)
+                    </div>
+                    <div style={{ fontSize: 11, color: '#888', marginTop: 1 }}>
+                      Opening Float + Cash Sales
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: '#8B1E2D' }}>
+                    ₹{(liveDrawerExpectedPaise / 100).toFixed(2)}
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#2E7D32', fontWeight: 600 }}>
+                  <span>✅</span> <span>Calculated directly from all system bills — staff typing not required.</span>
+                </div>
+              </div>
+
+              {/* Optional Collapsible Expander for Discrepancy / Petty Cash */}
+              <div style={{ marginBottom: 18 }}>
+                <button
+                  type="button"
+                  onClick={() => setIsManualVarianceExpanded(prev => !prev)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    color: '#666',
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontWeight: 600,
+                  }}
+                >
+                  <span>{isManualVarianceExpanded ? '▼' : '▶'}</span>
+                  <span style={{ textDecoration: 'underline' }}>
+                    Need to log tea/milk expense or unexpected cash difference?
+                  </span>
+                </button>
+
+                {isManualVarianceExpanded && (
+                  <div style={{ marginTop: 12, padding: 12, backgroundColor: '#FAFAFA', border: '1px dashed #CCC', borderRadius: 6 }}>
+                    <div style={{ marginBottom: 10 }}>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+                        Physical Counted Cash (எண்ணிய ரொக்கம்):
+                      </label>
+                      <div style={{ position: 'relative' }}>
+                        <span style={{ position: 'absolute', left: 10, top: 7, fontSize: 14, fontWeight: 700, color: '#555' }}>₹</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={countedClosingCashInput}
+                          onChange={e => setCountedClosingCashInput(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '6px 10px 6px 26px',
+                            borderRadius: 4,
+                            border: '1px solid #ccc',
+                            fontSize: 14,
+                            fontWeight: 700,
+                            boxSizing: 'border-box',
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {countedClosingCashInput !== '' && !isNaN(parseFloat(countedClosingCashInput)) && (
+                      (() => {
+                        const countedPaise = Math.round(parseFloat(countedClosingCashInput) * 100);
+                        const variancePaise = countedPaise - liveDrawerExpectedPaise;
+                        if (variancePaise === 0) return null;
+                        return (
+                          <div style={{
+                            padding: '6px 10px',
+                            borderRadius: 4,
+                            backgroundColor: variancePaise > 0 ? '#FFF8E1' : '#FFEBEE',
+                            color: variancePaise > 0 ? '#F57F17' : '#C62828',
+                            fontWeight: 700,
+                            fontSize: 12,
+                            marginBottom: 10,
+                          }}>
+                            {variancePaise > 0
+                              ? `▲ Cash Overage: +₹${(variancePaise / 100).toFixed(2)}`
+                              : `▼ Cash Shortage / Expense: -₹${(Math.abs(variancePaise) / 100).toFixed(2)}`}
+                          </div>
+                        );
+                      })()
+                    )}
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: '#555', marginBottom: 4 }}>
+                        Reason for discrepancy / Petty cash notes:
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. ₹50 tea/refreshments, ₹10 coin shortage"
+                        value={dayCloseNotes}
+                        onChange={e => setDayCloseNotes(e.target.value)}
+                        style={{ width: '100%', padding: '6px 10px', borderRadius: 4, border: '1px solid #ccc', fontSize: 12, boxSizing: 'border-box' }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', borderTop: '1px solid #eee', paddingTop: 14 }}>
@@ -7278,20 +7643,21 @@ export const App: React.FC = () => {
                   type="submit"
                   disabled={isDayCloseSubmitting}
                   style={{
-                    padding: '9px 22px',
+                    padding: '10px 22px',
                     backgroundColor: '#8B1E2D',
                     color: '#fff',
                     border: 'none',
                     borderRadius: 6,
-                    fontWeight: 700,
+                    fontWeight: 800,
                     cursor: isDayCloseSubmitting ? 'not-allowed' : 'pointer',
                     fontSize: 14,
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 6,
+                    gap: 8,
+                    boxShadow: '0 2px 6px rgba(139, 30, 45, 0.3)',
                   }}
                 >
-                  {isDayCloseSubmitting ? '⏳ Closing Register...' : '🌙 Confirm Close & Print Z-Report'}
+                  {isDayCloseSubmitting ? '⏳ Closing Day...' : '🌙 Confirm Day Close & Print Z-Report (1-Click)'}
                 </button>
               </div>
             </form>

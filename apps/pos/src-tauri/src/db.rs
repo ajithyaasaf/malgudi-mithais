@@ -97,6 +97,9 @@ impl DatabaseManager {
                 sale_status TEXT NOT NULL,
                 payment_status TEXT NOT NULL,
                 sync_status TEXT NOT NULL,
+                customer_name TEXT,
+                customer_phone TEXT,
+                customer_location TEXT,
                 created_at TEXT NOT NULL
             );
 
@@ -324,6 +327,24 @@ impl DatabaseManager {
                 .collect();
             if !cols.contains(&"version".to_string()) {
                 conn.execute("ALTER TABLE products ADD COLUMN version INTEGER NOT NULL DEFAULT 1;", [])?;
+            }
+        }
+
+        // Ensure customer fields exist on sales table
+        {
+            let mut stmt = conn.prepare("PRAGMA table_info(sales);")?;
+            let cols: Vec<String> = stmt
+                .query_map([], |r| r.get(1))?
+                .filter_map(|r| r.ok())
+                .collect();
+            if !cols.contains(&"customer_name".to_string()) {
+                conn.execute("ALTER TABLE sales ADD COLUMN customer_name TEXT;", [])?;
+            }
+            if !cols.contains(&"customer_phone".to_string()) {
+                conn.execute("ALTER TABLE sales ADD COLUMN customer_phone TEXT;", [])?;
+            }
+            if !cols.contains(&"customer_location".to_string()) {
+                conn.execute("ALTER TABLE sales ADD COLUMN customer_location TEXT;", [])?;
             }
         }
 

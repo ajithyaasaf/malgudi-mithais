@@ -75,6 +75,9 @@ fn sample_payload() -> FinalizeSalePayload {
             }
         ],
         cashier_id: "cashier_01".into(),
+        customer_name: None,
+        customer_phone: None,
+        customer_location: None,
     }
 }
 
