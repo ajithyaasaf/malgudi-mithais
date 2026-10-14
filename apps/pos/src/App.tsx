@@ -637,6 +637,82 @@ export const App: React.FC = () => {
   const [voidReason, setVoidReason] = useState<string>('');
   const [voidError, setVoidError] = useState<string | null>(null);
 
+  // --- Pagination States for Key Admin & Audit Ledgers ---
+  const [ownerProductsPage, setOwnerProductsPage] = useState<number>(1);
+  const OWNER_PRODUCTS_PER_PAGE = 15;
+
+  const [stockMovementsPage, setStockMovementsPage] = useState<number>(1);
+  const STOCK_MOVEMENTS_PER_PAGE = 15;
+
+  const [drawerMovementsPage, setDrawerMovementsPage] = useState<number>(1);
+  const DRAWER_MOVEMENTS_PER_PAGE = 15;
+
+  const [securityLogsPage, setSecurityLogsPage] = useState<number>(1);
+  const SECURITY_LOGS_PER_PAGE = 15;
+
+  const [invoicesSearch, setInvoicesSearch] = useState<string>('');
+  const [invoicesPage, setInvoicesPage] = useState<number>(1);
+  const INVOICES_PER_PAGE = 10;
+
+  const renderPaginationBar = (
+    currentPage: number,
+    totalItems: number,
+    itemsPerPage: number,
+    onPageChange: (newPage: number) => void
+  ) => {
+    const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+    if (totalItems <= itemsPerPage && currentPage === 1) return null;
+    const startItem = totalItems === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1;
+    const endItem = Math.min(currentPage * itemsPerPage, totalItems);
+
+    return (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', backgroundColor: '#FAF9F7', borderTop: '1px solid #E5E5DF', borderRadius: '0 0 6px 6px', fontSize: 12 }}>
+        <span style={{ color: '#666' }}>
+          Showing <strong>{startItem}</strong> - <strong>{endItem}</strong> of <strong>{totalItems}</strong> entries
+        </span>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <button
+            type="button"
+            disabled={currentPage <= 1}
+            onClick={() => onPageChange(currentPage - 1)}
+            style={{
+              padding: '4px 10px',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              backgroundColor: currentPage <= 1 ? '#eee' : '#fff',
+              color: currentPage <= 1 ? '#999' : '#333',
+              cursor: currentPage <= 1 ? 'not-allowed' : 'pointer',
+              fontWeight: 600,
+              fontSize: 12,
+            }}
+          >
+            ◀ Prev
+          </button>
+          <span style={{ padding: '0 6px', fontWeight: 700, color: '#8B1E2D' }}>
+            Page {currentPage} of {totalPages}
+          </span>
+          <button
+            type="button"
+            disabled={currentPage >= totalPages}
+            onClick={() => onPageChange(currentPage + 1)}
+            style={{
+              padding: '4px 10px',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              backgroundColor: currentPage >= totalPages ? '#eee' : '#fff',
+              color: currentPage >= totalPages ? '#999' : '#333',
+              cursor: currentPage >= totalPages ? 'not-allowed' : 'pointer',
+              fontWeight: 600,
+              fontSize: 12,
+            }}
+          >
+            Next ▶
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   // --- 2. Catalog & Product Filter State ---
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -2622,8 +2698,8 @@ export const App: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {catalog
-                        .filter(p => {
+                      {(() => {
+                        const filteredOwnerProducts = catalog.filter(p => {
                           if (ownerCategoryFilter !== 'all' && p.category_id !== ownerCategoryFilter) return false;
                           if (ownerStatusFilter === 'active' && !p.is_active) return false;
                           if (ownerStatusFilter === 'inactive' && p.is_active) return false;
@@ -2637,8 +2713,21 @@ export const App: React.FC = () => {
                             );
                           }
                           return true;
-                        })
-                        .map(prod => {
+                        });
+                        const pagedOwnerProducts = filteredOwnerProducts.slice(
+                          (ownerProductsPage - 1) * OWNER_PRODUCTS_PER_PAGE,
+                          ownerProductsPage * OWNER_PRODUCTS_PER_PAGE
+                        );
+                        if (filteredOwnerProducts.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan={9} style={{ textAlign: 'center', padding: 24, color: '#888' }}>
+                                No products found matching the filter criteria.
+                              </td>
+                            </tr>
+                          );
+                        }
+                        return pagedOwnerProducts.map(prod => {
                           const stockFormatted = prod.pricing_unit === 'PER_KG'
                             ? `${(prod.current_stock / 1000000).toFixed(2)} kg`
                             : `${prod.current_stock} ${prod.stock_unit.toLowerCase()}`;
@@ -2716,9 +2805,33 @@ export const App: React.FC = () => {
                               </td>
                             </tr>
                           );
-                        })}
+                        });
+                      })()}
                     </tbody>
                   </table>
+                  {(() => {
+                    const filteredOwnerProducts = catalog.filter(p => {
+                      if (ownerCategoryFilter !== 'all' && p.category_id !== ownerCategoryFilter) return false;
+                      if (ownerStatusFilter === 'active' && !p.is_active) return false;
+                      if (ownerStatusFilter === 'inactive' && p.is_active) return false;
+                      if (ownerProductSearch.trim()) {
+                        const q = ownerProductSearch.trim().toLowerCase();
+                        return (
+                          p.name.toLowerCase().includes(q) ||
+                          p.tamil_name.toLowerCase().includes(q) ||
+                          p.sku.toLowerCase().includes(q) ||
+                          (p.barcode && p.barcode.toLowerCase().includes(q))
+                        );
+                      }
+                      return true;
+                    });
+                    return renderPaginationBar(
+                      ownerProductsPage,
+                      filteredOwnerProducts.length,
+                      OWNER_PRODUCTS_PER_PAGE,
+                      setOwnerProductsPage
+                    );
+                  })()}
                 </div>
               </div>
             )}
@@ -2849,7 +2962,9 @@ export const App: React.FC = () => {
                             </td>
                           </tr>
                         ) : (
-                          stockMovements.map(sm => {
+                          stockMovements
+                            .slice((stockMovementsPage - 1) * STOCK_MOVEMENTS_PER_PAGE, stockMovementsPage * STOCK_MOVEMENTS_PER_PAGE)
+                            .map(sm => {
                             const prod = catalog.find(p => p.id === sm.product_id);
                             const prodName = prod ? prod.name : sm.product_id;
                             const isPositive = sm.quantity_delta > 0;
@@ -2884,6 +2999,7 @@ export const App: React.FC = () => {
                         )}
                       </tbody>
                     </table>
+                    {renderPaginationBar(stockMovementsPage, stockMovements.length, STOCK_MOVEMENTS_PER_PAGE, setStockMovementsPage)}
                   </div>
                 </div>
               </div>
@@ -2948,10 +3064,15 @@ export const App: React.FC = () => {
                   {/* Date Filter & Presets Row */}
                   <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', paddingTop: 10, borderTop: '1px solid #F0E6DD' }}>
                     <div style={{ display: 'flex', gap: 6 }}>
-                      {(['today', 'yesterday', 'this_month', 'last_30_days'] as const).map(p => (
+                      {[
+                        { id: 'today', label: 'Today' },
+                        { id: 'yesterday', label: 'Yesterday' },
+                        { id: 'this_month', label: 'This Month' },
+                        { id: 'last_30_days', label: 'Last 30 Days' },
+                      ].map(p => (
                         <button
-                          key={p}
-                          onClick={() => handleSetDatePreset(p)}
+                          key={p.id}
+                          onClick={() => handleSetDatePreset(p.id as any)}
                           style={{
                             padding: '4px 10px',
                             fontSize: 11,
@@ -2961,10 +3082,9 @@ export const App: React.FC = () => {
                             borderRadius: 4,
                             cursor: 'pointer',
                             color: '#444',
-                            textTransform: 'capitalize',
                           }}
                         >
-                          {p.replace('_', ' ')}
+                          {p.label}
                         </button>
                       ))}
                     </div>
@@ -3559,7 +3679,9 @@ export const App: React.FC = () => {
                                 </td>
                               </tr>
                             ) : (
-                              reportsData.cash_drawer.movements.map((mov, idx) => (
+                              reportsData.cash_drawer.movements
+                                .slice((drawerMovementsPage - 1) * DRAWER_MOVEMENTS_PER_PAGE, drawerMovementsPage * DRAWER_MOVEMENTS_PER_PAGE)
+                                .map((mov, idx) => (
                                 <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
                                   <td style={{ padding: '8px 10px', color: '#666' }}>{mov.created_at}</td>
                                   <td style={{ padding: '8px 10px', fontWeight: 600 }}>{mov.movement_type}</td>
@@ -3578,6 +3700,7 @@ export const App: React.FC = () => {
                             )}
                           </tbody>
                         </table>
+                        {renderPaginationBar(drawerMovementsPage, reportsData.cash_drawer.movements.length, DRAWER_MOVEMENTS_PER_PAGE, setDrawerMovementsPage)}
                       </div>
                     </div>
                   </div>
@@ -3751,7 +3874,7 @@ export const App: React.FC = () => {
             {/* Audit Logs */}
             <div>
               <h3 style={{ fontSize: 14, margin: '0 0 8px 0', color: '#333' }}>Recent Security Audit Events</h3>
-              <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid #eee', borderRadius: 4 }}>
+              <div style={{ border: '1px solid #eee', borderRadius: 4 }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <thead>
                     <tr style={{ backgroundColor: '#f9f9f9', textAlign: 'left', borderBottom: '1px solid #ddd' }}>
@@ -3762,18 +3885,29 @@ export const App: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {securityLogs.map(log => (
-                      <tr key={log.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                        <td style={{ padding: 6, fontWeight: 'bold', color: log.action.includes('FAIL') || log.action.includes('BLOCKED') ? '#c62828' : '#2e7d32' }}>
-                          {log.action}
+                    {securityLogs.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} style={{ textAlign: 'center', padding: 18, color: '#888' }}>
+                          No audit events recorded yet.
                         </td>
-                        <td style={{ padding: 6 }}>{log.entity_type}: {log.entity_id}</td>
-                        <td style={{ padding: 6 }}>{log.actor_id}</td>
-                        <td style={{ padding: 6, color: '#666' }}>{new Date(parseInt(log.created_at) * 1000 || Date.now()).toLocaleTimeString()}</td>
                       </tr>
-                    ))}
+                    ) : (
+                      securityLogs
+                        .slice((securityLogsPage - 1) * SECURITY_LOGS_PER_PAGE, securityLogsPage * SECURITY_LOGS_PER_PAGE)
+                        .map(log => (
+                          <tr key={log.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                            <td style={{ padding: 6, fontWeight: 'bold', color: log.action.includes('FAIL') || log.action.includes('BLOCKED') ? '#c62828' : '#2e7d32' }}>
+                              {log.action}
+                            </td>
+                            <td style={{ padding: 6 }}>{log.entity_type}: {log.entity_id}</td>
+                            <td style={{ padding: 6 }}>{log.actor_id}</td>
+                            <td style={{ padding: 6, color: '#666' }}>{new Date(parseInt(log.created_at) * 1000 || Date.now()).toLocaleTimeString()}</td>
+                          </tr>
+                        ))
+                    )}
                   </tbody>
                 </table>
+                {renderPaginationBar(securityLogsPage, securityLogs.length, SECURITY_LOGS_PER_PAGE, setSecurityLogsPage)}
               </div>
             </div>
           </div>
@@ -5335,7 +5469,7 @@ export const App: React.FC = () => {
               overflowY: 'auto',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 18 }}>Recent Invoices & Reprints</h3>
               <button
                 onClick={() => setIsHistoryModalOpen(false)}
@@ -5345,85 +5479,128 @@ export const App: React.FC = () => {
               </button>
             </div>
 
-            {persistedHistory.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '30px 0', color: '#666' }}>
-                No invoices recorded yet in this session.
-              </div>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr style={{ backgroundColor: '#f9f9f9', textAlign: 'left', borderBottom: '2px solid #ddd' }}>
-                    <th style={{ padding: 8 }}>Invoice #</th>
-                    <th style={{ padding: 8 }}>Amount</th>
-                    <th style={{ padding: 8 }}>Status</th>
-                    <th style={{ padding: 8 }}>Date/Time</th>
-                    <th style={{ padding: 8, textAlign: 'right' }}>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {persistedHistory.map((s, idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={{ padding: 8, fontWeight: 'bold' }}>{s.invoice_number}</td>
-                      <td style={{ padding: 8 }}>₹{(s.net_payable_paise / 100).toFixed(2)}</td>
-                      <td style={{ padding: 8 }}>
-                        {s.sale_status === 'VOIDED' ? (
-                          <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: '#FFEBEE', color: '#C62828', fontWeight: 'bold' }}>
-                            VOIDED / REFUNDED
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: '#E8F5E9', color: '#2E7D32', fontWeight: 'bold' }}>
-                            {s.payment_status}
-                          </span>
-                        )}
-                      </td>
-                      <td style={{ padding: 8, color: '#666' }}>{new Date(s.created_at).toLocaleTimeString()}</td>
-                      <td style={{ padding: 8, textAlign: 'right' }}>
-                        <button
-                          onClick={() => {
-                            setActiveReceiptModal(s);
-                            setIsHistoryModalOpen(false);
-                          }}
-                          style={{
-                            padding: '4px 10px',
-                            fontSize: 12,
-                            backgroundColor: '#8B1E2D',
-                            color: '#fff',
-                            border: 'none',
-                            borderRadius: 4,
-                            cursor: 'pointer',
-                            fontWeight: 600,
-                          }}
-                        >
-                          Reprint
-                        </button>
-                        {s.sale_status !== 'VOIDED' && currentSession?.role === 'ADMIN' && (
-                          <button
-                            onClick={() => {
-                              setVoidTargetSale(s);
-                              setVoidReason('');
-                              setVoidError(null);
-                            }}
-                            style={{
-                              padding: '4px 8px',
-                              fontSize: 12,
-                              backgroundColor: '#FFF3E0',
-                              color: '#C62828',
-                              border: '1px solid #FFCDD2',
-                              borderRadius: 4,
-                              cursor: 'pointer',
-                              fontWeight: 600,
-                              marginLeft: 6,
-                            }}
-                          >
-                            Void / Return
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+            {/* Quick Invoice Search */}
+            <div style={{ marginBottom: 12 }}>
+              <input
+                type="text"
+                placeholder="🔍 Search Invoice # (e.g. MM-IB-0001)..."
+                value={invoicesSearch}
+                onChange={e => {
+                  setInvoicesSearch(e.target.value);
+                  setInvoicesPage(1);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  border: '1px solid #ccc',
+                  fontSize: 13,
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            {(() => {
+              const filteredHistory = persistedHistory.filter(s => {
+                if (!invoicesSearch.trim()) return true;
+                const q = invoicesSearch.trim().toLowerCase();
+                return s.invoice_number.toLowerCase().includes(q) || s.sale_id.toLowerCase().includes(q);
+              });
+
+              if (filteredHistory.length === 0) {
+                return (
+                  <div style={{ textAlign: 'center', padding: '30px 0', color: '#666' }}>
+                    {persistedHistory.length === 0
+                      ? 'No invoices recorded yet in this session.'
+                      : 'No invoices match your search query.'}
+                  </div>
+                );
+              }
+
+              const pagedHistory = filteredHistory.slice(
+                (invoicesPage - 1) * INVOICES_PER_PAGE,
+                invoicesPage * INVOICES_PER_PAGE
+              );
+
+              return (
+                <div>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#f9f9f9', textAlign: 'left', borderBottom: '2px solid #ddd' }}>
+                        <th style={{ padding: 8 }}>Invoice #</th>
+                        <th style={{ padding: 8 }}>Amount</th>
+                        <th style={{ padding: 8 }}>Status</th>
+                        <th style={{ padding: 8 }}>Date/Time</th>
+                        <th style={{ padding: 8, textAlign: 'right' }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pagedHistory.map((s, idx) => (
+                        <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                          <td style={{ padding: 8, fontWeight: 'bold' }}>{s.invoice_number}</td>
+                          <td style={{ padding: 8 }}>₹{(s.net_payable_paise / 100).toFixed(2)}</td>
+                          <td style={{ padding: 8 }}>
+                            {s.sale_status === 'VOIDED' ? (
+                              <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: '#FFEBEE', color: '#C62828', fontWeight: 'bold' }}>
+                                VOIDED / REFUNDED
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: '#E8F5E9', color: '#2E7D32', fontWeight: 'bold' }}>
+                                {s.payment_status}
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ padding: 8, color: '#666' }}>{new Date(s.created_at).toLocaleTimeString()}</td>
+                          <td style={{ padding: 8, textAlign: 'right' }}>
+                            <button
+                              onClick={() => {
+                                setActiveReceiptModal(s);
+                                setIsHistoryModalOpen(false);
+                              }}
+                              style={{
+                                padding: '4px 10px',
+                                fontSize: 12,
+                                backgroundColor: '#8B1E2D',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: 4,
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                              }}
+                            >
+                              Reprint
+                            </button>
+                            {s.sale_status !== 'VOIDED' && currentSession?.role === 'ADMIN' && (
+                              <button
+                                onClick={() => {
+                                  setVoidTargetSale(s);
+                                  setVoidReason('');
+                                  setVoidError(null);
+                                }}
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: 12,
+                                  backgroundColor: '#FFF3E0',
+                                  color: '#C62828',
+                                  border: '1px solid #FFCDD2',
+                                  borderRadius: 4,
+                                  cursor: 'pointer',
+                                  fontWeight: 600,
+                                  marginLeft: 6,
+                                }}
+                              >
+                                Void / Return
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {renderPaginationBar(invoicesPage, filteredHistory.length, INVOICES_PER_PAGE, setInvoicesPage)}
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
