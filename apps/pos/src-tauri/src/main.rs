@@ -107,6 +107,19 @@ pub struct OpeningFloatStatus {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct LiveCashDrawerSummary {
+    pub has_opening_float: bool,
+    pub opening_float_paise: i64,
+    pub cash_sales_paise: i64,
+    pub cash_refunds_paise: i64,
+    pub current_drawer_cash_paise: i64,
+    pub is_day_closed: bool,
+    pub business_date: String,
+    pub branch_id: String,
+    pub recorded_at: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct DayEndSummary {
     pub business_date: String,
     pub branch_name: String,
@@ -596,18 +609,28 @@ fn cash_check_opening_float(
     let today = if now_iso.len() >= 10 {
         now_iso[0..10].to_string()
     } else {
-        "2026-10-14".to_string()
+        "2026-10-15".to_string()
     };
+    let branch_id = session.branch_id.clone();
 
+    // Opening float is verified strictly for this branch and today's calendar date
     let opening_float: Result<(i64, String), _> = conn.query_row(
-        "SELECT amount_paise, created_at FROM cash_movements WHERE movement_type = 'OPENING_FLOAT' AND (session_id = ?1 OR SUBSTR(created_at, 1, 10) = ?2);",
-        [&session.session_id, &today],
+        "SELECT amount_paise, created_at FROM cash_movements 
+         WHERE movement_type = 'OPENING_FLOAT' 
+           AND branch_id = ?1 
+           AND SUBSTR(created_at, 1, 10) = ?2
+         ORDER BY created_at DESC LIMIT 1;",
+        [&branch_id, &today],
         |r| Ok((r.get(0)?, r.get(1)?)),
     );
 
+    // Closing count is verified strictly for this branch and today's calendar date
     let has_closed: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM cash_movements WHERE movement_type = 'CLOSING_COUNT' AND (session_id = ?1 OR SUBSTR(created_at, 1, 10) = ?2);",
-        [&session.session_id, &today],
+        "SELECT COUNT(*) FROM cash_movements 
+         WHERE movement_type = 'CLOSING_COUNT' 
+           AND branch_id = ?1 
+           AND SUBSTR(created_at, 1, 10) = ?2;",
+        [&branch_id, &today],
         |r| r.get(0),
     ).unwrap_or(0);
 
@@ -626,7 +649,7 @@ fn cash_check_opening_float(
             session_id: session.session_id,
             business_date: today,
             recorded_at: None,
-            is_day_closed: false,
+            is_day_closed: has_closed > 0,
         }),
     }
 }
@@ -654,12 +677,16 @@ fn cash_record_opening_float(
     let today = if now_iso.len() >= 10 {
         now_iso[0..10].to_string()
     } else {
-        "2026-10-14".to_string()
+        "2026-10-15".to_string()
     };
+    let branch_id = session.branch_id.clone();
 
     let existing: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM cash_movements WHERE movement_type = 'OPENING_FLOAT' AND (session_id = ?1 OR SUBSTR(created_at, 1, 10) = ?2);",
-        [&session.session_id, &today],
+        "SELECT COUNT(*) FROM cash_movements 
+         WHERE movement_type = 'OPENING_FLOAT' 
+           AND branch_id = ?1 
+           AND SUBSTR(created_at, 1, 10) = ?2;",
+        [&branch_id, &today],
         |r| r.get(0),
     ).unwrap_or(0);
 
@@ -674,7 +701,6 @@ fn cash_record_opening_float(
             .map(|d| d.as_millis())
             .unwrap_or(0)
     );
-    let branch_id = session.branch_id.clone();
     let ref_note = notes.unwrap_or_else(|| "Morning Opening Cash Float".to_string());
 
     conn.execute(
@@ -690,6 +716,89 @@ fn cash_record_opening_float(
         business_date: today,
         recorded_at: Some(now_iso),
         is_day_closed: false,
+    })
+}
+
+#[tauri::command]
+fn cash_get_live_drawer_summary(
+    state: tauri::State<AppState>,
+    session_token: String,
+) -> Result<LiveCashDrawerSummary, String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    let session = auth::validate_session_and_permission(&conn, &session_token, "")
+        .map_err(|e| format!("Unauthorized: {}", e))?;
+
+    let now_iso = inventory::get_iso_now();
+    let today = if now_iso.len() >= 10 {
+        now_iso[0..10].to_string()
+    } else {
+        "2026-10-15".to_string()
+    };
+    let branch_id = session.branch_id.clone();
+
+    // 1. Opening Float for today & branch
+    let opening_float: Result<(i64, String), _> = conn.query_row(
+        "SELECT amount_paise, created_at FROM cash_movements 
+         WHERE movement_type = 'OPENING_FLOAT' 
+           AND branch_id = ?1 
+           AND SUBSTR(created_at, 1, 10) = ?2 
+         ORDER BY created_at DESC LIMIT 1;",
+        [&branch_id, &today],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    );
+
+    let (has_opening_float, opening_float_paise, recorded_at) = match opening_float {
+        Ok((amt, dt)) => (true, amt, Some(dt)),
+        Err(_) => (false, 0, None),
+    };
+
+    // 2. Cash sales inflow for today & branch
+    let cash_sales_paise: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(amount_paise), 0) FROM cash_movements 
+         WHERE movement_type = 'CASH_SALE' 
+           AND direction = 'IN' 
+           AND branch_id = ?1 
+           AND SUBSTR(created_at, 1, 10) = ?2;",
+        [&branch_id, &today],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    // 3. Cash refunds/payouts outflow for today & branch
+    let cash_refunds_paise: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(amount_paise), 0) FROM cash_movements 
+         WHERE movement_type = 'CASH_REFUND' 
+           AND direction = 'OUT' 
+           AND branch_id = ?1 
+           AND SUBSTR(created_at, 1, 10) = ?2;",
+        [&branch_id, &today],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    // 4. Day-end closed status for today & branch
+    let has_closed: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM cash_movements 
+         WHERE movement_type = 'CLOSING_COUNT' 
+           AND branch_id = ?1 
+           AND SUBSTR(created_at, 1, 10) = ?2;",
+        [&branch_id, &today],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    let current_drawer_cash_paise = opening_float_paise + cash_sales_paise - cash_refunds_paise;
+
+    Ok(LiveCashDrawerSummary {
+        has_opening_float,
+        opening_float_paise,
+        cash_sales_paise,
+        cash_refunds_paise,
+        current_drawer_cash_paise,
+        is_day_closed: has_closed > 0,
+        business_date: today,
+        branch_id,
+        recorded_at,
     })
 }
 
@@ -1254,6 +1363,7 @@ fn main() {
             get_sale_details,
             cash_check_opening_float,
             cash_record_opening_float,
+            cash_get_live_drawer_summary,
             cash_record_day_close,
             get_day_end_report,
             get_database_info,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { check as checkTauriUpdate, Update as TauriUpdate } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { calculateLineItem } from '@malgudi/domain/pricing.js';
@@ -94,6 +94,18 @@ export interface OpeningFloatStatus {
   business_date: string;
   recorded_at?: string | null;
   is_day_closed: boolean;
+}
+
+export interface LiveCashDrawerSummary {
+  has_opening_float: boolean;
+  opening_float_paise: number;
+  cash_sales_paise: number;
+  cash_refunds_paise: number;
+  current_drawer_cash_paise: number;
+  is_day_closed: boolean;
+  business_date: string;
+  branch_id: string;
+  recorded_at?: string | null;
 }
 
 export interface DayEndSummary {
@@ -883,12 +895,18 @@ export const App: React.FC = () => {
   const [activeReceiptModal, setActiveReceiptModal] = useState<DetailedSaleReceipt | null>(null);
   const [dbInfo, setDbInfo] = useState<{ db_path: string; is_wal_active: boolean; total_sales: number; pending_sync_count: number } | null>(null);
 
-  // --- Opening Cash Float (Morning Drawer Float) State ---
+  // --- Opening Cash Float & Live Till Drawer State ---
   const [isOpeningFloatModalOpen, setIsOpeningFloatModalOpen] = useState<boolean>(false);
   const [openingFloatStatus, setOpeningFloatStatus] = useState<OpeningFloatStatus | null>(null);
+  const [liveDrawerSummary, setLiveDrawerSummary] = useState<LiveCashDrawerSummary | null>(null);
+  const [showDrawerBreakdown, setShowDrawerBreakdown] = useState<boolean>(false);
   const [openingFloatInput, setOpeningFloatInput] = useState<string>('2000');
   const [openingFloatNotes, setOpeningFloatNotes] = useState<string>('');
   const [isOpeningFloatSubmitting, setIsOpeningFloatSubmitting] = useState<boolean>(false);
+  const currentSessionRef = useRef<SessionInfo | null>(currentSession);
+  useEffect(() => {
+    currentSessionRef.current = currentSession;
+  }, [currentSession]);
 
   // --- Optional Customer Info State ---
   const [customerInfo, setCustomerInfo] = useState<{
@@ -961,20 +979,63 @@ export const App: React.FC = () => {
     }
   };
 
+  // Helper: Load Live Cash Drawer Summary (ACID ledger from SQLite)
+  const loadLiveDrawerSummary = async (token?: string) => {
+    const activeToken = token || currentSessionRef.current?.token || currentSession?.token;
+    if (!activeToken) return;
+    if (isTauriRuntime) {
+      try {
+        const summary = await window.__TAURI__!.core.invoke<LiveCashDrawerSummary>('cash_get_live_drawer_summary', {
+          sessionToken: activeToken,
+        });
+        setLiveDrawerSummary(summary);
+      } catch (e) {
+        console.error('Failed to load live drawer summary via Tauri:', e);
+      }
+    } else {
+      // Simulation / Web fallback
+      const floatPaise = openingFloatStatus?.opening_float_paise || 0;
+      const today = new Date().toISOString().substring(0, 10);
+      const cashSales = persistedHistory
+        .filter(s => s.payment_status === 'SETTLED' && s.sale_status !== 'VOIDED' && (s.created_at || '').startsWith(today))
+        .reduce((sum, s) => sum + (s.cash_retained_paise || 0), 0);
+      const simulatedSummary: LiveCashDrawerSummary = {
+        has_opening_float: openingFloatStatus?.has_opening_float ?? false,
+        opening_float_paise: floatPaise,
+        cash_sales_paise: cashSales,
+        cash_refunds_paise: 0,
+        current_drawer_cash_paise: floatPaise + cashSales,
+        is_day_closed: openingFloatStatus?.is_day_closed ?? false,
+        business_date: today,
+        branch_id: currentSession?.branch_id || 'IB',
+        recorded_at: openingFloatStatus?.recorded_at || null,
+      };
+      setLiveDrawerSummary(simulatedSummary);
+    }
+  };
+
   // Helper: Check Opening Float Status for Today
   const checkOpeningFloatStatus = async (token?: string) => {
-    const activeToken = token || currentSession?.token;
-    if (!activeToken || !isTauriRuntime) return;
-    try {
-      const status = await window.__TAURI__!.core.invoke<OpeningFloatStatus>('cash_check_opening_float', {
-        sessionToken: activeToken,
-      });
-      setOpeningFloatStatus(status);
-      if (!status.has_opening_float && !status.is_day_closed) {
+    const activeToken = token || currentSessionRef.current?.token || currentSession?.token;
+    if (!activeToken) return;
+    if (isTauriRuntime) {
+      try {
+        const status = await window.__TAURI__!.core.invoke<OpeningFloatStatus>('cash_check_opening_float', {
+          sessionToken: activeToken,
+        });
+        setOpeningFloatStatus(status);
+        await loadLiveDrawerSummary(activeToken);
+        if (!status.has_opening_float && !status.is_day_closed) {
+          setIsOpeningFloatModalOpen(true);
+        }
+      } catch (e) {
+        console.error('Failed to check opening float:', e);
+      }
+    } else {
+      await loadLiveDrawerSummary(activeToken);
+      if (!openingFloatStatus?.has_opening_float && !openingFloatStatus?.is_day_closed) {
         setIsOpeningFloatModalOpen(true);
       }
-    } catch (e) {
-      console.error('Failed to check opening float:', e);
     }
   };
 
@@ -997,14 +1058,27 @@ export const App: React.FC = () => {
           notes: openingFloatNotes.trim() || undefined,
         });
         setOpeningFloatStatus(res);
+        await loadLiveDrawerSummary(currentSession.token);
       } else {
-        setOpeningFloatStatus({
+        const simStatus: OpeningFloatStatus = {
           has_opening_float: true,
           opening_float_paise: amountPaise,
           session_id: currentSession.session_id,
           business_date: new Date().toISOString().substring(0, 10),
           recorded_at: new Date().toISOString(),
           is_day_closed: false,
+        };
+        setOpeningFloatStatus(simStatus);
+        setLiveDrawerSummary({
+          has_opening_float: true,
+          opening_float_paise: amountPaise,
+          cash_sales_paise: 0,
+          cash_refunds_paise: 0,
+          current_drawer_cash_paise: amountPaise,
+          is_day_closed: false,
+          business_date: simStatus.business_date,
+          branch_id: currentSession.branch_id,
+          recorded_at: simStatus.recorded_at,
         });
       }
       setIsOpeningFloatModalOpen(false);
@@ -1081,6 +1155,7 @@ export const App: React.FC = () => {
         if (openingFloatStatus) {
           setOpeningFloatStatus({ ...openingFloatStatus, is_day_closed: true });
         }
+        await loadLiveDrawerSummary(currentSession.token);
       } else {
         const today = new Date().toISOString().split('T')[0];
         const mockSummary: DayEndSummary = {
@@ -1144,6 +1219,9 @@ export const App: React.FC = () => {
     loadSyncConfig();
     const syncInterval = setInterval(() => {
       loadSyncStatus();
+      if (currentSessionRef.current?.token) {
+        loadLiveDrawerSummary(currentSessionRef.current.token);
+      }
     }, 10000);
 
     // Quiet background update check 5 seconds after startup
@@ -2588,6 +2666,7 @@ export const App: React.FC = () => {
       setUpiAllocatedRupees(0);
       refreshCatalog(currentSession?.token);
       loadSyncStatus();
+      loadLiveDrawerSummary(currentSession?.token);
     } catch (err: any) {
       setErrorMessage(err.message || String(err));
     } finally {
@@ -2931,6 +3010,149 @@ export const App: React.FC = () => {
           <div style={{ fontSize: 12, color: '#444', display: 'flex', alignItems: 'center', gap: 6, backgroundColor: '#FFFDF9', padding: '4px 10px', borderRadius: 20, border: '1px solid #EAD8C7' }}>
             <span>👤 Cashier: <strong style={{ color: '#8B1E2D' }}>{currentSession.display_name}</strong> ({currentSession.role})</span>
           </div>
+
+          {/* Real-time Live Cash Drawer Pill with Breakdown Popover */}
+          {liveDrawerSummary && liveDrawerSummary.has_opening_float ? (
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                onClick={() => setShowDrawerBreakdown(prev => !prev)}
+                title="Click to view full Day Cash Drawer Breakdown"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 12px',
+                  borderRadius: 20,
+                  backgroundColor: '#F0FDF4',
+                  border: '1.5px solid #86EFAC',
+                  color: '#166534',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: '0 1px 3px rgba(22,101,52,0.1)',
+                  transition: 'all 0.15s ease-in-out',
+                }}
+              >
+                <span style={{ fontSize: 13 }}>💵</span>
+                <span>Till:</span>
+                <span style={{ color: '#14532D', fontWeight: 900, fontSize: 13 }}>
+                  ₹{(liveDrawerSummary.current_drawer_cash_paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span style={{ fontSize: 10, color: '#15803D' }}>▾</span>
+              </button>
+
+              {/* Drawer Breakdown Popover */}
+              {showDrawerBreakdown && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 8px)',
+                    right: 0,
+                    width: 290,
+                    backgroundColor: '#FFFFFF',
+                    border: '2px solid #8B1E2D',
+                    borderRadius: 10,
+                    padding: '12px 14px',
+                    boxShadow: '0 10px 28px rgba(0,0,0,0.2)',
+                    zIndex: 1100,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #F1E5D8', paddingBottom: 6, marginBottom: 8 }}>
+                    <div style={{ fontWeight: 800, color: '#8B1E2D', fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span>💵</span> Live Cash Drawer
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowDrawerBreakdown(false)}
+                      style={{ background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: 14 }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
+                      <span>☀️ Opening Float:</span>
+                      <strong style={{ color: '#111' }}>
+                        ₹{(liveDrawerSummary.opening_float_paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#2E7D32' }}>
+                      <span>🛒 Cash Sales (+):</span>
+                      <strong>
+                        +₹{(liveDrawerSummary.cash_sales_paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </strong>
+                    </div>
+                    {liveDrawerSummary.cash_refunds_paise > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', color: '#C62828' }}>
+                        <span>↩️ Cash Refunds (-):</span>
+                        <strong>
+                          -₹{(liveDrawerSummary.cash_refunds_paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </strong>
+                      </div>
+                    )}
+                    <div style={{ height: 1, backgroundColor: '#EAD8C7', margin: '4px 0' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13 }}>
+                      <span style={{ fontWeight: 700, color: '#1E293B' }}>Expected In Drawer:</span>
+                      <span style={{ fontWeight: 900, color: '#166534', fontSize: 15 }}>
+                        ₹{(liveDrawerSummary.current_drawer_cash_paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px dashed #E5E7EB', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 10, color: '#888' }}>
+                      {liveDrawerSummary.is_day_closed ? '🔒 Day Closed' : '🟢 Shift Active'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowDrawerBreakdown(false);
+                        handleOpenDayCloseModal();
+                      }}
+                      style={{
+                        padding: '4px 8px',
+                        fontSize: 10,
+                        fontWeight: 700,
+                        backgroundColor: '#FFF9F0',
+                        color: '#8B1E2D',
+                        border: '1px solid #8B1E2D',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Day Close (Z-Report)
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsOpeningFloatModalOpen(true)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '4px 10px',
+                borderRadius: 20,
+                backgroundColor: '#FEF3C7',
+                border: '1.5px solid #F59E0B',
+                color: '#92400E',
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: 'pointer',
+                boxShadow: '0 1px 3px rgba(245,158,11,0.2)',
+              }}
+              title="Click to enter the starting cash float for today"
+            >
+              <span>⚠️</span>
+              <span>Float Not Set</span>
+              <span style={{ backgroundColor: '#D97706', color: '#fff', padding: '1px 6px', borderRadius: 10, fontSize: 10 }}>💵 Set Cash</span>
+            </button>
+          )}
 
           {/* Real-time Cloud Synchronization Badge & Quick Sync Button */}
           <div
@@ -6182,6 +6404,54 @@ export const App: React.FC = () => {
                 <span style={{ fontSize: 24, fontWeight: 900, color: '#8B1E2D' }}>
                   ₹{(totalGrossPaise / 100).toFixed(2)}
                 </span>
+              </div>
+
+              {/* Live Cash Drawer Status Strip right above checkout buttons */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '5px 10px',
+                  backgroundColor: liveDrawerSummary?.has_opening_float ? '#F0FDF4' : '#FFFBEB',
+                  borderRadius: 6,
+                  border: `1px solid ${liveDrawerSummary?.has_opening_float ? '#BBF7D0' : '#FDE68A'}`,
+                  fontSize: 11,
+                  color: liveDrawerSummary?.has_opening_float ? '#166534' : '#92400E',
+                  marginBottom: 8,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span>💵</span>
+                  <span style={{ fontWeight: 600 }}>Drawer In-Hand:</span>
+                </div>
+                {liveDrawerSummary?.has_opening_float ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontWeight: 800, fontSize: 12, color: '#14532D' }}>
+                      ₹{(liveDrawerSummary.current_drawer_cash_paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </span>
+                    <span style={{ fontSize: 10, color: '#65A30D' }}>
+                      (F: ₹{(liveDrawerSummary.opening_float_paise / 100).toLocaleString('en-IN')} + C: ₹{(liveDrawerSummary.cash_sales_paise / 100).toLocaleString('en-IN')})
+                    </span>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsOpeningFloatModalOpen(true)}
+                    style={{
+                      border: 'none',
+                      background: 'none',
+                      color: '#B45309',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      fontSize: 11,
+                      padding: 0,
+                    }}
+                  >
+                    Set Starting Float →
+                  </button>
+                )}
               </div>
 
               {/* Action Buttons: Fast Retail Checkout */}
