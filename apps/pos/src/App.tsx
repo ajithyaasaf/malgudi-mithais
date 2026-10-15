@@ -678,7 +678,7 @@ export const App: React.FC = () => {
   const [updateStatusMessage, setUpdateStatusMessage] = useState<string | null>(null);
   const [updateErrorMessage, setUpdateErrorMessage] = useState<string | null>(null);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState<boolean>(false);
-  const currentAppVersion = '2.9.15';
+  const currentAppVersion = '2.9.16';
 
   // --- Cloud Sync & Multi-Branch State ---
   const [syncStatus, setSyncStatus] = useState<SyncStatusState | null>(null);
