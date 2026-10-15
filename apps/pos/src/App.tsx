@@ -743,6 +743,9 @@ export const App: React.FC = () => {
   const [adjustError, setAdjustError] = useState<string | null>(null);
   const [stockMovements, setStockMovements] = useState<StockMovementRecord[]>([]);
   const [adjustProductSearch, setAdjustProductSearch] = useState<string>('');
+  const [stockTableSearch, setStockTableSearch] = useState<string>('');
+  const [stockTableFilter, setStockTableFilter] = useState<'all' | 'out_of_stock' | 'low_stock'>('all');
+  const [stockTableCategory, setStockTableCategory] = useState<string>('all');
 
   // Category State & Management
   const [categories, setCategories] = useState<CatalogCategory[]>(() => {
@@ -3758,6 +3761,23 @@ export const App: React.FC = () => {
                               </td>
                               <td style={{ padding: '10px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                                 <button
+                                  onClick={() => handleOpenStockAdjust(prod.id)}
+                                  style={{
+                                    padding: '4px 10px',
+                                    fontSize: 12,
+                                    backgroundColor: '#FFF5F5',
+                                    color: '#8B1E2D',
+                                    border: '1px solid #EAD8C7',
+                                    borderRadius: 4,
+                                    cursor: 'pointer',
+                                    fontWeight: 600,
+                                    marginRight: 6,
+                                  }}
+                                  title="Adjust physical inventory balance"
+                                >
+                                  📦 Stock
+                                </button>
+                                <button
                                   onClick={() => handleOpenEditProduct(prod)}
                                   style={{
                                     padding: '4px 10px',
@@ -3869,48 +3889,219 @@ export const App: React.FC = () => {
 
                 {/* Stock Balances Summary */}
                 <div style={{ marginBottom: 24 }}>
-                  <h3 style={{ fontSize: 14, color: '#333', margin: '0 0 10px 0' }}>Current Store Balances & Quick Adjust</h3>
-                  <div style={{ maxHeight: 240, overflowY: 'auto', border: '1px solid #E5E5DF', borderRadius: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <h3 style={{ fontSize: 15, fontWeight: 800, color: '#333', margin: 0 }}>
+                        Current Store Balances & Quick Adjust
+                      </h3>
+                      <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 12, backgroundColor: '#F0F0EA', color: '#555', fontWeight: 700 }}>
+                        {catalog.length} items
+                      </span>
+                    </div>
+
+                    {/* Filter Pills */}
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={() => setStockTableFilter('all')}
+                        style={{
+                          padding: '4px 10px',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          borderRadius: 20,
+                          border: stockTableFilter === 'all' ? '1px solid #8B1E2D' : '1px solid #ddd',
+                          backgroundColor: stockTableFilter === 'all' ? '#8B1E2D' : '#fff',
+                          color: stockTableFilter === 'all' ? '#fff' : '#555',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        All ({catalog.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStockTableFilter('out_of_stock')}
+                        style={{
+                          padding: '4px 10px',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          borderRadius: 20,
+                          border: stockTableFilter === 'out_of_stock' ? '1px solid #C62828' : '1px solid #FFCDD2',
+                          backgroundColor: stockTableFilter === 'out_of_stock' ? '#C62828' : '#FFEBEE',
+                          color: stockTableFilter === 'out_of_stock' ? '#fff' : '#C62828',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        🔴 Out of Stock / Negative ({catalog.filter(p => p.current_stock <= 0).length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStockTableFilter('low_stock')}
+                        style={{
+                          padding: '4px 10px',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          borderRadius: 20,
+                          border: stockTableFilter === 'low_stock' ? '1px solid #E65100' : '1px solid #FFE0B2',
+                          backgroundColor: stockTableFilter === 'low_stock' ? '#E65100' : '#FFF3E0',
+                          color: stockTableFilter === 'low_stock' ? '#fff' : '#E65100',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        ⚠️ Low Stock ({catalog.filter(p => p.current_stock > 0 && (p.pricing_unit === 'PER_KG' ? p.current_stock < 5000000 : p.current_stock < 10)).length})
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Search and Category Filter Toolbar */}
+                  <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+                    <div style={{ position: 'relative', flex: 1 }}>
+                      <input
+                        type="text"
+                        placeholder="🔍 Search product name, Tamil name, or SKU (e.g. Rusk, ரஸ்க், BAK)..."
+                        value={stockTableSearch}
+                        onChange={e => setStockTableSearch(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '7px 32px 7px 10px',
+                          border: '1px solid #ccc',
+                          borderRadius: 6,
+                          fontSize: 12,
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                      {stockTableSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setStockTableSearch('')}
+                          style={{
+                            position: 'absolute',
+                            right: 8,
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            color: '#999',
+                          }}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                    <select
+                      value={stockTableCategory}
+                      onChange={e => setStockTableCategory(e.target.value)}
+                      style={{
+                        padding: '7px 10px',
+                        border: '1px solid #ccc',
+                        borderRadius: 6,
+                        fontSize: 12,
+                        backgroundColor: '#fff',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <option value="all">All Categories</option>
+                      {categories.filter(c => c.id !== 'all').map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.icon} {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Filtered Table */}
+                  <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid #E5E5DF', borderRadius: 6 }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                       <thead>
-                        <tr style={{ backgroundColor: '#F9F9F7', textAlign: 'left', borderBottom: '1px solid #ddd' }}>
+                        <tr style={{ backgroundColor: '#F9F9F7', textAlign: 'left', borderBottom: '1px solid #ddd', position: 'sticky', top: 0, zIndex: 1 }}>
                           <th style={{ padding: '8px 10px' }}>SKU</th>
                           <th style={{ padding: '8px 10px' }}>Product</th>
+                          <th style={{ padding: '8px 10px' }}>Category</th>
                           <th style={{ padding: '8px 10px' }}>Current Stock</th>
                           <th style={{ padding: '8px 10px' }}>Unit</th>
                           <th style={{ padding: '8px 10px', textAlign: 'right' }}>Action</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {catalog.map(prod => (
-                          <tr key={prod.id} style={{ borderBottom: '1px solid #eee' }}>
-                            <td style={{ padding: '8px 10px', fontFamily: 'monospace', fontWeight: 'bold' }}>{prod.sku}</td>
-                            <td style={{ padding: '8px 10px' }}>
-                              <strong>{prod.name}</strong> <span style={{ color: '#777' }}>({prod.tamil_name})</span>
-                            </td>
-                            <td style={{ padding: '8px 10px', fontWeight: 700, color: prod.current_stock <= 0 ? '#C62828' : '#2E7D32' }}>
-                              {prod.pricing_unit === 'PER_KG' ? `${(prod.current_stock / 1000000).toFixed(2)} kg` : `${prod.current_stock} pcs`}
-                            </td>
-                            <td style={{ padding: '8px 10px' }}>{prod.inventory_unit}</td>
-                            <td style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              <button
-                                onClick={() => handleOpenStockAdjust(prod.id)}
+                        {(() => {
+                          const filtered = catalog.filter(prod => {
+                            if (stockTableCategory !== 'all' && prod.category_id !== stockTableCategory) return false;
+                            if (stockTableFilter === 'out_of_stock' && prod.current_stock > 0) return false;
+                            if (stockTableFilter === 'low_stock') {
+                              const isLow = prod.current_stock > 0 && (prod.pricing_unit === 'PER_KG' ? prod.current_stock < 5000000 : prod.current_stock < 10);
+                              if (!isLow) return false;
+                            }
+                            if (stockTableSearch.trim()) {
+                              const q = stockTableSearch.trim().toLowerCase();
+                              return (
+                                prod.name.toLowerCase().includes(q) ||
+                                prod.tamil_name.toLowerCase().includes(q) ||
+                                prod.sku.toLowerCase().includes(q) ||
+                                (prod.barcode && prod.barcode.toLowerCase().includes(q))
+                              );
+                            }
+                            return true;
+                          });
+
+                          if (filtered.length === 0) {
+                            return (
+                              <tr>
+                                <td colSpan={6} style={{ textAlign: 'center', padding: '24px 12px', color: '#888' }}>
+                                  No items found matching {stockTableSearch ? `"${stockTableSearch}"` : 'the selected filter'}.
+                                </td>
+                              </tr>
+                            );
+                          }
+
+                          return filtered.map(prod => {
+                            const isNegativeOrZero = prod.current_stock <= 0;
+                            const isLow = !isNegativeOrZero && (prod.pricing_unit === 'PER_KG' ? prod.current_stock < 5000000 : prod.current_stock < 10);
+                            const unitDisplay = prod.pricing_unit === 'PER_KG' ? 'KG' : prod.inventory_unit;
+
+                            return (
+                              <tr
+                                key={prod.id}
                                 style={{
-                                  padding: '3px 8px',
-                                  fontSize: 11,
-                                  backgroundColor: '#8B1E2D',
-                                  color: '#fff',
-                                  border: 'none',
-                                  borderRadius: 4,
-                                  cursor: 'pointer',
-                                  fontWeight: 600,
+                                  borderBottom: '1px solid #eee',
+                                  backgroundColor: isNegativeOrZero ? '#FFF9F9' : '#fff',
                                 }}
                               >
-                                Adjust
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                                <td style={{ padding: '8px 10px', fontFamily: 'monospace', fontWeight: 'bold' }}>{prod.sku}</td>
+                                <td style={{ padding: '8px 10px' }}>
+                                  <strong>{prod.name}</strong> <span style={{ color: '#777', fontSize: 11 }}>({prod.tamil_name})</span>
+                                </td>
+                                <td style={{ padding: '8px 10px' }}>
+                                  <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, backgroundColor: '#F0F0EA', color: '#555', fontWeight: 600 }}>
+                                    {prod.category_id.replace('cat_', '').toUpperCase()}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '8px 10px', fontWeight: 700, color: isNegativeOrZero ? '#C62828' : isLow ? '#E65100' : '#2E7D32' }}>
+                                  {prod.pricing_unit === 'PER_KG' ? `${(prod.current_stock / 1000000).toFixed(2)} kg` : `${prod.current_stock} pcs`}
+                                  {isNegativeOrZero && <span style={{ fontSize: 10, marginLeft: 4, color: '#C62828', fontWeight: 600 }}>(Deficit)</span>}
+                                </td>
+                                <td style={{ padding: '8px 10px', fontSize: 11, color: '#666' }}>{unitDisplay}</td>
+                                <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                                  <button
+                                    onClick={() => handleOpenStockAdjust(prod.id)}
+                                    style={{
+                                      padding: '4px 10px',
+                                      fontSize: 11,
+                                      backgroundColor: '#8B1E2D',
+                                      color: '#fff',
+                                      border: 'none',
+                                      borderRadius: 4,
+                                      cursor: 'pointer',
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    Adjust
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          });
+                        })()}
                       </tbody>
                     </table>
                   </div>
@@ -6268,7 +6459,7 @@ export const App: React.FC = () => {
                                   value={Math.round(item.quantity_input / 1000)}
                                   onChange={e => handleDirectWeightChange(idx, Number(e.target.value))}
                                   min={1}
-                                  step={25}
+                                  step="any"
                                   title="Directly edit grams using keyboard"
                                   style={{
                                     width: 52,
@@ -6701,7 +6892,8 @@ export const App: React.FC = () => {
                             {weightModalUnit === 'kg' ? (
                               <input
                                 type="number"
-                                step="0.001"
+                                step="any"
+                                min="0"
                                 value={weightModalKgInput}
                                 onChange={e => {
                                   const val = e.target.value;
@@ -7068,6 +7260,8 @@ export const App: React.FC = () => {
               </label>
               <input
                 type="number"
+                step="any"
+                min="0"
                 value={cashTenderedRupees}
                 onChange={e => setCashTenderedRupees(Number(e.target.value))}
                 style={{ width: '100%', padding: '10px 12px', fontSize: 18, fontWeight: 'bold', borderRadius: 6, border: '1.5px solid #8B1E2D', boxSizing: 'border-box', marginBottom: 8 }}
@@ -7113,6 +7307,8 @@ export const App: React.FC = () => {
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
                   type="number"
+                  step="any"
+                  min="0"
                   placeholder="0"
                   value={upiAllocatedRupees}
                   onChange={e => setUpiAllocatedRupees(Number(e.target.value))}
@@ -8062,7 +8258,7 @@ export const App: React.FC = () => {
                   <span style={{ position: 'absolute', left: 14, top: 10, fontSize: 18, fontWeight: 700, color: '#8B1E2D' }}>₹</span>
                   <input
                     type="number"
-                    step="0.01"
+                    step="any"
                     min="0"
                     required
                     value={openingFloatInput}
@@ -8274,7 +8470,7 @@ export const App: React.FC = () => {
                         <span style={{ position: 'absolute', left: 10, top: 7, fontSize: 14, fontWeight: 700, color: '#555' }}>₹</span>
                         <input
                           type="number"
-                          step="0.01"
+                          step="any"
                           min="0"
                           value={countedClosingCashInput}
                           onChange={e => setCountedClosingCashInput(e.target.value)}
@@ -8691,8 +8887,8 @@ export const App: React.FC = () => {
                   </label>
                   <input
                     type="number"
-                    step="0.5"
-                    min="1"
+                    step="any"
+                    min="0.01"
                     required
                     placeholder="e.g. 680"
                     value={prodFormPriceRupees}
@@ -8738,7 +8934,7 @@ export const App: React.FC = () => {
                   </label>
                   <input
                     type="number"
-                    step={prodFormPricingUnit === 'PER_KG' ? '0.25' : '1'}
+                    step={prodFormPricingUnit === 'PER_KG' ? 'any' : '1'}
                     min="0"
                     placeholder={prodFormPricingUnit === 'PER_KG' ? 'e.g. 25.0' : 'e.g. 50'}
                     value={prodFormInitialStock}
@@ -8934,8 +9130,8 @@ export const App: React.FC = () => {
                         </label>
                         <input
                           type="number"
-                          step={curProd?.pricing_unit === 'PER_KG' ? '0.1' : '1'}
-                          min="0.01"
+                          step={curProd?.pricing_unit === 'PER_KG' ? 'any' : '1'}
+                          min={curProd?.pricing_unit === 'PER_KG' ? '0.001' : '1'}
                           required
                           placeholder="e.g. 10"
                           value={adjustQuantity}
