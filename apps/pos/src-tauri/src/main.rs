@@ -240,6 +240,19 @@ fn auth_update_user_status(
 }
 
 #[tauri::command]
+fn auth_delete_user(
+    state: tauri::State<AppState>,
+    session_token: String,
+    user_id: String,
+) -> Result<(), String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    auth::delete_user(&conn, &session_token, &user_id)
+}
+
+#[tauri::command]
 fn auth_reset_user_pin(
     state: tauri::State<AppState>,
     session_token: String,
@@ -1398,6 +1411,7 @@ fn main() {
             auth_logout,
             auth_create_user,
             auth_update_user_status,
+            auth_delete_user,
             auth_reset_user_pin,
             auth_list_users,
             auth_get_security_logs,

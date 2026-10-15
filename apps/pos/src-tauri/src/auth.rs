@@ -871,6 +871,56 @@ pub fn reset_user_pin(
     Ok(())
 }
 
+/// Deletes a user account. Protects against deleting the last active ADMIN/Owner account.
+pub fn delete_user(
+    conn: &Connection,
+    admin_token: &str,
+    target_user_id: &str,
+) -> Result<(), String> {
+    let admin = validate_session_and_permission(conn, admin_token, "admin:manage_users")?;
+
+    let (target_role, target_status, target_username): (String, String, String) = conn
+        .query_row(
+            "SELECT role, status, username FROM users WHERE id = ?1;",
+            [target_user_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|_| "Target user not found".to_string())?;
+
+    // Protect the last active ADMIN/Owner account
+    if target_role == "ADMIN" && target_status == "ACTIVE" {
+        let active_admins_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE role = 'ADMIN' AND status = 'ACTIVE';",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+
+        if active_admins_count <= 1 {
+            return Err("CANNOT_DELETE_LAST_OWNER: Cannot delete the only remaining active Administrator/Owner account.".to_string());
+        }
+    }
+
+    // Clean up dependent user sessions and attempts
+    let _ = conn.execute("DELETE FROM user_sessions WHERE user_id = ?1;", [target_user_id]);
+    let _ = conn.execute("DELETE FROM auth_attempts WHERE username = ?1;", [&target_username]);
+    let _ = conn.execute("DELETE FROM user_permissions WHERE user_id = ?1;", [target_user_id]);
+
+    conn.execute("DELETE FROM users WHERE id = ?1;", [target_user_id])
+        .map_err(|e| format!("Failed to delete user: {}", e))?;
+
+    record_audit_event(
+        conn,
+        "USER_DELETED",
+        "USER",
+        target_user_id,
+        &admin.user_id,
+    )?;
+
+    Ok(())
+}
+
 /// Lists all users (excluding pin_hash!).
 pub fn list_users(conn: &Connection, admin_token: &str) -> Result<Vec<UserRecord>, String> {
     let _admin = validate_session_and_permission(conn, admin_token, "admin:manage_users")?;

@@ -1755,6 +1755,27 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleDeleteUser = async (user: UserRecord) => {
+    if (!currentSession) return;
+    if (!window.confirm(`Are you sure you want to permanently delete user '${user.username}' (${user.display_name})?`)) {
+      return;
+    }
+    setAdminActionMessage(null);
+    setAdminActionError(null);
+    try {
+      if (isTauriRuntime) {
+        await window.__TAURI__!.core.invoke('auth_delete_user', {
+          sessionToken: currentSession.token,
+          userId: user.id,
+        });
+        setAdminActionMessage(`User '${user.username}' permanently deleted.`);
+        loadAdminData();
+      }
+    } catch (err: any) {
+      setAdminActionError(err.message || String(err));
+    }
+  };
+
   const handleExecutePinReset = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!resetPinUserId || resetPinValue.length < 4 || !currentSession) return;
@@ -5290,9 +5311,16 @@ export const App: React.FC = () => {
                           </button>
                           <button
                             onClick={() => { setResetPinUserId(u.id); setResetPinValue(''); }}
-                            style={{ padding: '3px 8px', fontSize: 11, backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: 3, cursor: 'pointer' }}
+                            style={{ padding: '3px 8px', fontSize: 11, marginRight: 6, backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: 3, cursor: 'pointer' }}
                           >
                             Reset PIN
+                          </button>
+                          <button
+                            onClick={() => handleDeleteUser(u)}
+                            style={{ padding: '3px 8px', fontSize: 11, backgroundColor: '#FFF0F0', border: '1px solid #FFCDD2', color: '#C62828', borderRadius: 3, cursor: 'pointer', fontWeight: 600 }}
+                            title="Permanently delete user account"
+                          >
+                            🗑️ Delete
                           </button>
                         </td>
                       </tr>

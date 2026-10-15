@@ -633,9 +633,15 @@ impl DatabaseManager {
             rusqlite::params![&pin_hash, now],
         );
 
+        // Clean up deprecated test accounts if present
+        let _ = conn.execute(
+            "DELETE FROM users WHERE username IN ('owner_anand', 'kavitha_01', 'kavitha');",
+            [],
+        );
+
         // Clear any prior lockouts for owner and staff
         let _ = conn.execute(
-            "DELETE FROM auth_attempts WHERE username IN ('owner', 'staff');",
+            "DELETE FROM auth_attempts WHERE username IN ('owner', 'staff', 'owner_anand', 'kavitha_01', 'kavitha');",
             [],
         );
 
