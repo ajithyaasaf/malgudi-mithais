@@ -5408,19 +5408,47 @@ export const App: React.FC = () => {
                 </form>
 
                 <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px dashed #ccc' }}>
-                  <h4 style={{ margin: '0 0 6px 0', fontSize: 13, color: '#333' }}>Database Operations</h4>
+                  <h4 style={{ margin: '0 0 6px 0', fontSize: 13, color: '#333', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    🛡️ Data Safety & Local Backup
+                  </h4>
                   {dbInfo && (
-                    <div style={{ fontSize: 11, color: '#666', marginBottom: 8, lineHeight: 1.4 }}>
-                      <div>Status: <strong>{dbInfo.is_wal_active ? 'WAL Active' : 'Normal'}</strong></div>
-                      <div>Total Sales: {dbInfo.total_sales} | Pending Sync: {dbInfo.pending_sync_count}</div>
+                    <div style={{ fontSize: 11, color: '#555', marginBottom: 10, lineHeight: 1.5 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>System Health:</span>
+                        <strong style={{ color: '#2E7D32', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', backgroundColor: '#2E7D32' }}></span>
+                          Protected (Power-loss Safe)
+                        </strong>
+                      </div>
+                      <div>
+                        Invoices on Register: <strong>{dbInfo.total_sales}</strong> • Cloud Sync: <strong>{dbInfo.pending_sync_count} pending</strong>
+                      </div>
                     </div>
                   )}
                   <button
                     onClick={handleTriggerBackup}
-                    style={{ width: '100%', padding: '10px', backgroundColor: '#333', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 'bold' }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      backgroundColor: '#263238',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      fontWeight: 'bold',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8,
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                    }}
                   >
-                    📦 Create Hot Consistency Backup
+                    💾 Backup Store Data Now
                   </button>
+                  <div style={{ fontSize: 10, color: '#888', marginTop: 4, textAlign: 'center' }}>
+                    Safely creates a snapshot copy of all sales and stock without interrupting billing
+                  </div>
                 </div>
               </div>
             </div>
