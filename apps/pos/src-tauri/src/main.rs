@@ -702,17 +702,23 @@ fn cash_record_opening_float(
             .unwrap_or(0)
     );
     let ref_note = notes.unwrap_or_else(|| "Morning Opening Cash Float".to_string());
+    let date_str = if now_iso.len() >= 10 { now_iso[0..10].replace('-', "") } else { "20261015".to_string() };
+    let session_id = if session.session_id == "sess_madurai_01" {
+        format!("sess_{}_{}_{}", branch_id, date_str, &id[id.len().saturating_sub(6)..])
+    } else {
+        session.session_id.clone()
+    };
 
     conn.execute(
         "INSERT INTO cash_movements (id, session_id, branch_id, movement_type, amount_paise, direction, reference_id, created_at)
          VALUES (?1, ?2, ?3, 'OPENING_FLOAT', ?4, 'IN', ?5, ?6);",
-        rusqlite::params![id, session.session_id, branch_id, amount_paise, ref_note, now_iso],
+        rusqlite::params![id, session_id, branch_id, amount_paise, ref_note, now_iso],
     ).map_err(|e| format!("Failed to record opening float: {}", e))?;
 
     Ok(OpeningFloatStatus {
         has_opening_float: true,
         opening_float_paise: amount_paise,
-        session_id: session.session_id,
+        session_id,
         business_date: today,
         recorded_at: Some(now_iso),
         is_day_closed: false,

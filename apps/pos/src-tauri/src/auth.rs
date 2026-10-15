@@ -234,10 +234,15 @@ pub fn provision_first_owner(
         .counter_id
         .clone()
         .unwrap_or_else(|| "C1".to_string());
+    let date_str = if now.len() >= 10 { now[0..10].replace('-', "") } else { "20261015".to_string() };
     let session_id = payload
         .session_id
         .clone()
-        .unwrap_or_else(|| "sess_madurai_01".to_string());
+        .filter(|s| !s.trim().is_empty() && s != "sess_madurai_01")
+        .unwrap_or_else(|| {
+            let short_tok = if token.len() >= 8 { &token[..8] } else { "01" };
+            format!("sess_{}_{}_{}", branch_id, date_str, short_tok)
+        });
     let expires_at = iso_future_hours(SESSION_EXPIRY_HOURS);
 
     conn.execute(
@@ -415,11 +420,16 @@ pub fn login(conn: &Connection, payload: &LoginPayload) -> Result<SessionInfo, S
         .clone()
         .or(configured_counter)
         .unwrap_or_else(|| "C1".to_string());
+    let now = iso_now();
+    let date_str = if now.len() >= 10 { now[0..10].replace('-', "") } else { "20261015".to_string() };
     let session_id = payload
         .session_id
         .clone()
-        .unwrap_or_else(|| "sess_madurai_01".to_string());
-    let now = iso_now();
+        .filter(|s| !s.trim().is_empty() && s != "sess_madurai_01")
+        .unwrap_or_else(|| {
+            let short_tok = if token.len() >= 8 { &token[..8] } else { "01" };
+            format!("sess_{}_{}_{}", branch_id, date_str, short_tok)
+        });
     let expires_at = iso_future_hours(SESSION_EXPIRY_HOURS);
 
     conn.execute(

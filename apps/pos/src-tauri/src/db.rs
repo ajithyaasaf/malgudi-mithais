@@ -150,9 +150,9 @@ impl DatabaseManager {
                 created_at TEXT NOT NULL
             );
 
-            -- Canonical partial index: Physically prevents multiple OPENING_FLOAT rows per session
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_movements_session_opening 
-            ON cash_movements (session_id) 
+            -- Canonical partial index: Physically prevents multiple OPENING_FLOAT rows per branch per business date
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_movements_branch_date_opening 
+            ON cash_movements (branch_id, SUBSTR(created_at, 1, 10)) 
             WHERE movement_type = 'OPENING_FLOAT';
 
             CREATE TABLE IF NOT EXISTS stock_movements (
@@ -350,6 +350,15 @@ impl DatabaseManager {
                 conn.execute("ALTER TABLE sales ADD COLUMN customer_location TEXT;", [])?;
             }
         }
+ 
+        // Migration v4: Cash drawer opening float unique per branch and calendar business date
+        conn.execute_batch(
+            "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (4, '2026-10-15T00:00:00Z');
+             DROP INDEX IF EXISTS idx_cash_movements_session_opening;
+             CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_movements_branch_date_opening 
+             ON cash_movements (branch_id, SUBSTR(created_at, 1, 10)) 
+             WHERE movement_type = 'OPENING_FLOAT';"
+        )?;
 
         // Seed initial products if products table is empty
         Self::seed_initial_products_if_empty(conn)?;

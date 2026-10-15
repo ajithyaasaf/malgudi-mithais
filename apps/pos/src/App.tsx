@@ -1360,13 +1360,13 @@ export const App: React.FC = () => {
             branch_id: provBranchId,
             terminal_id: provTerminalId.trim() || 'T1',
             counter_id: 'C1',
-            session_id: 'sess_madurai_01',
           },
         });
         setIsProvisioned(true);
         setCurrentSession(session);
         loadSessionData(session.token);
       } else {
+        const todayStr = new Date().toISOString().substring(0, 10).replace(/-/g, '');
         const simSession: SessionInfo = {
           token: 'sim_owner_token',
           user_id: 'usr_owner',
@@ -1376,7 +1376,7 @@ export const App: React.FC = () => {
           branch_id: provBranchId,
           terminal_id: provTerminalId.trim() || 'T1',
           counter_id: 'C1',
-          session_id: 'sess_madurai_01',
+          session_id: `sess_${provBranchId}_${todayStr}_owner`,
           permissions: ['billing:finalize_sale', 'billing:reprint_receipt', 'admin:manage_users', 'admin:view_audit_logs', 'admin:create_backup'],
           expires_at: new Date(Date.now() + 28800000).toISOString(),
         };
@@ -1405,7 +1405,6 @@ export const App: React.FC = () => {
             branch_id: syncConfig?.branch_id || undefined,
             terminal_id: syncConfig?.terminal_id || undefined,
             counter_id: syncConfig?.counter_id || undefined,
-            session_id: 'sess_madurai_01',
           },
         });
         setCurrentSession(session);
@@ -1414,16 +1413,18 @@ export const App: React.FC = () => {
       } else {
         const isOwner = loginUsername.trim().toLowerCase() === 'owner' || loginUsername.toLowerCase().includes('admin');
         const role = isOwner ? 'ADMIN' : 'CASHIER';
+        const todayStr = new Date().toISOString().substring(0, 10).replace(/-/g, '');
+        const branchCode = syncConfig?.branch_id || 'IB';
         const simSession: SessionInfo = {
           token: `sim_${loginUsername}_token`,
           user_id: isOwner ? 'usr_owner_default' : 'usr_staff_default',
           username: loginUsername.trim().toLowerCase(),
           display_name: isOwner ? 'Store Owner' : 'Billing Staff',
           role,
-          branch_id: syncConfig?.branch_id || 'IB',
+          branch_id: branchCode,
           terminal_id: syncConfig?.terminal_id || 'T1',
           counter_id: syncConfig?.counter_id || 'C1',
-          session_id: 'sess_madurai_01',
+          session_id: `sess_${branchCode}_${todayStr}_${loginUsername.trim().toLowerCase()}`,
           permissions: isOwner
             ? ['billing:finalize_sale', 'billing:reprint_receipt', 'users:manage', 'config:manage', 'reports:view']
             : ['billing:finalize_sale', 'billing:reprint_receipt'],
