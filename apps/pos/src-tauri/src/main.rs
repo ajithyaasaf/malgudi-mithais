@@ -1300,6 +1300,43 @@ pub fn get_database_path() -> std::path::PathBuf {
     }
 }
 
+#[tauri::command]
+fn export_save_csv_file(filename: String, csv_content: String) -> Result<String, String> {
+    let clean_filename = filename.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_");
+
+    let downloads_dir = std::env::var("USERPROFILE")
+        .map(|p| std::path::PathBuf::from(p).join("Downloads"))
+        .or_else(|_| {
+            std::env::var("HOME").map(|p| std::path::PathBuf::from(p).join("Downloads"))
+        })
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    if !downloads_dir.exists() {
+        let _ = std::fs::create_dir_all(&downloads_dir);
+    }
+
+    let file_path = downloads_dir.join(&clean_filename);
+
+    // Prepend UTF-8 BOM (0xEF, 0xBB, 0xBF) so Excel natively detects UTF-8 & Tamil characters
+    let mut file_bytes = Vec::new();
+    file_bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+    file_bytes.extend_from_slice(csv_content.as_bytes());
+
+    std::fs::write(&file_path, file_bytes)
+        .map_err(|e| format!("Failed to write CSV file to {}: {}", file_path.display(), e))?;
+
+    let full_path = file_path.to_string_lossy().to_string();
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer.exe")
+            .arg(format!("/select,{}", full_path))
+            .spawn();
+    }
+
+    Ok(full_path)
+}
+
 fn main() {
     let db_path = get_database_path();
     let conn = match DatabaseManager::open_writable(&db_path) {
@@ -1393,7 +1430,8 @@ fn main() {
             sync_get_status,
             sync_trigger_batch,
             sync_inbound_catalog,
-            sync_trigger_bidirectional
+            sync_trigger_bidirectional,
+            export_save_csv_file
         ])
         .build(tauri::generate_context!())
         .expect("error while building Malgudi Mithais POS application")

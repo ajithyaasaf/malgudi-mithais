@@ -2125,7 +2125,7 @@ export const App: React.FC = () => {
     }
   };
 
-  const exportCsv = (filename: string, headers: string[], rows: (string | number)[][]) => {
+  const exportCsv = async (filename: string, headers: string[], rows: (string | number)[][]) => {
     const csvContent = [
       headers.join(','),
       ...rows.map(row =>
@@ -2141,15 +2141,35 @@ export const App: React.FC = () => {
       ),
     ].join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const cleanFilename = `${filename}_${reportStartDate}_to_${reportEndDate}.csv`;
+
+    if (isTauriRuntime) {
+      try {
+        const savedPath = await window.__TAURI__!.core.invoke<string>('export_save_csv_file', {
+          filename: cleanFilename,
+          csvContent,
+        });
+        setAdminActionMessage(`✅ Exported to Excel/CSV! Saved to: ${savedPath}`);
+        setTimeout(() => setAdminActionMessage(null), 8000);
+        return;
+      } catch (err: any) {
+        console.error('Tauri CSV export error, falling back to browser download:', err);
+        setAdminActionError(`CSV Export error: ${err.message || String(err)}`);
+      }
+    }
+
+    // Web download fallback with UTF-8 BOM so Excel opens characters properly
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `${filename}_${reportStartDate}_to_${reportEndDate}.csv`);
+    link.setAttribute('download', cleanFilename);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+    setAdminActionMessage(`✅ Exported ${cleanFilename}`);
+    setTimeout(() => setAdminActionMessage(null), 5000);
   };
 
   const handleExportCurrentReportCsv = () => {
@@ -4265,7 +4285,7 @@ export const App: React.FC = () => {
                           opacity: reportsData ? 1 : 0.6,
                         }}
                       >
-                        📥 Export {activeReportView.toUpperCase()} (CSV)
+                        📊 Export {activeReportView.toUpperCase()} (Excel / CSV)
                       </button>
 
                       <button
