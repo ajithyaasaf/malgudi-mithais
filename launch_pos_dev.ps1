@@ -1,6 +1,6 @@
 # Stop any stale instances to release WebView2 user data directory lock
 Get-Process malgudi-pos-native -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 300
+Start-Sleep -Milliseconds 600
 
 # Ensure dev directories exist
 $devDir = "$env:LOCALAPPDATA\MalgudiMithaisPOS-Dev"

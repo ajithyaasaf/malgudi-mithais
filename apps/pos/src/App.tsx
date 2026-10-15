@@ -430,14 +430,15 @@ export interface CatalogCategory {
   name: string;
   tamil_name: string;
   icon: string;
+  sku_prefix?: string;
 }
 
 const defaultCatalogCategories: CatalogCategory[] = [
   { id: 'all', name: 'All Items', tamil_name: 'அனைத்தும்', icon: '🍽️' },
-  { id: 'cat_sweets', name: 'Sweets', tamil_name: 'இனிப்புகள்', icon: '🧈' },
-  { id: 'cat_savories', name: 'Savouries', tamil_name: 'கார வகைகள்', icon: '🥨' },
-  { id: 'cat_bakery', name: 'Bakery', tamil_name: 'பேக்கரி', icon: '🥖' },
-  { id: 'cat_beverages', name: 'Drinks & Dairy', tamil_name: 'பானங்கள்', icon: '🥛' },
+  { id: 'cat_sweets', name: 'Sweets', tamil_name: 'இனிப்புகள்', icon: '🧈', sku_prefix: 'SWT' },
+  { id: 'cat_savories', name: 'Savouries', tamil_name: 'கார வகைகள்', icon: '🥨', sku_prefix: 'SAV' },
+  { id: 'cat_bakery', name: 'Bakery', tamil_name: 'பேக்கரி', icon: '🥖', sku_prefix: 'BAK' },
+  { id: 'cat_beverages', name: 'Drinks & Dairy', tamil_name: 'பானங்கள்', icon: '🥛', sku_prefix: 'BEV' },
 ];
 
 const defaultCatalog: (ProductDefinition & { icon: string })[] = [
@@ -623,6 +624,41 @@ const defaultCatalog: (ProductDefinition & { icon: string })[] = [
   },
 ];
 
+export const generateNextSku = (
+  catId: string,
+  currentCatalog: { sku: string }[],
+  allCategories: CatalogCategory[]
+): string => {
+  const cat = allCategories.find(c => c.id === catId);
+  const prefix = (
+    cat?.sku_prefix ||
+    (cat ? cat.name.replace(/[^a-zA-Z]/g, '').slice(0, 3) : 'ITM') ||
+    'ITM'
+  ).toUpperCase();
+
+  const regex = new RegExp(`^${prefix}[-_]?0*(\\d+)`, 'i');
+  let maxNum = 0;
+  currentCatalog.forEach(p => {
+    const m = p.sku.match(regex);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!isNaN(n) && n > maxNum) maxNum = n;
+    }
+  });
+
+  const nextNum = maxNum + 1;
+  const pad = nextNum < 100 ? (nextNum < 10 ? `00${nextNum}` : `0${nextNum}`) : `${nextNum}`;
+  let candidate = `${prefix}-${pad}`;
+
+  let counter = nextNum;
+  while (currentCatalog.some(p => p.sku.trim().toUpperCase() === candidate.toUpperCase())) {
+    counter++;
+    const pStr = counter < 100 ? (counter < 10 ? `00${counter}` : `0${counter}`) : `${counter}`;
+    candidate = `${prefix}-${pStr}`;
+  }
+  return candidate;
+};
+
 export const App: React.FC = () => {
   const isTauriRuntime = typeof window !== 'undefined' && !!window.__TAURI__?.core;
 
@@ -762,6 +798,7 @@ export const App: React.FC = () => {
   const [newCatName, setNewCatName] = useState<string>('');
   const [newCatTamilName, setNewCatTamilName] = useState<string>('');
   const [newCatIcon, setNewCatIcon] = useState<string>('📦');
+  const [newCatSkuPrefix, setNewCatSkuPrefix] = useState<string>('');
 
   // Void Sale Confirmation Modal state
   const [voidTargetSale, setVoidTargetSale] = useState<FinalizeSaleResult | null>(null);
@@ -1791,11 +1828,17 @@ export const App: React.FC = () => {
     e.preventDefault();
     if (!newCatName.trim()) return;
     const catId = `cat_${newCatName.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now().toString().slice(-4)}`;
+    const derivedPrefix = (
+      newCatSkuPrefix.trim() ||
+      newCatName.replace(/[^a-zA-Z]/g, '').slice(0, 3) ||
+      'ITM'
+    ).toUpperCase();
     const newCat: CatalogCategory = {
       id: catId,
       name: newCatName.trim(),
       tamil_name: newCatTamilName.trim() || newCatName.trim(),
       icon: newCatIcon.trim() || '📦',
+      sku_prefix: derivedPrefix,
     };
     const updated = [...categories, newCat];
     setCategories(updated);
@@ -1807,8 +1850,9 @@ export const App: React.FC = () => {
     setNewCatName('');
     setNewCatTamilName('');
     setNewCatIcon('📦');
+    setNewCatSkuPrefix('');
     setIsAddCategoryModalOpen(false);
-    setAdminActionMessage(`New category "${newCat.name}" added successfully.`);
+    setAdminActionMessage(`New category "${newCat.name}" (Prefix: ${derivedPrefix}) added successfully.`);
     setTimeout(() => setAdminActionMessage(null), 4000);
   };
 
@@ -1816,7 +1860,7 @@ export const App: React.FC = () => {
     setEditingProduct(null);
     setProdFormName('');
     setProdFormTamilName('');
-    setProdFormSku('');
+    setProdFormSku(generateNextSku('cat_sweets', catalog, categories));
     setProdFormBarcode('');
     setProdFormCategory('cat_sweets');
     setProdFormPricingUnit('PER_KG');
@@ -3729,7 +3773,9 @@ export const App: React.FC = () => {
                               </td>
                               <td style={{ padding: '10px 12px' }}>
                                 <div style={{ fontWeight: 600, color: prod.is_active ? '#1F1F1F' : '#888' }}>{prod.name}</div>
-                                <div style={{ fontSize: 12, color: '#777' }}>{prod.tamil_name}</div>
+                                {prod.tamil_name && prod.tamil_name.trim() !== '' && prod.tamil_name.trim().toLowerCase() !== prod.name.trim().toLowerCase() && (
+                                  <div style={{ fontSize: 12, color: '#777' }}>{prod.tamil_name}</div>
+                                )}
                               </td>
                               <td style={{ padding: '10px 12px' }}>
                                 <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, backgroundColor: '#F0F0EA', color: '#444', fontWeight: 600 }}>
@@ -4069,7 +4115,10 @@ export const App: React.FC = () => {
                               >
                                 <td style={{ padding: '8px 10px', fontFamily: 'monospace', fontWeight: 'bold' }}>{prod.sku}</td>
                                 <td style={{ padding: '8px 10px' }}>
-                                  <strong>{prod.name}</strong> <span style={{ color: '#777', fontSize: 11 }}>({prod.tamil_name})</span>
+                                  <strong>{prod.name}</strong>
+                                  {prod.tamil_name && prod.tamil_name.trim() !== '' && prod.tamil_name.trim().toLowerCase() !== prod.name.trim().toLowerCase() && (
+                                    <span style={{ color: '#777', fontSize: 11, marginLeft: 6 }}>({prod.tamil_name})</span>
+                                  )}
                                 </td>
                                 <td style={{ padding: '8px 10px' }}>
                                   <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, backgroundColor: '#F0F0EA', color: '#555', fontWeight: 600 }}>
@@ -6156,9 +6205,11 @@ export const App: React.FC = () => {
                           <div style={{ fontWeight: 700, fontSize: 14, color: '#1F1F1F', lineHeight: 1.25, marginBottom: 2 }}>
                             {product.name}
                           </div>
-                          <div style={{ fontSize: 12, color: '#777', marginBottom: 8, fontStyle: 'normal' }}>
-                            {product.tamil_name}
-                          </div>
+                          {product.tamil_name && product.tamil_name.trim() !== '' && product.tamil_name.trim().toLowerCase() !== product.name.trim().toLowerCase() && (
+                            <div style={{ fontSize: 12, color: '#777', marginBottom: 8, fontStyle: 'normal' }}>
+                              {product.tamil_name}
+                            </div>
+                          )}
                         </div>
 
                         {/* Bottom: Price, Tax & Live Stock Indicator */}
@@ -6406,7 +6457,7 @@ export const App: React.FC = () => {
                             <div style={{ fontWeight: 700, fontSize: 13, color: '#1F1F1F' }}>
                               {name}
                             </div>
-                            {tamilName && (
+                            {tamilName && tamilName.trim() !== '' && tamilName.trim().toLowerCase() !== name.trim().toLowerCase() && (
                               <div style={{ fontSize: 11, color: '#777' }}>
                                 {tamilName}
                               </div>
@@ -6770,7 +6821,7 @@ export const App: React.FC = () => {
                     <div>
                       <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 18 }}>{weightModalProduct.name}</h3>
                       <div style={{ fontSize: 12, color: '#666' }}>
-                        {weightModalProduct.tamil_name} • ₹{(weightModalProduct.base_price_paise / 100).toFixed(0)}/{unitLabel}
+                        {weightModalProduct.tamil_name && weightModalProduct.tamil_name.trim() !== '' && weightModalProduct.tamil_name.trim().toLowerCase() !== weightModalProduct.name.trim().toLowerCase() ? `${weightModalProduct.tamil_name} • ` : ''}₹{(weightModalProduct.base_price_paise / 100).toFixed(0)}/{unitLabel}
                       </div>
                     </div>
                     <button
@@ -7970,7 +8021,9 @@ export const App: React.FC = () => {
                         <tr key={idx} style={{ verticalAlign: 'top', borderBottom: '1px dotted #eee' }}>
                           <td style={{ padding: '4px 0' }}>
                             <div style={{ fontWeight: 600 }}>{it.product_name}</div>
-                            {it.tamil_name && <div style={{ fontSize: 10, color: '#666' }}>{it.tamil_name}</div>}
+                            {it.tamil_name && it.tamil_name.trim() !== '' && it.tamil_name.trim().toLowerCase() !== it.product_name.trim().toLowerCase() && (
+                              <div style={{ fontSize: 10, color: '#666' }}>{it.tamil_name}</div>
+                            )}
                           </td>
                           <td style={{ padding: '4px 0', textAlign: 'center', whiteSpace: 'nowrap' }}>{it.quantity_formatted}</td>
                           <td style={{ padding: '4px 0', textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -8115,7 +8168,14 @@ export const App: React.FC = () => {
                   autoFocus
                   placeholder="e.g. Gift Hampers, Pickles, Dry Fruits"
                   value={newCatName}
-                  onChange={e => setNewCatName(e.target.value)}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setNewCatName(val);
+                    if (!newCatSkuPrefix || newCatSkuPrefix.length <= 4) {
+                      const autoPrefix = val.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase();
+                      if (autoPrefix) setNewCatSkuPrefix(autoPrefix);
+                    }
+                  }}
                   style={{ width: '100%', padding: '8px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
                 />
               </div>
@@ -8131,6 +8191,26 @@ export const App: React.FC = () => {
                   onChange={e => setNewCatTamilName(e.target.value)}
                   style={{ width: '100%', padding: '8px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
                 />
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
+                    SKU Code Prefix (Optional)
+                  </label>
+                  <span style={{ fontSize: 11, color: '#888' }}>e.g. ICE, PIC, GFT</span>
+                </div>
+                <input
+                  type="text"
+                  maxLength={6}
+                  placeholder={newCatName ? newCatName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() : 'e.g. ICE'}
+                  value={newCatSkuPrefix}
+                  onChange={e => setNewCatSkuPrefix(e.target.value.toUpperCase())}
+                  style={{ width: '100%', padding: '8px 10px', fontSize: 14, fontFamily: 'monospace', fontWeight: 700, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                />
+                <span style={{ fontSize: 10, color: '#666', marginTop: 3, display: 'block' }}>
+                  Products in this category will auto-number as {newCatSkuPrefix.trim() || (newCatName ? newCatName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() : 'CODE')}-001, {newCatSkuPrefix.trim() || (newCatName ? newCatName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() : 'CODE')}-002.
+                </span>
               </div>
 
               <div style={{ marginBottom: 20 }}>
@@ -8800,33 +8880,60 @@ export const App: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
-                    Tamil Name (தமிழ் பெயர்) *
-                  </label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
+                      Tamil Name (தமிழ் பெயர்)
+                    </label>
+                    <span style={{ fontSize: 11, color: '#888' }}>Optional</span>
+                  </div>
                   <input
                     type="text"
-                    required
-                    placeholder="e.g. நெய் மைசூர் பாகு"
+                    placeholder="e.g. நெய் மைசூர் பாகு (Optional)"
                     value={prodFormTamilName}
                     onChange={e => setProdFormTamilName(e.target.value)}
                     style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
                   />
+                  <span style={{ fontSize: 10, color: '#777', marginTop: 2, display: 'block' }}>
+                    Defaults to English name on receipts if left blank.
+                  </span>
                 </div>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
-                    SKU Code *
-                  </label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
+                      SKU Code *
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setProdFormSku(generateNextSku(prodFormCategory, catalog, categories))}
+                      style={{
+                        fontSize: 11,
+                        padding: '1px 6px',
+                        background: '#FFF9F0',
+                        border: '1px solid #EAD8C7',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                        color: '#8B1E2D',
+                      }}
+                      title="Regenerate next sequential code for this category"
+                    >
+                      ⚡ Auto
+                    </button>
+                  </div>
                   <input
                     type="text"
                     required
-                    placeholder="e.g. SWT-MP-001"
+                    placeholder="e.g. SWT-001"
                     value={prodFormSku}
                     onChange={e => setProdFormSku(e.target.value.toUpperCase())}
-                    style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}
+                    style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontFamily: 'monospace', fontWeight: 600 }}
                   />
+                  <span style={{ fontSize: 10, color: '#666', marginTop: 2, display: 'block' }}>
+                    💡 Auto-assigned. You can edit or customize this anytime.
+                  </span>
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
@@ -8849,7 +8956,23 @@ export const App: React.FC = () => {
                   </label>
                   <select
                     value={prodFormCategory}
-                    onChange={e => setProdFormCategory(e.target.value)}
+                    onChange={e => {
+                      const newCat = e.target.value;
+                      setProdFormCategory(newCat);
+                      if (!editingProduct) {
+                        setProdFormSku(generateNextSku(newCat, catalog, categories));
+                        if (newCat === 'cat_bakery') {
+                          setProdFormHsn('19059020');
+                          setProdFormGstPercent(5);
+                        } else if (newCat === 'cat_beverages') {
+                          setProdFormHsn('22029990');
+                          setProdFormGstPercent(12);
+                        } else {
+                          setProdFormHsn('21069099');
+                          setProdFormGstPercent(5);
+                        }
+                      }
+                    }}
                     style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', backgroundColor: '#fff' }}
                   >
                     {categories.filter(c => c.id !== 'all').map(c => (

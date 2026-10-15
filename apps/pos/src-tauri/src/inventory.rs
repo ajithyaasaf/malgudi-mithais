@@ -221,9 +221,6 @@ pub fn create_product(
         return Err("Product name cannot be empty".to_string());
     }
     let tamil_name = payload.tamil_name.trim();
-    if tamil_name.is_empty() {
-        return Err("Tamil name cannot be empty".to_string());
-    }
     let sku = payload.sku.trim();
     if sku.is_empty() {
         return Err("SKU cannot be empty".to_string());
@@ -348,9 +345,6 @@ pub fn update_product(
         return Err("Product name cannot be empty".to_string());
     }
     let tamil_name = payload.tamil_name.trim();
-    if tamil_name.is_empty() {
-        return Err("Tamil name cannot be empty".to_string());
-    }
     let sku = payload.sku.trim();
     if sku.is_empty() {
         return Err("SKU cannot be empty".to_string());
