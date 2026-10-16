@@ -1,0 +1,125 @@
+/* ========================================================================= */
+/* Malgudi Mithais POS - Core Styles & 80mm Thermal Receipt Print Rules      */
+/* ========================================================================= */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ========================================================================= */
+/* 80mm (3-Inch) Thermal Receipt & Z-Report Print Media Queries              */
+/* ========================================================================= */
+@media print {
+  /* 1. Force 80mm continuous roll receipt geometry with zero browser margins */
+  @page {
+    size: 80mm auto;
+    margin: 0mm !important;
+  }
+
+  /* 2. Remove standard browser headers, footers, and scrollbars */
+  html, body {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+    font-family: 'Courier New', Courier, monospace, system-ui, sans-serif !important;
+    overflow: visible !important;
+  }
+
+  /* 3. Hide everything on screen by default (background screens, modals, buttons) */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* 4. Make ONLY the printable receipt or Z-slip visible */
+  #receipt-print-area,
+  #receipt-print-area *,
+  #z-report-thermal-slip,
+  #z-report-thermal-slip * {
+    visibility: visible !important;
+  }
+
+  /* 5. Pin receipt to the exact top-left corner of the thermal paper roll */
+  #receipt-print-area,
+  #z-report-thermal-slip {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 72mm !important; /* 72mm is the exact standard printable head width for 80mm paper */
+    max-width: 72mm !important;
+    min-width: 72mm !important;
+    margin: 0 !important;
+    padding: 2mm 3mm 12mm 3mm !important; /* Bottom padding ensures paper tear-off does not cut content */
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: 'Courier New', Courier, monospace, 'Segoe UI', sans-serif !important;
+    font-size: 11px !important;
+    line-height: 1.3 !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+    z-index: 999999 !important;
+    display: block !important;
+  }
+
+  /* 6. Ensure high-contrast crisp rendering on thermal heads */
+  #receipt-print-area div,
+  #receipt-print-area span,
+  #receipt-print-area table,
+  #receipt-print-area td,
+  #receipt-print-area th,
+  #z-report-thermal-slip div,
+  #z-report-thermal-slip span,
+  #z-report-thermal-slip table,
+  #z-report-thermal-slip td,
+  #z-report-thermal-slip th {
+    color: #000 !important;
+    background: transparent !important;
+    text-shadow: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* 7. Receipt itemized table rules */
+  #receipt-print-area table,
+  #z-report-thermal-slip table {
+    width: 100% !important;
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+  }
+
+  #receipt-print-area th,
+  #receipt-print-area td,
+  #z-report-thermal-slip th,
+  #z-report-thermal-slip td {
+    padding: 3px 0 !important;
+    word-break: break-word !important;
+  }
+
+  /* 8. Crisp dashed divider lines */
+  .dashed-divider,
+  #receipt-print-area hr,
+  #z-report-thermal-slip hr {
+    border: none !important;
+    border-top: 1px dashed #000 !important;
+    margin: 6px 0 !important;
+  }
+
+  /* 9. Never print action buttons, close controls, or UI chrome */
+  button,
+  .no-print {
+    display: none !important;
+    visibility: hidden !important;
+  }
+}

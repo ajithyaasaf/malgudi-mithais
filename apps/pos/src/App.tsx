@@ -8085,10 +8085,10 @@ export const App: React.FC = () => {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
                   <thead>
                     <tr style={{ borderBottom: '1px dashed #aaa', textAlign: 'left' }}>
-                      <th style={{ paddingBottom: 4 }}>Item</th>
-                      <th style={{ paddingBottom: 4, textAlign: 'center' }}>Qty</th>
-                      <th style={{ paddingBottom: 4, textAlign: 'right' }}>Rate</th>
-                      <th style={{ paddingBottom: 4, textAlign: 'right' }}>Amount</th>
+                      <th style={{ paddingBottom: 4, width: '45%' }}>Item</th>
+                      <th style={{ paddingBottom: 4, textAlign: 'center', width: '18%' }}>Qty</th>
+                      <th style={{ paddingBottom: 4, textAlign: 'right', width: '17%' }}>Rate</th>
+                      <th style={{ paddingBottom: 4, textAlign: 'right', width: '20%' }}>Amount</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -8189,7 +8189,7 @@ export const App: React.FC = () => {
             </div>
 
             {/* Modal Actions */}
-            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+            <div className="no-print" style={{ display: 'flex', gap: 10, marginTop: 14 }}>
               <button
                 type="button"
                 onClick={() => window.print()}
@@ -8876,7 +8876,7 @@ export const App: React.FC = () => {
             </div>
 
             {/* Print & Close Actions */}
-            <div style={{ display: 'flex', gap: 10, marginTop: 16, borderTop: '1px solid #eee', paddingTop: 14 }}>
+            <div className="no-print" style={{ display: 'flex', gap: 10, marginTop: 16, borderTop: '1px solid #eee', paddingTop: 14 }}>
               <button
                 type="button"
                 onClick={() => setActiveZReportModal(null)}
