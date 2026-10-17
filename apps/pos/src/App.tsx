@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { check as checkTauriUpdate, Update as TauriUpdate } from '@tauri-apps/plugin-updater';
+import { check as checkTauriUpdate, Update as TauriUpdate, DownloadEvent } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { calculateLineItem } from '@malgudi/domain/pricing.js';
 import { validateAndReconcileSplitTender, evaluateTransactionPaymentLifecycle } from '@malgudi/domain/tender.js';
@@ -726,7 +726,9 @@ export const App: React.FC = () => {
   const [updateStatusMessage, setUpdateStatusMessage] = useState<string | null>(null);
   const [updateErrorMessage, setUpdateErrorMessage] = useState<string | null>(null);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState<boolean>(false);
-  const currentAppVersion = '2.9.16';
+  const [currentAppVersion, setCurrentAppVersion] = useState<string>(
+    typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.9.24'
+  );
 
   // --- Cloud Sync & Multi-Branch State ---
   const [syncStatus, setSyncStatus] = useState<SyncStatusState | null>(null);
@@ -1254,6 +1256,13 @@ export const App: React.FC = () => {
 
   // Initial Authentication Check & Quiet OTA Update Check
   useEffect(() => {
+    if (isTauriRuntime && window.__TAURI__?.core) {
+      window.__TAURI__.core.invoke<string>('get_app_version')
+        .then((ver) => {
+          if (ver) setCurrentAppVersion(ver);
+        })
+        .catch((e) => console.warn('Could not fetch app version from Tauri:', e));
+    }
     checkInitialAuthStatus();
     loadSyncStatus();
     loadSyncConfig();
@@ -1631,7 +1640,7 @@ export const App: React.FC = () => {
       let downloaded = 0;
       let total = 0;
 
-      await availableUpdate.downloadAndInstall((event) => {
+      await availableUpdate.downloadAndInstall((event: DownloadEvent) => {
         if (event.event === 'Started') {
           total = event.data.contentLength || 0;
           setUpdateStatusMessage('Starting update download...');

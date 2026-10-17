@@ -999,6 +999,11 @@ fn get_day_end_report(
 }
 
 #[tauri::command]
+fn get_app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+#[tauri::command]
 fn get_database_info(state: tauri::State<AppState>) -> Result<DatabaseInfo, String> {
     let conn = state
         .db
@@ -1404,6 +1409,7 @@ fn main() {
             db: Mutex::new(conn),
         })
         .invoke_handler(tauri::generate_handler![
+            get_app_version,
             auth_get_status,
             auth_provision_owner,
             auth_login,
