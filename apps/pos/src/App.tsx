@@ -8296,7 +8296,8 @@ export const App: React.FC = () => {
                     </>
                   );
                 })()}
-                <div style={{ fontSize: 11, color: '#555' }}>GSTIN: 33AAAAA0000A1Z5</div>
+                <div style={{ fontSize: 11, color: '#555' }}>GSTIN: 33NNYPS3460L1ZV</div>
+                <div style={{ fontSize: 11, color: '#555' }}>FSSAI: 12418012002674</div>
               </div>
 
               {activeReceiptModal.sale_status === 'VOIDED' && (
@@ -9063,6 +9064,7 @@ export const App: React.FC = () => {
                 <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: -0.5 }}>மால்குடி மிட்டாய்ஸ்</div>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>MALGUDI MITHAIS</div>
                 <div style={{ fontSize: 11, color: '#333' }}>{activeZReportModal.branch_name}</div>
+                <div style={{ fontSize: 10, color: '#555' }}>GSTIN: 33NNYPS3460L1ZV | FSSAI: 12418012002674</div>
                 <div style={{ fontSize: 11, color: '#444' }}>Terminal: {activeZReportModal.terminal_id} | Session: {activeZReportModal.session_id}</div>
                 <div style={{ fontSize: 11, color: '#444' }}>Date: {activeZReportModal.business_date}</div>
                 <div style={{ fontSize: 10, color: '#666' }}>Closed At: {activeZReportModal.closed_at ? formatDateTime(activeZReportModal.closed_at) : 'Active'}</div>
