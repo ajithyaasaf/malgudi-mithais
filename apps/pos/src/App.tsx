@@ -728,7 +728,7 @@ export const App: React.FC = () => {
   const [updateErrorMessage, setUpdateErrorMessage] = useState<string | null>(null);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState<boolean>(false);
   const [currentAppVersion, setCurrentAppVersion] = useState<string>(
-    typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.9.26'
+    typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.9.27'
   );
 
   // --- Cloud Sync & Multi-Branch State ---
@@ -982,6 +982,7 @@ export const App: React.FC = () => {
   };
 
   const [dbInfo, setDbInfo] = useState<{ db_path: string; is_wal_active: boolean; total_sales: number; pending_sync_count: number } | null>(null);
+  const [systemDefaultPrinter, setSystemDefaultPrinter] = useState<string>('EPSON TM-T82 Receipt');
 
   // Auto-dismiss sale success toast after 6 seconds
   useEffect(() => {
@@ -1031,6 +1032,64 @@ export const App: React.FC = () => {
   const [archiveZReportLoading, setArchiveZReportLoading] = useState<boolean>(false);
   const [archiveZReportData, setArchiveZReportData] = useState<DayEndSummary | null>(null);
   const [archiveZReportError, setArchiveZReportError] = useState<string | null>(null);
+
+  // Helper: Print a quick diagnostic test slip to verify thermal printer connectivity
+  const handlePrintTestSlip = () => {
+    const testSlip: DetailedSaleReceipt = {
+      invoice_number: 'TEST-DIAGNOSTIC',
+      sale_id: 'test_slip',
+      business_date: new Date().toISOString().split('T')[0],
+      created_at: new Date().toISOString(),
+      cashier_name: currentSession?.display_name || currentSession?.username || 'Staff Cashier',
+      terminal_id: syncConfig?.terminal_id || 'T1',
+      branch_id: syncConfig?.branch_id || 'IB',
+      branch_name: syncConfig?.branch_name || 'Iyer Bungalow Branch (IB)',
+      subtotal_taxable_paise: 0,
+      total_cgst_paise: 0,
+      total_sgst_paise: 0,
+      round_off_paise: 0,
+      net_payable_paise: 0,
+      sale_status: 'COMPLETED',
+      payment_status: 'SETTLED',
+      items: [
+        {
+          sale_item_id: 'test_item_1',
+          product_id: 'test_prod',
+          product_name: 'Printer Self-Test / சோதனை அச்சு',
+          hsn_code: 'TEST',
+          pricing_unit: 'PIECE',
+          quantity: 1,
+          quantity_display: '1 test',
+          unit_price_paise: 0,
+          gross_total_paise: 0,
+          gst_percent: 0,
+          cgst_paise: 0,
+          sgst_paise: 0,
+        },
+      ],
+      payments: [
+        {
+          payment_id: 'test_pay',
+          method: 'CASH',
+          amount_paise: 0,
+          details: 'Silent Kiosk Print Verified',
+        },
+      ],
+      customer_name: null,
+      customer_phone: null,
+      customer_location: null,
+    };
+    flushSync(() => {
+      setLastSettledReceipt(testSlip);
+    });
+    requestAnimationFrame(() => {
+      try {
+        window.print();
+      } catch (e) {
+        console.warn('Test slip print failed:', e);
+      }
+    });
+  };
 
   // Helper: Open Detailed Receipt Reprint (Fetches line items & payments from SQLite)
   const handleOpenReceiptReprint = async (invoiceNumber: string, fallbackSummary?: FinalizeSaleResult) => {
@@ -1336,6 +1395,12 @@ export const App: React.FC = () => {
           if (ver) setCurrentAppVersion(ver);
         })
         .catch((e) => console.warn('Could not fetch app version from Tauri:', e));
+
+      window.__TAURI__.core.invoke<string>('get_system_default_printer')
+        .then((printer) => {
+          if (printer && printer.trim()) setSystemDefaultPrinter(printer.trim());
+        })
+        .catch((e) => console.warn('Could not query default printer from Tauri:', e));
     }
     checkInitialAuthStatus();
     loadSyncStatus();
@@ -2858,7 +2923,11 @@ export const App: React.FC = () => {
       // Auto-Print Receipt directly without showing any blocking modal
       if (isAutoPrintEnabled) {
         requestAnimationFrame(() => {
-          window.print();
+          try {
+            window.print();
+          } catch (e) {
+            console.warn('Auto-print invocation failed:', e);
+          }
         });
       }
     } catch (err: any) {
@@ -3437,6 +3506,28 @@ export const App: React.FC = () => {
           >
             <span>Auto-Print: {isAutoPrintEnabled ? 'ON' : 'OFF'}</span>
           </button>
+
+          <div
+            title={`Windows Default Printer: ${systemDefaultPrinter} (Silent Kiosk Printing Active)`}
+            style={{
+              padding: '4px 8px',
+              fontSize: 11,
+              fontWeight: 600,
+              backgroundColor: '#FFFDE7',
+              color: '#F57F17',
+              border: '1px solid #FFF59D',
+              borderRadius: 4,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <span>🖨️</span>
+            <span style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {systemDefaultPrinter}
+            </span>
+          </div>
 
           <button
             onClick={() => setIsHistoryModalOpen(true)}
@@ -8004,12 +8095,31 @@ export const App: React.FC = () => {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 18 }}>Recent Invoices & Reprints</h3>
-              <button
-                onClick={() => setIsHistoryModalOpen(false)}
-                style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
-              >
-                ✕
-              </button>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={handlePrintTestSlip}
+                  style={{
+                    padding: '4px 10px',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    backgroundColor: '#E8F5E9',
+                    color: '#2E7D32',
+                    border: '1px solid #A5D6A7',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                  }}
+                  title="Print a test receipt slip to verify thermal printer connection"
+                >
+                  🖨️ Test Print Slip
+                </button>
+                <button
+                  onClick={() => setIsHistoryModalOpen(false)}
+                  style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             {/* Quick Invoice Search */}

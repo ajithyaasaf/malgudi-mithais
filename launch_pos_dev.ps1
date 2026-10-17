@@ -10,6 +10,7 @@ New-Item -ItemType Directory -Force -Path $devDbDir, $devWebviewDir | Out-Null
 
 $env:MALGUDI_DB_PATH = Join-Path $devDbDir "malgudi_pos_dev.db"
 $env:WEBVIEW2_USER_DATA_FOLDER = $devWebviewDir
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--kiosk-printing"
 
 # Verify frontend dev server on port 5173
 $vitePort = Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue

@@ -1355,7 +1355,53 @@ fn export_save_csv_file(filename: String, csv_content: String) -> Result<String,
     Ok(full_path)
 }
 
+#[tauri::command]
+fn get_system_default_printer() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        let output = std::process::Command::new("reg")
+            .args(["query", "HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Windows", "/v", "Device"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        if let Ok(out) = output {
+            let text = String::from_utf8_lossy(&out.stdout);
+            if let Some(pos) = text.find("REG_SZ") {
+                let rest = &text[pos + 6..];
+                let line = rest.lines().next().unwrap_or("").trim();
+                if let Some(printer_name) = line.split(',').next() {
+                    let trimmed = printer_name.trim();
+                    if !trimmed.is_empty() {
+                        return Ok(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+    Ok("Standard System Printer".to_string())
+}
+
 fn main() {
+    // Enable silent thermal receipt printing for Windows WebView2:
+    // Passing '--kiosk-printing' via WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS suppresses the
+    // Chromium / Edge print preview dialog and automatically sends window.print() straight
+    // to the Windows default printer (e.g. EPSON TM-T82) without cashier intervention.
+    #[cfg(target_os = "windows")]
+    {
+        let current_args = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+        if !current_args.contains("--kiosk-printing") {
+            let new_args = if current_args.trim().is_empty() {
+                "--kiosk-printing".to_string()
+            } else {
+                format!("{} --kiosk-printing", current_args.trim())
+            };
+            std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", new_args);
+        }
+    }
+
     let db_path = get_database_path();
     let conn = match DatabaseManager::open_writable(&db_path) {
         Ok(c) => c,
@@ -1410,6 +1456,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_version,
+            get_system_default_printer,
             auth_get_status,
             auth_provision_owner,
             auth_login,
