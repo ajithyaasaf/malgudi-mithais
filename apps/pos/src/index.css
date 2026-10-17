@@ -47,19 +47,21 @@ body {
   #z-report-thermal-slip,
   #z-report-thermal-slip * {
     visibility: visible !important;
+    box-sizing: border-box !important;
   }
 
-  /* 5. Pin receipt to the exact top-left corner of the thermal paper roll */
+  /* 5. Position receipt with safe printable margins on 80mm thermal paper roll */
   #receipt-print-area,
   #z-report-thermal-slip {
     position: fixed !important;
     left: 0 !important;
     top: 0 !important;
-    width: 72mm !important; /* 72mm is the exact standard printable head width for 80mm paper */
-    max-width: 72mm !important;
-    min-width: 72mm !important;
+    width: 76mm !important;
+    max-width: 76mm !important;
+    min-width: 74mm !important;
     margin: 0 !important;
-    padding: 2mm 3mm 12mm 3mm !important; /* Bottom padding ensures paper tear-off does not cut content */
+    padding: 2mm 4mm 14mm 6.5mm !important; /* 6.5mm left padding clears physical print head dead-zone and prevents left character clipping */
+    box-sizing: border-box !important;
     background: #ffffff !important;
     color: #000000 !important;
     font-family: 'Courier New', Courier, monospace, 'Segoe UI', sans-serif !important;

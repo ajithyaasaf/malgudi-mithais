@@ -793,7 +793,7 @@ export const App: React.FC = () => {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
-    } catch {}
+    } catch { }
     return defaultCatalogCategories;
   });
   const [isAddCategoryModalOpen, setIsAddCategoryModalOpen] = useState<boolean>(false);
@@ -904,20 +904,40 @@ export const App: React.FC = () => {
   const totalGrossPaise = cartItems.reduce((sum, item) => sum + item.gross_paise, 0);
 
   // --- 4. Payment Tender Reconciliation State ---
+  type PaymentMethodMode = 'CASH' | 'UPI' | 'SPLIT';
+  const [paymentMode, setPaymentMode] = useState<PaymentMethodMode>('CASH');
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState<boolean>(false);
   const [isUpiModalOpen, setIsUpiModalOpen] = useState<boolean>(false);
   const [upiSimulatedVerified, setUpiSimulatedVerified] = useState<boolean>(true);
   const [cashTenderedRupees, setCashTenderedRupees] = useState<number>(0);
-  const [upiAllocatedRupees, setUpiAllocatedRupees] = useState<number>(0);
+  const [splitCashRupees, setSplitCashRupees] = useState<number>(0);
+  const [splitUpiRupees, setSplitUpiRupees] = useState<number>(0);
   const [upiVerificationSource] = useState<PaymentVerificationSource>('SOUNDBOX_BROADCAST');
   const [settlementPolicy, setSettlementPolicy] = useState<SettlementPolicy>(() => {
     return 'CASHIER_ASSERTION_PERMITTED';
   });
 
-  // Automatically derive cash allocated to bill (Exact paise arithmetic — zero split tender mismatch)
-  const derivedCashAllocatedPaise = Math.max(0, totalGrossPaise - Math.round(upiAllocatedRupees * 100));
-  const derivedCashAllocatedRupees = derivedCashAllocatedPaise / 100;
-  const changeReturnedPaise = Math.max(0, Math.round(cashTenderedRupees * 100) - derivedCashAllocatedPaise);
+  // State: Finalizing sale flag (declared before canCompleteSale calculation)
+  const [isFinalizing, setIsFinalizing] = useState<boolean>(false);
+
+  // Authoritative Tender Allocations (Paise Arithmetic)
+  const activeCashAllocatedPaise = paymentMode === 'CASH'
+    ? totalGrossPaise
+    : paymentMode === 'UPI'
+      ? 0
+      : Math.round(splitCashRupees * 100);
+
+  const activeUpiAllocatedPaise = paymentMode === 'UPI'
+    ? totalGrossPaise
+    : paymentMode === 'CASH'
+      ? 0
+      : Math.round(splitUpiRupees * 100);
+
+  const totalAllocatedPaise = activeCashAllocatedPaise + activeUpiAllocatedPaise;
+  const tenderDiffPaise = totalGrossPaise - totalAllocatedPaise;
+  const isTenderBalanced = tenderDiffPaise === 0;
+  const isCashTenderSufficient = paymentMode === 'UPI' || (Math.round(cashTenderedRupees * 100) >= activeCashAllocatedPaise);
+  const canCompleteSale = isTenderBalanced && isCashTenderSufficient && !isFinalizing && cartItems.length > 0;
 
   // Store settlement policy updater for Owner/Admin Settings
   const handleUpdateSettlementPolicy = (newPolicy: SettlementPolicy) => {
@@ -931,7 +951,6 @@ export const App: React.FC = () => {
 
   // --- 5. Modals & Persistence State ---
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false);
-  const [isFinalizing, setIsFinalizing] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [persistedHistory, setPersistedHistory] = useState<FinalizeSaleResult[]>([]);
   const [activeReceiptModal, setActiveReceiptModal] = useState<DetailedSaleReceipt | null>(null);
@@ -945,6 +964,7 @@ export const App: React.FC = () => {
   const [openingFloatInput, setOpeningFloatInput] = useState<string>('2000');
   const [openingFloatNotes, setOpeningFloatNotes] = useState<string>('');
   const [isOpeningFloatSubmitting, setIsOpeningFloatSubmitting] = useState<boolean>(false);
+  const [openingFloatError, setOpeningFloatError] = useState<string | null>(null);
   const currentSessionRef = useRef<SessionInfo | null>(currentSession);
   useEffect(() => {
     currentSessionRef.current = currentSession;
@@ -969,10 +989,12 @@ export const App: React.FC = () => {
   const [countedClosingCashInput, setCountedClosingCashInput] = useState<string>('');
   const [dayCloseNotes, setDayCloseNotes] = useState<string>('');
   const [isDayCloseSubmitting, setIsDayCloseSubmitting] = useState<boolean>(false);
+  const [dayCloseError, setDayCloseError] = useState<string | null>(null);
   const [activeZReportModal, setActiveZReportModal] = useState<DayEndSummary | null>(null);
   const [archiveZReportDate, setArchiveZReportDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [archiveZReportLoading, setArchiveZReportLoading] = useState<boolean>(false);
   const [archiveZReportData, setArchiveZReportData] = useState<DayEndSummary | null>(null);
+  const [archiveZReportError, setArchiveZReportError] = useState<string | null>(null);
 
   // Helper: Open Detailed Receipt Reprint (Fetches line items & payments from SQLite)
   const handleOpenReceiptReprint = async (invoiceNumber: string, fallbackSummary?: FinalizeSaleResult) => {
@@ -1085,9 +1107,10 @@ export const App: React.FC = () => {
   const handleConfirmOpeningFloat = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentSession) return;
+    setOpeningFloatError(null);
     const amountRupees = parseFloat(openingFloatInput);
     if (isNaN(amountRupees) || amountRupees < 0) {
-      alert('Please enter a valid non-negative starting cash float.');
+      setOpeningFloatError('Please enter a valid non-negative starting cash float.');
       return;
     }
     const amountPaise = Math.round(amountRupees * 100);
@@ -1125,7 +1148,12 @@ export const App: React.FC = () => {
       }
       setIsOpeningFloatModalOpen(false);
     } catch (err: any) {
-      alert('Error recording starting cash float: ' + (err.message || String(err)));
+      const msg = err.message || String(err);
+      if (msg.includes('not found') || msg.includes('cash_record_opening_float')) {
+        setOpeningFloatError('Starting cash float service is unavailable in the current application session. Please restart or update the application.');
+      } else {
+        setOpeningFloatError('Error recording starting cash float: ' + msg);
+      }
     } finally {
       setIsOpeningFloatSubmitting(false);
     }
@@ -1137,6 +1165,7 @@ export const App: React.FC = () => {
     setIsDayCloseModalOpen(true);
     setIsManualVarianceExpanded(false);
     setDayCloseNotes('');
+    setDayCloseError(null);
 
     const todayStr = new Date().toISOString().split('T')[0];
     const fallbackOpening = openingFloatStatus?.opening_float_paise || 200000;
@@ -1179,9 +1208,10 @@ export const App: React.FC = () => {
   const handleExecuteDayClose = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!currentSession) return;
+    setDayCloseError(null);
     const countedRupees = parseFloat(countedClosingCashInput);
     if (isNaN(countedRupees) || countedRupees < 0) {
-      alert('Please enter a valid non-negative counted physical cash amount.');
+      setDayCloseError('Please enter a valid non-negative counted physical cash amount.');
       return;
     }
     setIsDayCloseSubmitting(true);
@@ -1231,7 +1261,12 @@ export const App: React.FC = () => {
         setActiveZReportModal(mockSummary);
       }
     } catch (err: any) {
-      alert('Failed to record day close: ' + (err.message || String(err)));
+      const msg = err.message || String(err);
+      if (msg.includes('not found') || msg.includes('cash_record_day_close')) {
+        setDayCloseError('Day-End Close service is unavailable in the current application session. Please restart or update the application.');
+      } else {
+        setDayCloseError('Failed to record day close: ' + msg);
+      }
     } finally {
       setIsDayCloseSubmitting(false);
     }
@@ -1241,6 +1276,7 @@ export const App: React.FC = () => {
   const handleLoadArchiveZReport = async (targetDate: string) => {
     if (!currentSession || !isTauriRuntime) return;
     setArchiveZReportLoading(true);
+    setArchiveZReportError(null);
     try {
       const summary = await window.__TAURI__!.core.invoke<DayEndSummary>('get_day_end_report', {
         sessionToken: currentSession.token,
@@ -1248,7 +1284,7 @@ export const App: React.FC = () => {
       });
       setArchiveZReportData(summary);
     } catch (err: any) {
-      alert('Failed to load Z-Report: ' + (err.message || String(err)));
+      setArchiveZReportError('Failed to load Z-Report: ' + (err.message || String(err)));
     } finally {
       setArchiveZReportLoading(false);
     }
@@ -1288,8 +1324,11 @@ export const App: React.FC = () => {
 
   // Open Payment Modal helper: synchronizes tender with current total
   const openPaymentModal = () => {
-    setCashTenderedRupees(totalGrossPaise / 100);
-    setUpiAllocatedRupees(0);
+    const total = totalGrossPaise / 100;
+    setPaymentMode('CASH');
+    setCashTenderedRupees(total);
+    setSplitCashRupees(total);
+    setSplitUpiRupees(0);
     setIsPaymentModalOpen(true);
   };
 
@@ -1304,7 +1343,7 @@ export const App: React.FC = () => {
           } else if (isUpiModalOpen) {
             handleQuickUpiFinalize();
           } else {
-            handleExactCashSale();
+            openPaymentModal();
           }
         }
       } else if (e.key === 'F2') {
@@ -1490,7 +1529,7 @@ export const App: React.FC = () => {
     if (currentSession && isTauriRuntime) {
       try {
         await window.__TAURI__!.core.invoke('auth_logout', { sessionToken: currentSession.token });
-      } catch {}
+      } catch { }
     }
     setCurrentSession(null);
     setActiveTab('billing');
@@ -1875,7 +1914,7 @@ export const App: React.FC = () => {
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('pos_custom_categories', JSON.stringify(updated));
-      } catch {}
+      } catch { }
     }
     setNewCatName('');
     setNewCatTamilName('');
@@ -2525,61 +2564,61 @@ export const App: React.FC = () => {
 
       let activeUpiSource = override?.upiVerificationSource || upiVerificationSource;
 
-      // 1. Determine UPI allocation in paise
-      let activeUpiAllocatedPaise = 0;
-      if (override?.upiAllocated !== undefined) {
-        activeUpiAllocatedPaise = Math.round(override.upiAllocated * 100);
-      } else if (upiAllocatedRupees > 0) {
-        activeUpiAllocatedPaise = Math.round(upiAllocatedRupees * 100);
-      }
+      // 1. Determine final tender allocations in paise
+      let finalUpiAllocatedPaise = 0;
+      let finalCashAllocatedPaise = 0;
 
-      // If UPI covers full bill amount
-      if (activeUpiAllocatedPaise >= totalPaise || (override?.upiAllocated !== undefined && override.cashAllocated === 0)) {
-        activeUpiAllocatedPaise = totalPaise;
-      }
-
-      // 2. Determine Cash allocation in paise
-      let activeCashAllocatedPaise = 0;
-      if (activeUpiAllocatedPaise >= totalPaise) {
-        activeCashAllocatedPaise = 0;
-      } else if (activeUpiAllocatedPaise === 0) {
-        // Pure cash sale: guarantees 100% exact paise allocation
-        activeCashAllocatedPaise = totalPaise;
+      if (override?.upiAllocated !== undefined || override?.cashAllocated !== undefined) {
+        finalUpiAllocatedPaise = override?.upiAllocated !== undefined ? Math.round(override.upiAllocated * 100) : 0;
+        finalCashAllocatedPaise = override?.cashAllocated !== undefined ? Math.round(override.cashAllocated * 100) : 0;
       } else {
-        // Split sale: cash absorbs remainder to guarantee exact balance
-        activeCashAllocatedPaise = Math.max(0, totalPaise - activeUpiAllocatedPaise);
+        finalCashAllocatedPaise = activeCashAllocatedPaise;
+        finalUpiAllocatedPaise = activeUpiAllocatedPaise;
       }
 
-      // 3. Determine Cash tendered and change returned in paise
+      // Invariant Check: Sum of allocations must equal bill gross paise
+      if (finalCashAllocatedPaise + finalUpiAllocatedPaise !== totalPaise) {
+        throw new Error(
+          `Payment Tender Mismatch: Total allocated INR ${((finalCashAllocatedPaise + finalUpiAllocatedPaise) / 100).toFixed(2)} does not equal bill amount INR ${(totalPaise / 100).toFixed(2)}`
+        );
+      }
+
+      // 2. Determine Cash tendered and change returned in paise
       let rawTendered = override?.cashTendered !== undefined ? override.cashTendered : cashTenderedRupees;
-      let activeCashTenderedPaise = activeCashAllocatedPaise > 0
-        ? Math.max(Math.round(rawTendered * 100), activeCashAllocatedPaise)
+      let finalCashTenderedPaise = finalCashAllocatedPaise > 0
+        ? Math.round(rawTendered * 100)
         : 0;
 
-      const activeChangePaise = Math.max(0, activeCashTenderedPaise - activeCashAllocatedPaise);
+      if (finalCashAllocatedPaise > 0 && finalCashTenderedPaise < finalCashAllocatedPaise) {
+        throw new Error(
+          `Insufficient cash received: INR ${(finalCashTenderedPaise / 100).toFixed(2)} is less than required cash portion INR ${(finalCashAllocatedPaise / 100).toFixed(2)}`
+        );
+      }
 
-      if (activeCashAllocatedPaise > 0) {
+      const finalChangePaise = Math.max(0, finalCashTenderedPaise - finalCashAllocatedPaise);
+
+      if (finalCashAllocatedPaise > 0) {
         payments.push({
           id: `pay_cash_${Date.now()}`,
           payment_method: 'CASH',
-          allocated_amount_paise: activeCashAllocatedPaise,
-          tendered_paise: activeCashTenderedPaise,
-          change_returned_paise: activeChangePaise,
-          net_amount_paise: activeCashAllocatedPaise,
+          allocated_amount_paise: finalCashAllocatedPaise,
+          tendered_paise: finalCashTenderedPaise,
+          change_returned_paise: finalChangePaise,
+          net_amount_paise: finalCashAllocatedPaise,
           outcome: 'SUCCESS',
           verification_source: 'PHYSICAL_CASH_DRAWER',
         });
       }
 
-      if (activeUpiAllocatedPaise > 0) {
+      if (finalUpiAllocatedPaise > 0) {
         const isGatewayConfirmed = activeUpiSource === 'GATEWAY_API';
         payments.push({
           id: `pay_upi_${Date.now()}`,
           payment_method: isGatewayConfirmed ? 'UPI_GATEWAY_DYNAMIC' : 'UPI_MANUAL_RECORDED',
-          allocated_amount_paise: activeUpiAllocatedPaise,
-          tendered_paise: activeUpiAllocatedPaise,
+          allocated_amount_paise: finalUpiAllocatedPaise,
+          tendered_paise: finalUpiAllocatedPaise,
           change_returned_paise: 0,
-          net_amount_paise: activeUpiAllocatedPaise,
+          net_amount_paise: finalUpiAllocatedPaise,
           outcome: 'SUCCESS',
           verification_source: activeUpiSource,
           is_gateway_confirmed: isGatewayConfirmed,
@@ -2710,22 +2749,22 @@ export const App: React.FC = () => {
       });
 
       const detailedPayments: DetailedReceiptPayment[] = [];
-      if (activeCashAllocatedPaise > 0) {
+      if (finalCashAllocatedPaise > 0) {
         detailedPayments.push({
           payment_method: 'CASH',
-          allocated_amount_paise: activeCashAllocatedPaise,
-          tendered_paise: activeCashTenderedPaise,
-          change_returned_paise: activeChangePaise,
-          net_amount_paise: activeCashAllocatedPaise,
+          allocated_amount_paise: finalCashAllocatedPaise,
+          tendered_paise: finalCashTenderedPaise,
+          change_returned_paise: finalChangePaise,
+          net_amount_paise: finalCashAllocatedPaise,
         });
       }
-      if (activeUpiAllocatedPaise > 0) {
+      if (finalUpiAllocatedPaise > 0) {
         detailedPayments.push({
           payment_method: 'UPI',
-          allocated_amount_paise: activeUpiAllocatedPaise,
-          tendered_paise: activeUpiAllocatedPaise,
+          allocated_amount_paise: finalUpiAllocatedPaise,
+          tendered_paise: finalUpiAllocatedPaise,
           change_returned_paise: 0,
-          net_amount_paise: activeUpiAllocatedPaise,
+          net_amount_paise: finalUpiAllocatedPaise,
         });
       }
 
@@ -2760,8 +2799,10 @@ export const App: React.FC = () => {
       setCartItems([]);
       setCustomerInfo(null);
       setCustomerForm({ name: '', phone: '', location: '' });
+      setPaymentMode('CASH');
       setCashTenderedRupees(0);
-      setUpiAllocatedRupees(0);
+      setSplitCashRupees(0);
+      setSplitUpiRupees(0);
       refreshCatalog(currentSession?.token);
       loadSyncStatus();
       loadLiveDrawerSummary(currentSession?.token);
@@ -2773,15 +2814,6 @@ export const App: React.FC = () => {
   };
 
   // --- Quick 1-Tap Payment Handlers ---
-  const handleExactCashSale = () => {
-    if (cartItems.length === 0 || isFinalizing) return;
-    const totalRupees = totalGrossPaise / 100;
-    handleFinalizeSale({
-      cashTendered: totalRupees,
-      cashAllocated: totalRupees,
-      upiAllocated: 0,
-    });
-  };
 
   const handleQuickUpiFinalize = () => {
     if (cartItems.length === 0 || isFinalizing) return;
@@ -3258,8 +3290,8 @@ export const App: React.FC = () => {
               syncStatus?.last_sync_error
                 ? `Sync Alert: ${syncStatus.last_sync_error}`
                 : syncStatus?.last_sync_timestamp
-                ? `Last Successful Sync: ${new Date(syncStatus.last_sync_timestamp).toLocaleTimeString()}`
-                : 'No sync recorded yet'
+                  ? `Last Successful Sync: ${new Date(syncStatus.last_sync_timestamp).toLocaleTimeString()}`
+                  : 'No sync recorded yet'
             }
             style={{
               fontSize: 11,
@@ -3269,40 +3301,39 @@ export const App: React.FC = () => {
                 syncStatus?.last_sync_status === 'OFFLINE'
                   ? '#FFEBEE'
                   : syncStatus && syncStatus.pending_count > 0
-                  ? '#FFF8E1'
-                  : '#E8F5E9',
+                    ? '#FFF8E1'
+                    : '#E8F5E9',
               color:
                 syncStatus?.last_sync_status === 'OFFLINE'
                   ? '#C62828'
                   : syncStatus && syncStatus.pending_count > 0
-                  ? '#F57F17'
-                  : '#2E7D32',
+                    ? '#F57F17'
+                    : '#2E7D32',
               fontWeight: 700,
               display: 'flex',
               alignItems: 'center',
               gap: 6,
-              border: `1px solid ${
-                syncStatus?.last_sync_status === 'OFFLINE'
-                  ? '#FFCDD2'
-                  : syncStatus && syncStatus.pending_count > 0
+              border: `1px solid ${syncStatus?.last_sync_status === 'OFFLINE'
+                ? '#FFCDD2'
+                : syncStatus && syncStatus.pending_count > 0
                   ? '#FFE082'
                   : '#C8E6C9'
-              }`,
+                }`,
             }}
           >
             <span>
               {syncStatus?.last_sync_status === 'OFFLINE'
                 ? '🔴'
                 : syncStatus && syncStatus.pending_count > 0
-                ? '🟡'
-                : '🟢'}
+                  ? '🟡'
+                  : '🟢'}
             </span>
             <span>
               {syncStatus?.last_sync_status === 'OFFLINE'
                 ? `Offline (${syncStatus?.pending_count || 0} Pending)`
                 : syncStatus && syncStatus.pending_count > 0
-                ? `${syncStatus.pending_count} Pending Sync`
-                : 'Cloud Synced'}
+                  ? `${syncStatus.pending_count} Pending Sync`
+                  : 'Cloud Synced'}
             </span>
             <button
               onClick={handleTriggerSync}
@@ -3554,7 +3585,7 @@ export const App: React.FC = () => {
       {activeTab === 'owner_panel' && currentSession.role === 'ADMIN' && (
         <div style={{ flex: 1, overflowY: 'auto', padding: 20, backgroundColor: '#F7F7F5' }}>
           <div style={{ maxWidth: 1140, margin: '0 auto', backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: 24, boxShadow: '0 2px 6px rgba(0,0,0,0.04)' }}>
-            
+
             {/* Header & Subtabs */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: 12, marginBottom: 16 }}>
               <div>
@@ -4241,37 +4272,37 @@ export const App: React.FC = () => {
                           stockMovements
                             .slice((stockMovementsPage - 1) * STOCK_MOVEMENTS_PER_PAGE, stockMovementsPage * STOCK_MOVEMENTS_PER_PAGE)
                             .map(sm => {
-                            const prod = catalog.find(p => p.id === sm.product_id);
-                            const prodName = prod ? prod.name : sm.product_id;
-                            const isPositive = sm.quantity_delta > 0;
-                            const displayDelta = prod?.pricing_unit === 'PER_KG'
-                              ? `${(sm.quantity_delta / 1000000).toFixed(2)} kg`
-                              : `${sm.quantity_delta} ${sm.unit.toLowerCase()}`;
+                              const prod = catalog.find(p => p.id === sm.product_id);
+                              const prodName = prod ? prod.name : sm.product_id;
+                              const isPositive = sm.quantity_delta > 0;
+                              const displayDelta = prod?.pricing_unit === 'PER_KG'
+                                ? `${(sm.quantity_delta / 1000000).toFixed(2)} kg`
+                                : `${sm.quantity_delta} ${sm.unit.toLowerCase()}`;
 
-                            return (
-                              <tr key={sm.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                                <td style={{ padding: '8px 10px', fontWeight: 700 }}>
-                                  <span style={{
-                                    fontSize: 10,
-                                    padding: '2px 6px',
-                                    borderRadius: 4,
-                                    backgroundColor: sm.movement_type.includes('RECEIPT') || sm.movement_type === 'OPENING_STOCK' || sm.movement_type === 'VOID_STOCK_REVERSAL' ? '#E8F5E9' : '#FFEBEE',
-                                    color: sm.movement_type.includes('RECEIPT') || sm.movement_type === 'OPENING_STOCK' || sm.movement_type === 'VOID_STOCK_REVERSAL' ? '#2E7D32' : '#C62828',
-                                  }}>
-                                    {sm.movement_type}
-                                  </span>
-                                </td>
-                                <td style={{ padding: '8px 10px' }}>{prodName}</td>
-                                <td style={{ padding: '8px 10px', fontWeight: 700, color: isPositive ? '#2E7D32' : '#C62828' }}>
-                                  {isPositive ? `+${displayDelta}` : displayDelta}
-                                </td>
-                                <td style={{ padding: '8px 10px', color: '#333' }}>{sm.reason || '—'}</td>
-                                <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>{sm.actor_id || 'system'}</td>
-                                <td style={{ padding: '8px 10px', color: '#666', fontSize: 11 }}>{sm.reference_id}</td>
-                                <td style={{ padding: '8px 10px', color: '#666' }}>{sm.created_at}</td>
-                              </tr>
-                            );
-                          })
+                              return (
+                                <tr key={sm.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                                  <td style={{ padding: '8px 10px', fontWeight: 700 }}>
+                                    <span style={{
+                                      fontSize: 10,
+                                      padding: '2px 6px',
+                                      borderRadius: 4,
+                                      backgroundColor: sm.movement_type.includes('RECEIPT') || sm.movement_type === 'OPENING_STOCK' || sm.movement_type === 'VOID_STOCK_REVERSAL' ? '#E8F5E9' : '#FFEBEE',
+                                      color: sm.movement_type.includes('RECEIPT') || sm.movement_type === 'OPENING_STOCK' || sm.movement_type === 'VOID_STOCK_REVERSAL' ? '#2E7D32' : '#C62828',
+                                    }}>
+                                      {sm.movement_type}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: '8px 10px' }}>{prodName}</td>
+                                  <td style={{ padding: '8px 10px', fontWeight: 700, color: isPositive ? '#2E7D32' : '#C62828' }}>
+                                    {isPositive ? `+${displayDelta}` : displayDelta}
+                                  </td>
+                                  <td style={{ padding: '8px 10px', color: '#333' }}>{sm.reason || '—'}</td>
+                                  <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>{sm.actor_id || 'system'}</td>
+                                  <td style={{ padding: '8px 10px', color: '#666', fontSize: 11 }}>{sm.reference_id}</td>
+                                  <td style={{ padding: '8px 10px', color: '#666' }}>{sm.created_at}</td>
+                                </tr>
+                              );
+                            })
                         )}
                       </tbody>
                     </table>
@@ -4964,21 +4995,21 @@ export const App: React.FC = () => {
                               reportsData.cash_drawer.movements
                                 .slice((drawerMovementsPage - 1) * DRAWER_MOVEMENTS_PER_PAGE, drawerMovementsPage * DRAWER_MOVEMENTS_PER_PAGE)
                                 .map((mov, idx) => (
-                                <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
-                                  <td style={{ padding: '8px 10px', color: '#666' }}>{mov.created_at}</td>
-                                  <td style={{ padding: '8px 10px', fontWeight: 600 }}>{mov.movement_type}</td>
-                                  <td style={{ padding: '8px 10px' }}>
-                                    <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, fontWeight: 700, backgroundColor: mov.direction === 'IN' ? '#E8F5E9' : '#FFEBEE', color: mov.direction === 'IN' ? '#2E7D32' : '#C62828' }}>
-                                      {mov.direction}
-                                    </span>
-                                  </td>
-                                  <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>{mov.reference_id}</td>
-                                  <td style={{ padding: '8px 10px', color: '#666' }}>{mov.session_id}</td>
-                                  <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, color: mov.direction === 'IN' ? '#2E7D32' : '#C62828' }}>
-                                    {mov.direction === 'IN' ? '+' : '-'}₹{(mov.amount_paise / 100).toFixed(2)}
-                                  </td>
-                                </tr>
-                              ))
+                                  <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                                    <td style={{ padding: '8px 10px', color: '#666' }}>{mov.created_at}</td>
+                                    <td style={{ padding: '8px 10px', fontWeight: 600 }}>{mov.movement_type}</td>
+                                    <td style={{ padding: '8px 10px' }}>
+                                      <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, fontWeight: 700, backgroundColor: mov.direction === 'IN' ? '#E8F5E9' : '#FFEBEE', color: mov.direction === 'IN' ? '#2E7D32' : '#C62828' }}>
+                                        {mov.direction}
+                                      </span>
+                                    </td>
+                                    <td style={{ padding: '8px 10px', fontFamily: 'monospace' }}>{mov.reference_id}</td>
+                                    <td style={{ padding: '8px 10px', color: '#666' }}>{mov.session_id}</td>
+                                    <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, color: mov.direction === 'IN' ? '#2E7D32' : '#C62828' }}>
+                                      {mov.direction === 'IN' ? '+' : '-'}₹{(mov.amount_paise / 100).toFixed(2)}
+                                    </td>
+                                  </tr>
+                                ))
                             )}
                           </tbody>
                         </table>
@@ -5055,6 +5086,44 @@ export const App: React.FC = () => {
                         </div>
                       </div>
                     </div>
+
+                    {archiveZReportError && (
+                      <div
+                        style={{
+                          backgroundColor: '#FDECEA',
+                          border: '1px solid #F5C6CB',
+                          color: '#721C24',
+                          borderRadius: 8,
+                          padding: '10px 14px',
+                          fontSize: 13,
+                          fontWeight: 500,
+                          marginBottom: 16,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 10,
+                        }}
+                      >
+                        <span>{archiveZReportError}</span>
+                        <button
+                          type="button"
+                          onClick={() => setArchiveZReportError(null)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#721C24',
+                            cursor: 'pointer',
+                            fontSize: 16,
+                            fontWeight: 'bold',
+                            padding: 0,
+                            lineHeight: 1,
+                          }}
+                          title="Dismiss"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
 
                     {/* Report Output */}
                     {archiveZReportLoading ? (
@@ -5137,8 +5206,8 @@ export const App: React.FC = () => {
                               {archiveZReportData.variance_paise === 0
                                 ? '✨ PERFECT MATCH (₹0.00 Variance)'
                                 : archiveZReportData.variance_paise > 0
-                                ? `▲ OVERAGE: +₹${(archiveZReportData.variance_paise / 100).toFixed(2)}`
-                                : `▼ SHORTAGE: -₹${(Math.abs(archiveZReportData.variance_paise) / 100).toFixed(2)}`}
+                                  ? `▲ OVERAGE: +₹${(archiveZReportData.variance_paise / 100).toFixed(2)}`
+                                  : `▼ SHORTAGE: -₹${(Math.abs(archiveZReportData.variance_paise) / 100).toFixed(2)}`}
                             </div>
                             {archiveZReportData.variance_notes && (
                               <div style={{ fontSize: 11, color: '#666', marginTop: 8, fontStyle: 'italic' }}>
@@ -5239,849 +5308,849 @@ export const App: React.FC = () => {
             {ownerSubTab === 'users_security' && (
               <div>
                 {/* Store Terminal Payment Settlement Mode */}
-            <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 16, marginBottom: 20 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <h3 style={{ fontSize: 14, margin: 0, color: '#8B1E2D', fontWeight: 800 }}>
-                  💳 Payment Settlement Mode (Retail Counter)
-                </h3>
-                <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 12, backgroundColor: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#E3F2FD' : '#E8F5E9', color: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#1565C0' : '#2E7D32', fontWeight: 'bold' }}>
-                  Active: {settlementPolicy === 'STRICT_GATEWAY_ONLY' ? 'Strict Gateway Webhook' : 'Shop Soundbox & Cash'}
-                </span>
-              </div>
-              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13, flex: 1, minWidth: 260 }}>
-                  <input
-                    type="radio"
-                    name="ownerSettlementPolicy"
-                    checked={settlementPolicy === 'CASHIER_ASSERTION_PERMITTED'}
-                    onChange={() => handleUpdateSettlementPolicy('CASHIER_ASSERTION_PERMITTED')}
-                    style={{ marginTop: 2 }}
-                  />
-                  <div>
-                    <strong style={{ fontSize: 13, color: '#1F1F1F', display: 'block' }}>Soundbox Audio Alert (Standard Retail)</strong>
-                    <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
-                      Cashiers record UPI payments after hearing the counter soundbox voice alert (PhonePe/Paytm/GPay).
-                    </div>
+                <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 16, marginBottom: 20 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <h3 style={{ fontSize: 14, margin: 0, color: '#8B1E2D', fontWeight: 800 }}>
+                      💳 Payment Settlement Mode (Retail Counter)
+                    </h3>
+                    <span style={{ fontSize: 11, padding: '3px 8px', borderRadius: 12, backgroundColor: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#E3F2FD' : '#E8F5E9', color: settlementPolicy === 'STRICT_GATEWAY_ONLY' ? '#1565C0' : '#2E7D32', fontWeight: 'bold' }}>
+                      Active: {settlementPolicy === 'STRICT_GATEWAY_ONLY' ? 'Strict Gateway Webhook' : 'Shop Soundbox & Cash'}
+                    </span>
                   </div>
-                </label>
-                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13, flex: 1, minWidth: 260 }}>
-                  <input
-                    type="radio"
-                    name="ownerSettlementPolicy"
-                    checked={settlementPolicy === 'STRICT_GATEWAY_ONLY'}
-                    onChange={() => handleUpdateSettlementPolicy('STRICT_GATEWAY_ONLY')}
-                    style={{ marginTop: 2 }}
-                  />
-                  <div>
-                    <strong style={{ fontSize: 13, color: '#1F1F1F', display: 'block' }}>Strict Bank Gateway Only</strong>
-                    <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
-                      Requires automated bank webhook confirmation before invoices can be finalized.
-                    </div>
-                  </div>
-                </label>
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 24, marginBottom: 24 }}>
-              {/* Users List */}
-              <div>
-                <h3 style={{ fontSize: 14, margin: '0 0 10px 0', color: '#333' }}>Staff & Cashier Accounts</h3>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ backgroundColor: '#f9f9f9', textAlign: 'left', borderBottom: '2px solid #eee' }}>
-                      <th style={{ padding: 8 }}>Username</th>
-                      <th style={{ padding: 8 }}>Name</th>
-                      <th style={{ padding: 8 }}>Role</th>
-                      <th style={{ padding: 8 }}>Status</th>
-                      <th style={{ padding: 8 }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {userList.map(u => (
-                      <tr key={u.id} style={{ borderBottom: '1px solid #eee' }}>
-                        <td style={{ padding: 8, fontWeight: 'bold' }}>{u.username}</td>
-                        <td style={{ padding: 8 }}>{u.display_name}</td>
-                        <td style={{ padding: 8 }}>
-                          <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: u.role === 'ADMIN' ? '#ede7f6' : '#e0f2f1', color: u.role === 'ADMIN' ? '#4527a0' : '#00695c', fontWeight: 'bold' }}>
-                            {u.role}
-                          </span>
-                        </td>
-                        <td style={{ padding: 8 }}>
-                          <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: u.status === 'ACTIVE' ? '#e8f5e9' : '#ffebee', color: u.status === 'ACTIVE' ? '#2e7d32' : '#c62828', fontWeight: 'bold' }}>
-                            {u.status}
-                          </span>
-                        </td>
-                        <td style={{ padding: 8 }}>
-                          <button
-                            onClick={() => handleToggleUserStatus(u)}
-                            style={{ padding: '3px 8px', fontSize: 11, marginRight: 6, backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: 3, cursor: 'pointer' }}
-                          >
-                            {u.status === 'ACTIVE' ? 'Disable' : 'Enable'}
-                          </button>
-                          <button
-                            onClick={() => { setResetPinUserId(u.id); setResetPinValue(''); }}
-                            style={{ padding: '3px 8px', fontSize: 11, marginRight: 6, backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: 3, cursor: 'pointer' }}
-                          >
-                            Reset PIN
-                          </button>
-                          <button
-                            onClick={() => handleDeleteUser(u)}
-                            style={{ padding: '3px 8px', fontSize: 11, backgroundColor: '#FFF0F0', border: '1px solid #FFCDD2', color: '#C62828', borderRadius: 3, cursor: 'pointer', fontWeight: 600 }}
-                            title="Permanently delete user account"
-                          >
-                            🗑️ Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-
-                {resetPinUserId && (
-                  <form onSubmit={handleExecutePinReset} style={{ marginTop: 14, padding: 12, backgroundColor: '#FFF9F0', border: '1px solid #8B1E2D', borderRadius: 6 }}>
-                    <h4 style={{ margin: '0 0 8px 0', fontSize: 13, color: '#8B1E2D' }}>Reset PIN for User</h4>
-                    <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13, flex: 1, minWidth: 260 }}>
                       <input
-                        type="password"
-                        placeholder="New 4-6 digit PIN"
-                        value={resetPinValue}
-                        onChange={e => setResetPinValue(e.target.value)}
-                        required
-                        style={{ padding: 6, fontSize: 13, flex: 1 }}
+                        type="radio"
+                        name="ownerSettlementPolicy"
+                        checked={settlementPolicy === 'CASHIER_ASSERTION_PERMITTED'}
+                        onChange={() => handleUpdateSettlementPolicy('CASHIER_ASSERTION_PERMITTED')}
+                        style={{ marginTop: 2 }}
                       />
-                      <button type="submit" style={{ padding: '6px 12px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, fontWeight: 'bold', cursor: 'pointer' }}>
-                        Save New PIN
-                      </button>
-                      <button type="button" onClick={() => setResetPinUserId(null)} style={{ padding: '6px 10px', backgroundColor: '#ccc', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
-                        Cancel
-                      </button>
-                    </div>
-                  </form>
-                )}
-              </div>
-
-              {/* Create User Form */}
-              <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 16 }}>
-                <h3 style={{ fontSize: 14, margin: '0 0 12px 0', color: '#8B1E2D' }}>+ Create New Staff Account</h3>
-                <form onSubmit={handleCreateCashier}>
-                  <div style={{ marginBottom: 8 }}>
-                    <label style={{ display: 'block', fontSize: 11, fontWeight: 'bold' }}>Username / ID</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. anand_m"
-                      value={newCashierUsername}
-                      onChange={e => setNewCashierUsername(e.target.value)}
-                      required
-                      style={{ width: '100%', padding: 6, fontSize: 13, boxSizing: 'border-box' }}
-                    />
-                  </div>
-                  <div style={{ marginBottom: 8 }}>
-                    <label style={{ display: 'block', fontSize: 11, fontWeight: 'bold' }}>Display Name</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Anand M"
-                      value={newCashierDisplayName}
-                      onChange={e => setNewCashierDisplayName(e.target.value)}
-                      required
-                      style={{ width: '100%', padding: 6, fontSize: 13, boxSizing: 'border-box' }}
-                    />
-                  </div>
-                  <div style={{ marginBottom: 8 }}>
-                    <label style={{ display: 'block', fontSize: 11, fontWeight: 'bold' }}>Role</label>
-                    <select
-                      value={newCashierRole}
-                      onChange={e => setNewCashierRole(e.target.value as any)}
-                      style={{ width: '100%', padding: 6, fontSize: 13 }}
-                    >
-                      <option value="CASHIER">Cashier (Billing & Reprints Only)</option>
-                      <option value="ADMIN">Administrator / Owner</option>
-                    </select>
-                  </div>
-                  <div style={{ marginBottom: 12 }}>
-                    <label style={{ display: 'block', fontSize: 11, fontWeight: 'bold' }}>Initial Security PIN</label>
-                    <input
-                      type="password"
-                      placeholder="••••••"
-                      value={newCashierPin}
-                      onChange={e => setNewCashierPin(e.target.value)}
-                      required
-                      style={{ width: '100%', padding: 6, fontSize: 14, letterSpacing: 2, boxSizing: 'border-box' }}
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    style={{ width: '100%', padding: '10px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 'bold', fontSize: 13, cursor: 'pointer' }}
-                  >
-                    👤 Create Staff Account
-                  </button>
-                </form>
-
-                <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px dashed #ccc' }}>
-                  <h4 style={{ margin: '0 0 6px 0', fontSize: 13, color: '#333', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    🛡️ Data Safety & Local Backup
-                  </h4>
-                  {dbInfo && (
-                    <div style={{ fontSize: 11, color: '#555', marginBottom: 10, lineHeight: 1.5 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span>System Health:</span>
-                        <strong style={{ color: '#2E7D32', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                          <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', backgroundColor: '#2E7D32' }}></span>
-                          Protected (Power-loss Safe)
-                        </strong>
-                      </div>
                       <div>
-                        Invoices on Register: <strong>{dbInfo.total_sales}</strong> • Cloud Sync: <strong>{dbInfo.pending_sync_count} pending</strong>
+                        <strong style={{ fontSize: 13, color: '#1F1F1F', display: 'block' }}>Soundbox Audio Alert (Standard Retail)</strong>
+                        <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                          Cashiers record UPI payments after hearing the counter soundbox voice alert (PhonePe/Paytm/GPay).
+                        </div>
+                      </div>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13, flex: 1, minWidth: 260 }}>
+                      <input
+                        type="radio"
+                        name="ownerSettlementPolicy"
+                        checked={settlementPolicy === 'STRICT_GATEWAY_ONLY'}
+                        onChange={() => handleUpdateSettlementPolicy('STRICT_GATEWAY_ONLY')}
+                        style={{ marginTop: 2 }}
+                      />
+                      <div>
+                        <strong style={{ fontSize: 13, color: '#1F1F1F', display: 'block' }}>Strict Bank Gateway Only</strong>
+                        <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                          Requires automated bank webhook confirmation before invoices can be finalized.
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 24, marginBottom: 24 }}>
+                  {/* Users List */}
+                  <div>
+                    <h3 style={{ fontSize: 14, margin: '0 0 10px 0', color: '#333' }}>Staff & Cashier Accounts</h3>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#f9f9f9', textAlign: 'left', borderBottom: '2px solid #eee' }}>
+                          <th style={{ padding: 8 }}>Username</th>
+                          <th style={{ padding: 8 }}>Name</th>
+                          <th style={{ padding: 8 }}>Role</th>
+                          <th style={{ padding: 8 }}>Status</th>
+                          <th style={{ padding: 8 }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {userList.map(u => (
+                          <tr key={u.id} style={{ borderBottom: '1px solid #eee' }}>
+                            <td style={{ padding: 8, fontWeight: 'bold' }}>{u.username}</td>
+                            <td style={{ padding: 8 }}>{u.display_name}</td>
+                            <td style={{ padding: 8 }}>
+                              <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: u.role === 'ADMIN' ? '#ede7f6' : '#e0f2f1', color: u.role === 'ADMIN' ? '#4527a0' : '#00695c', fontWeight: 'bold' }}>
+                                {u.role}
+                              </span>
+                            </td>
+                            <td style={{ padding: 8 }}>
+                              <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, backgroundColor: u.status === 'ACTIVE' ? '#e8f5e9' : '#ffebee', color: u.status === 'ACTIVE' ? '#2e7d32' : '#c62828', fontWeight: 'bold' }}>
+                                {u.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: 8 }}>
+                              <button
+                                onClick={() => handleToggleUserStatus(u)}
+                                style={{ padding: '3px 8px', fontSize: 11, marginRight: 6, backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: 3, cursor: 'pointer' }}
+                              >
+                                {u.status === 'ACTIVE' ? 'Disable' : 'Enable'}
+                              </button>
+                              <button
+                                onClick={() => { setResetPinUserId(u.id); setResetPinValue(''); }}
+                                style={{ padding: '3px 8px', fontSize: 11, marginRight: 6, backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: 3, cursor: 'pointer' }}
+                              >
+                                Reset PIN
+                              </button>
+                              <button
+                                onClick={() => handleDeleteUser(u)}
+                                style={{ padding: '3px 8px', fontSize: 11, backgroundColor: '#FFF0F0', border: '1px solid #FFCDD2', color: '#C62828', borderRadius: 3, cursor: 'pointer', fontWeight: 600 }}
+                                title="Permanently delete user account"
+                              >
+                                🗑️ Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+
+                    {resetPinUserId && (
+                      <form onSubmit={handleExecutePinReset} style={{ marginTop: 14, padding: 12, backgroundColor: '#FFF9F0', border: '1px solid #8B1E2D', borderRadius: 6 }}>
+                        <h4 style={{ margin: '0 0 8px 0', fontSize: 13, color: '#8B1E2D' }}>Reset PIN for User</h4>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <input
+                            type="password"
+                            placeholder="New 4-6 digit PIN"
+                            value={resetPinValue}
+                            onChange={e => setResetPinValue(e.target.value)}
+                            required
+                            style={{ padding: 6, fontSize: 13, flex: 1 }}
+                          />
+                          <button type="submit" style={{ padding: '6px 12px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, fontWeight: 'bold', cursor: 'pointer' }}>
+                            Save New PIN
+                          </button>
+                          <button type="button" onClick={() => setResetPinUserId(null)} style={{ padding: '6px 10px', backgroundColor: '#ccc', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+
+                  {/* Create User Form */}
+                  <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 16 }}>
+                    <h3 style={{ fontSize: 14, margin: '0 0 12px 0', color: '#8B1E2D' }}>+ Create New Staff Account</h3>
+                    <form onSubmit={handleCreateCashier}>
+                      <div style={{ marginBottom: 8 }}>
+                        <label style={{ display: 'block', fontSize: 11, fontWeight: 'bold' }}>Username / ID</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. anand_m"
+                          value={newCashierUsername}
+                          onChange={e => setNewCashierUsername(e.target.value)}
+                          required
+                          style={{ width: '100%', padding: 6, fontSize: 13, boxSizing: 'border-box' }}
+                        />
+                      </div>
+                      <div style={{ marginBottom: 8 }}>
+                        <label style={{ display: 'block', fontSize: 11, fontWeight: 'bold' }}>Display Name</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Anand M"
+                          value={newCashierDisplayName}
+                          onChange={e => setNewCashierDisplayName(e.target.value)}
+                          required
+                          style={{ width: '100%', padding: 6, fontSize: 13, boxSizing: 'border-box' }}
+                        />
+                      </div>
+                      <div style={{ marginBottom: 8 }}>
+                        <label style={{ display: 'block', fontSize: 11, fontWeight: 'bold' }}>Role</label>
+                        <select
+                          value={newCashierRole}
+                          onChange={e => setNewCashierRole(e.target.value as any)}
+                          style={{ width: '100%', padding: 6, fontSize: 13 }}
+                        >
+                          <option value="CASHIER">Cashier (Billing & Reprints Only)</option>
+                          <option value="ADMIN">Administrator / Owner</option>
+                        </select>
+                      </div>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={{ display: 'block', fontSize: 11, fontWeight: 'bold' }}>Initial Security PIN</label>
+                        <input
+                          type="password"
+                          placeholder="••••••"
+                          value={newCashierPin}
+                          onChange={e => setNewCashierPin(e.target.value)}
+                          required
+                          style={{ width: '100%', padding: 6, fontSize: 14, letterSpacing: 2, boxSizing: 'border-box' }}
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        style={{ width: '100%', padding: '10px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 'bold', fontSize: 13, cursor: 'pointer' }}
+                      >
+                        👤 Create Staff Account
+                      </button>
+                    </form>
+
+                    <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px dashed #ccc' }}>
+                      <h4 style={{ margin: '0 0 6px 0', fontSize: 13, color: '#333', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        🛡️ Data Safety & Local Backup
+                      </h4>
+                      {dbInfo && (
+                        <div style={{ fontSize: 11, color: '#555', marginBottom: 10, lineHeight: 1.5 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span>System Health:</span>
+                            <strong style={{ color: '#2E7D32', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                              <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', backgroundColor: '#2E7D32' }}></span>
+                              Protected (Power-loss Safe)
+                            </strong>
+                          </div>
+                          <div>
+                            Invoices on Register: <strong>{dbInfo.total_sales}</strong> • Cloud Sync: <strong>{dbInfo.pending_sync_count} pending</strong>
+                          </div>
+                        </div>
+                      )}
+                      <button
+                        onClick={handleTriggerBackup}
+                        style={{
+                          width: '100%',
+                          padding: '10px 14px',
+                          backgroundColor: '#263238',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: 6,
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          fontWeight: 'bold',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 8,
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                        }}
+                      >
+                        💾 Backup Store Data Now
+                      </button>
+                      <div style={{ fontSize: 10, color: '#888', marginTop: 4, textAlign: 'center' }}>
+                        Safely creates a snapshot copy of all sales and stock without interrupting billing
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Audit Logs */}
+                <div>
+                  <h3 style={{ fontSize: 14, margin: '0 0 8px 0', color: '#333' }}>Recent Security Audit Events</h3>
+                  <div style={{ border: '1px solid #eee', borderRadius: 4 }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#f9f9f9', textAlign: 'left', borderBottom: '1px solid #ddd' }}>
+                          <th style={{ padding: 6 }}>Action</th>
+                          <th style={{ padding: 6 }}>Entity</th>
+                          <th style={{ padding: 6 }}>Actor</th>
+                          <th style={{ padding: 6 }}>Timestamp</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {securityLogs.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} style={{ textAlign: 'center', padding: 18, color: '#888' }}>
+                              No audit events recorded yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          securityLogs
+                            .slice((securityLogsPage - 1) * SECURITY_LOGS_PER_PAGE, securityLogsPage * SECURITY_LOGS_PER_PAGE)
+                            .map(log => (
+                              <tr key={log.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                                <td style={{ padding: 6, fontWeight: 'bold', color: log.action.includes('FAIL') || log.action.includes('BLOCKED') ? '#c62828' : '#2e7d32' }}>
+                                  {log.action}
+                                </td>
+                                <td style={{ padding: 6 }}>{log.entity_type}: {log.entity_id}</td>
+                                <td style={{ padding: 6 }}>{log.actor_id}</td>
+                                <td style={{ padding: 6, color: '#666' }}>{new Date(parseInt(log.created_at) * 1000 || Date.now()).toLocaleTimeString()}</td>
+                              </tr>
+                            ))
+                        )}
+                      </tbody>
+                    </table>
+                    {renderPaginationBar(securityLogsPage, securityLogs.length, SECURITY_LOGS_PER_PAGE, setSecurityLogsPage)}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 5: CLOUD SYNC & MULTI-BRANCH CONFIGURATION */}
+            {ownerSubTab === 'cloud_sync' && (
+              <div>
+                {/* 1. Header & Live Synchronization Metrics */}
+                <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 20, marginBottom: 24 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <div>
+                      <h3 style={{ fontSize: 16, margin: 0, color: '#8B1E2D', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span>☁️</span> Offline Outbox Queue & Central Cloud Synchronization
+                      </h3>
+                      <p style={{ fontSize: 12, color: '#666', margin: '4px 0 0 0' }}>
+                        Durable offline queue ensures local POS billing continues with 100% reliability during internet outages. Records upload automatically upon reconnection.
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={handleTriggerSync}
+                      disabled={isSyncing}
+                      style={{
+                        padding: '10px 18px',
+                        backgroundColor: isSyncing ? '#7A1A28' : '#8B1E2D',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 6,
+                        fontWeight: 700,
+                        fontSize: 13,
+                        cursor: isSyncing ? 'wait' : 'pointer',
+                        opacity: isSyncing ? 0.72 : 1,
+                        filter: isSyncing ? 'blur(0.8px)' : 'none',
+                        transform: isSyncing ? 'scale(0.98)' : 'scale(1)',
+                        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        boxShadow: isSyncing ? 'none' : '0 2px 6px rgba(139,30,45,0.25)',
+                      }}
+                    >
+                      <span>{isSyncing ? '⏳' : '⚡'}</span>
+                      <span>{isSyncing ? 'Synchronizing (Outbox & Inbound)...' : 'Synchronize Now (Bidirectional)'}</span>
+                    </button>
+                  </div>
+
+                  {syncMessage && (
+                    <div style={{ backgroundColor: syncMessage.includes('fail') || syncMessage.includes('Error') ? '#FFEBEE' : '#E8F5E9', color: syncMessage.includes('fail') || syncMessage.includes('Error') ? '#C62828' : '#2E7D32', padding: '10px 14px', borderRadius: 6, marginBottom: 16, fontSize: 13, border: '1px solid #C8E6C9' }}>
+                      {syncMessage.includes('fail') ? '⚠️' : '✓'} {syncMessage}
+                    </div>
+                  )}
+
+                  {(syncStatus?.last_sync_error || syncStatus?.last_inbound_sync_error) && (
+                    <div style={{ backgroundColor: '#FFF3E0', border: '1px solid #FFE0B2', color: '#E65100', padding: '12px 16px', borderRadius: 6, marginBottom: 16, fontSize: 13 }}>
+                      <div style={{ fontWeight: 800, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>⚠️</span> Actionable Error Recovery Alert
+                      </div>
+                      <div>{syncStatus?.last_sync_error || syncStatus?.last_inbound_sync_error}</div>
+                      <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                        Billing continues uninterrupted in offline mode. Changes are safely queued in local SQLite outbox.
                       </div>
                     </div>
                   )}
-                  <button
-                    onClick={handleTriggerBackup}
-                    style={{
-                      width: '100%',
-                      padding: '10px 14px',
-                      backgroundColor: '#263238',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                      fontSize: 12,
-                      fontWeight: 'bold',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 8,
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-                    }}
-                  >
-                    💾 Backup Store Data Now
-                  </button>
-                  <div style={{ fontSize: 10, color: '#888', marginTop: 4, textAlign: 'center' }}>
-                    Safely creates a snapshot copy of all sales and stock without interrupting billing
-                  </div>
-                </div>
-              </div>
-            </div>
 
-            {/* Audit Logs */}
-            <div>
-              <h3 style={{ fontSize: 14, margin: '0 0 8px 0', color: '#333' }}>Recent Security Audit Events</h3>
-              <div style={{ border: '1px solid #eee', borderRadius: 4 }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ backgroundColor: '#f9f9f9', textAlign: 'left', borderBottom: '1px solid #ddd' }}>
-                      <th style={{ padding: 6 }}>Action</th>
-                      <th style={{ padding: 6 }}>Entity</th>
-                      <th style={{ padding: 6 }}>Actor</th>
-                      <th style={{ padding: 6 }}>Timestamp</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {securityLogs.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} style={{ textAlign: 'center', padding: 18, color: '#888' }}>
-                          No audit events recorded yet.
-                        </td>
-                      </tr>
-                    ) : (
-                      securityLogs
-                        .slice((securityLogsPage - 1) * SECURITY_LOGS_PER_PAGE, securityLogsPage * SECURITY_LOGS_PER_PAGE)
-                        .map(log => (
-                          <tr key={log.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                            <td style={{ padding: 6, fontWeight: 'bold', color: log.action.includes('FAIL') || log.action.includes('BLOCKED') ? '#c62828' : '#2e7d32' }}>
-                              {log.action}
-                            </td>
-                            <td style={{ padding: 6 }}>{log.entity_type}: {log.entity_id}</td>
-                            <td style={{ padding: 6 }}>{log.actor_id}</td>
-                            <td style={{ padding: 6, color: '#666' }}>{new Date(parseInt(log.created_at) * 1000 || Date.now()).toLocaleTimeString()}</td>
-                          </tr>
-                        ))
-                    )}
-                  </tbody>
-                </table>
-                {renderPaginationBar(securityLogsPage, securityLogs.length, SECURITY_LOGS_PER_PAGE, setSecurityLogsPage)}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 5: CLOUD SYNC & MULTI-BRANCH CONFIGURATION */}
-        {ownerSubTab === 'cloud_sync' && (
-          <div>
-            {/* 1. Header & Live Synchronization Metrics */}
-            <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 20, marginBottom: 24 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <div>
-                  <h3 style={{ fontSize: 16, margin: 0, color: '#8B1E2D', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span>☁️</span> Offline Outbox Queue & Central Cloud Synchronization
-                  </h3>
-                  <p style={{ fontSize: 12, color: '#666', margin: '4px 0 0 0' }}>
-                    Durable offline queue ensures local POS billing continues with 100% reliability during internet outages. Records upload automatically upon reconnection.
-                  </p>
-                </div>
-
-                <button
-                  onClick={handleTriggerSync}
-                  disabled={isSyncing}
-                  style={{
-                    padding: '10px 18px',
-                    backgroundColor: isSyncing ? '#7A1A28' : '#8B1E2D',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: 6,
-                    fontWeight: 700,
-                    fontSize: 13,
-                    cursor: isSyncing ? 'wait' : 'pointer',
-                    opacity: isSyncing ? 0.72 : 1,
-                    filter: isSyncing ? 'blur(0.8px)' : 'none',
-                    transform: isSyncing ? 'scale(0.98)' : 'scale(1)',
-                    transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    boxShadow: isSyncing ? 'none' : '0 2px 6px rgba(139,30,45,0.25)',
-                  }}
-                >
-                  <span>{isSyncing ? '⏳' : '⚡'}</span>
-                  <span>{isSyncing ? 'Synchronizing (Outbox & Inbound)...' : 'Synchronize Now (Bidirectional)'}</span>
-                </button>
-              </div>
-
-              {syncMessage && (
-                <div style={{ backgroundColor: syncMessage.includes('fail') || syncMessage.includes('Error') ? '#FFEBEE' : '#E8F5E9', color: syncMessage.includes('fail') || syncMessage.includes('Error') ? '#C62828' : '#2E7D32', padding: '10px 14px', borderRadius: 6, marginBottom: 16, fontSize: 13, border: '1px solid #C8E6C9' }}>
-                  {syncMessage.includes('fail') ? '⚠️' : '✓'} {syncMessage}
-                </div>
-              )}
-
-              {(syncStatus?.last_sync_error || syncStatus?.last_inbound_sync_error) && (
-                <div style={{ backgroundColor: '#FFF3E0', border: '1px solid #FFE0B2', color: '#E65100', padding: '12px 16px', borderRadius: 6, marginBottom: 16, fontSize: 13 }}>
-                  <div style={{ fontWeight: 800, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span>⚠️</span> Actionable Error Recovery Alert
-                  </div>
-                  <div>{syncStatus?.last_sync_error || syncStatus?.last_inbound_sync_error}</div>
-                  <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
-                    Billing continues uninterrupted in offline mode. Changes are safely queued in local SQLite outbox.
-                  </div>
-                </div>
-              )}
-
-              {/* 6 Comprehensive Dashboard Metric Tiles */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
-                <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
-                  <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Outbox Pending</div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: syncStatus && syncStatus.pending_count > 0 ? '#F57F17' : '#2E7D32', marginTop: 4 }}>
-                    {syncStatus ? syncStatus.pending_count : 0}
-                  </div>
-                  <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Queued locally</div>
-                </div>
-
-                <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
-                  <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Outbox Synced</div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: '#2E7D32', marginTop: 4 }}>
-                    {syncStatus ? syncStatus.synced_count : 0}
-                  </div>
-                  <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Server acknowledged</div>
-                </div>
-
-                <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
-                  <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Catalog Version</div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: '#1565C0', marginTop: 4 }}>
-                    v{syncStatus?.last_inbound_catalog_version || 1}
-                  </div>
-                  <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Incremental sequence</div>
-                </div>
-
-                <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
-                  <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Inbound Catalog</div>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: syncStatus?.last_inbound_sync_status === 'ONLINE' ? '#2E7D32' : '#F57F17', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span>{syncStatus?.last_inbound_sync_status === 'ONLINE' ? '🟢' : '🟡'}</span>
-                    <span>{syncStatus?.last_inbound_sync_status || 'ONLINE'}</span>
-                  </div>
-                  <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
-                    {syncStatus?.last_inbound_sync_timestamp ? new Date(syncStatus.last_inbound_sync_timestamp).toLocaleTimeString() : 'Up to date'}
-                  </div>
-                </div>
-
-                <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
-                  <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Auto-Sync Worker</div>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: syncStatus?.auto_sync_worker_active !== false ? '#2E7D32' : '#999', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span>{syncStatus?.auto_sync_worker_active !== false ? '⚡' : '⏸️'}</span>
-                    <span>{syncStatus?.auto_sync_worker_active !== false ? 'Active (20s)' : 'Paused'}</span>
-                  </div>
-                  <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Automatic daemon</div>
-                </div>
-
-                <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
-                  <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Network Connection</div>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: syncStatus?.last_sync_status === 'OFFLINE' ? '#C62828' : '#2E7D32', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span>{syncStatus?.last_sync_status === 'OFFLINE' ? '🔴' : '🟢'}</span>
-                    <span>{syncStatus?.last_sync_status === 'OFFLINE' ? 'Offline' : 'Connected'}</span>
-                  </div>
-                  <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
-                    {syncStatus?.last_sync_timestamp ? `Last: ${new Date(syncStatus.last_sync_timestamp).toLocaleTimeString()}` : 'No sync recorded'}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* 2. Branch Identity Configuration Form */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 24, marginBottom: 24 }}>
-              <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 20 }}>
-                <h3 style={{ fontSize: 14, margin: '0 0 12px 0', color: '#8B1E2D', fontWeight: 800 }}>
-                  🏢 Persistent Branch & Terminal Identity Configuration
-                </h3>
-                <p style={{ fontSize: 12, color: '#666', margin: '0 0 16px 0' }}>
-                  Configure this Windows POS machine's unique identity. Do not configure two branch locations with the same branch ID.
-                </p>
-
-                <form onSubmit={handleSaveBranchConfig}>
-                  <div style={{ marginBottom: 16 }}>
-                    <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 6 }}>
-                      ⚡ 1-Click Branch Quick Presets:
-                    </label>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSyncConfigForm({
-                            ...syncConfigForm,
-                            branch_id: 'IB',
-                            branch_name: 'Iyer Bungalow Branch (IB)',
-                          });
-                        }}
-                        style={{
-                          padding: '10px 12px',
-                          backgroundColor: syncConfigForm.branch_id === 'IB' ? '#8B1E2D' : '#F9F9F6',
-                          color: syncConfigForm.branch_id === 'IB' ? '#fff' : '#1F1F1F',
-                          border: syncConfigForm.branch_id === 'IB' ? '2px solid #8B1E2D' : '1px solid #D5D5CE',
-                          borderRadius: 8,
-                          cursor: 'pointer',
-                          fontWeight: 700,
-                          fontSize: 12,
-                          textAlign: 'left',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 2,
-                        }}
-                      >
-                        <span style={{ fontSize: 13 }}>📍 Branch 1: Iyer Bungalow</span>
-                        <span style={{ fontSize: 10, opacity: syncConfigForm.branch_id === 'IB' ? 0.85 : 0.6 }}>ID: IB • Natham Main Road</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSyncConfigForm({
-                            ...syncConfigForm,
-                            branch_id: 'UK',
-                            branch_name: 'Umachikulam Branch (UK)',
-                          });
-                        }}
-                        style={{
-                          padding: '10px 12px',
-                          backgroundColor: syncConfigForm.branch_id === 'UK' ? '#8B1E2D' : '#F9F9F6',
-                          color: syncConfigForm.branch_id === 'UK' ? '#fff' : '#1F1F1F',
-                          border: syncConfigForm.branch_id === 'UK' ? '2px solid #8B1E2D' : '1px solid #D5D5CE',
-                          borderRadius: 8,
-                          cursor: 'pointer',
-                          fontWeight: 700,
-                          fontSize: 12,
-                          textAlign: 'left',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 2,
-                        }}
-                      >
-                        <span style={{ fontSize: 13 }}>📍 Branch 2: Umachikulam</span>
-                        <span style={{ fontSize: 10, opacity: syncConfigForm.branch_id === 'UK' ? 0.85 : 0.6 }}>ID: UK • Main Road</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
-                        Branch ID Code *
-                      </label>
-                      <input
-                        type="text"
-                        value={syncConfigForm.branch_id}
-                        onChange={e => setSyncConfigForm({ ...syncConfigForm, branch_id: e.target.value.toUpperCase() })}
-                        required
-                        placeholder="e.g. IB or UK"
-                        style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontWeight: 700 }}
-                      />
-                      <span style={{ fontSize: 11, color: '#777' }}>IB = Iyer Bungalow, UK = Umachikulam</span>
-                    </div>
-
-                    <div>
-                      <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
-                        Terminal ID *
-                      </label>
-                      <input
-                        type="text"
-                        value={syncConfigForm.terminal_id}
-                        onChange={e => setSyncConfigForm({ ...syncConfigForm, terminal_id: e.target.value.toUpperCase() })}
-                        required
-                        placeholder="e.g. T1 or T2"
-                        style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
-                      />
-                      <span style={{ fontSize: 11, color: '#777' }}>Physical POS machine identifier</span>
-                    </div>
-                  </div>
-
-                  <div style={{ marginBottom: 14 }}>
-                    <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
-                      Branch Store Name *
-                    </label>
-                    <input
-                      type="text"
-                      value={syncConfigForm.branch_name}
-                      onChange={e => setSyncConfigForm({ ...syncConfigForm, branch_name: e.target.value })}
-                      required
-                      placeholder="e.g. Iyer Bungalow Branch (IB)"
-                      style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
-                    />
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14, marginBottom: 14 }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
-                        Central Cloud API Endpoint *
-                      </label>
-                      <input
-                        type="text"
-                        value={syncConfigForm.cloud_api_url}
-                        onChange={e => setSyncConfigForm({ ...syncConfigForm, cloud_api_url: e.target.value })}
-                        required
-                        placeholder="http://127.0.0.1:3000"
-                        style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}
-                      />
-                    </div>
-
-                    <div>
-                      <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
-                        Counter Code
-                      </label>
-                      <input
-                        type="text"
-                        value={syncConfigForm.counter_id}
-                        onChange={e => setSyncConfigForm({ ...syncConfigForm, counter_id: e.target.value })}
-                        required
-                        placeholder="C1"
-                        style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
-                      />
-                    </div>
-                  </div>
-
-                  <div style={{ marginBottom: 16 }}>
-                    <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
-                      Cloud API Authorization Key *
-                    </label>
-                    <input
-                      type="password"
-                      value={syncConfigForm.cloud_api_key}
-                      onChange={e => setSyncConfigForm({ ...syncConfigForm, cloud_api_key: e.target.value })}
-                      required
-                      style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}
-                    />
-                    <span style={{ fontSize: 11, color: '#777' }}>Bearer token for authenticating batch uploads</span>
-                  </div>
-
-                  <div style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input
-                      type="checkbox"
-                      id="auto_sync_cb"
-                      checked={syncConfigForm.auto_sync_enabled}
-                      onChange={e => setSyncConfigForm({ ...syncConfigForm, auto_sync_enabled: e.target.checked })}
-                      style={{ width: 16, height: 16, cursor: 'pointer' }}
-                    />
-                    <label htmlFor="auto_sync_cb" style={{ fontSize: 13, color: '#333', fontWeight: 600, cursor: 'pointer' }}>
-                      Enable automated periodic sync in background (every 30s)
-                    </label>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                    <button
-                      type="submit"
-                      disabled={isSavingBranchConfig}
-                      style={{
-                        padding: '11px 22px',
-                        backgroundColor: branchConfigSavedSuccess ? '#2E7D32' : isSavingBranchConfig ? '#7A1A28' : '#8B1E2D',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: 7,
-                        fontSize: 13,
-                        fontWeight: 700,
-                        cursor: isSavingBranchConfig ? 'wait' : 'pointer',
-                        opacity: isSavingBranchConfig ? 0.72 : 1,
-                        filter: isSavingBranchConfig ? 'blur(0.8px)' : 'none',
-                        transform: isSavingBranchConfig ? 'scale(0.98)' : 'scale(1)',
-                        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        boxShadow: isSavingBranchConfig ? 'none' : '0 2px 6px rgba(139,30,45,0.22)',
-                      }}
-                    >
-                      {isSavingBranchConfig ? (
-                        <>
-                          <span style={{ display: 'inline-block' }}>⏳</span>
-                          <span>Saving Configuration...</span>
-                        </>
-                      ) : branchConfigSavedSuccess ? (
-                        <>
-                          <span>✅</span>
-                          <span>Configuration Saved!</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>💾</span>
-                          <span>Save Branch Identity Configuration</span>
-                        </>
-                      )}
-                    </button>
-
-                    {branchConfigSavedSuccess && (
-                      <div
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          backgroundColor: '#E8F5E9',
-                          border: '1px solid #A5D6A7',
-                          borderRadius: 6,
-                          padding: '6px 12px',
-                          fontSize: 12,
-                          color: '#1B5E20',
-                          fontWeight: 700,
-                        }}
-                      >
-                        <span>🏢 Active:</span>
-                        <span>{syncConfigForm.branch_id} — {syncConfigForm.branch_name}</span>
+                  {/* 6 Comprehensive Dashboard Metric Tiles */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
+                    <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
+                      <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Outbox Pending</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: syncStatus && syncStatus.pending_count > 0 ? '#F57F17' : '#2E7D32', marginTop: 4 }}>
+                        {syncStatus ? syncStatus.pending_count : 0}
                       </div>
-                    )}
-                  </div>
-                </form>
-              </div>
+                      <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Queued locally</div>
+                    </div>
 
-              {/* 3. Architectural Safeguards Info Panel */}
-              <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 20 }}>
-                <h3 style={{ fontSize: 14, margin: '0 0 12px 0', color: '#6F1623', fontWeight: 800 }}>
-                  🛡️ Malgudi Multi-Branch Isolation Safeguards
-                </h3>
-                
-                <div style={{ fontSize: 12, color: '#444', lineHeight: 1.6 }}>
-                  <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid #EFE4D8' }}>
-                    <strong style={{ color: '#8B1E2D' }}>1. Sovereign Offline Operation:</strong><br/>
-                    Each branch maintains a local SQLite database with write-ahead logging (WAL). Sales, GST invoices, and stock reductions never stall when broadband drops.
-                  </div>
-
-                  <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid #EFE4D8' }}>
-                    <strong style={{ color: '#8B1E2D' }}>2. Partitioned Series Sequences:</strong><br/>
-                    Branch <strong>IB</strong> issues series <code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>IB1/2627/000001</code> while Branch <strong>MN</strong> issues <code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>MN1/2627/000001</code>. Sequence collisions are mathematically impossible.
-                  </div>
-
-                  <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid #EFE4D8' }}>
-                    <strong style={{ color: '#8B1E2D' }}>3. Durable Outbox & Restart Safety:</strong><br/>
-                    Every transaction writes to <code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>sync_outbox</code> within the same ACID commit as the sale. If the Windows PC reboots or crashes, unacknowledged records remain pending.
-                  </div>
-
-                  <div>
-                    <strong style={{ color: '#8B1E2D' }}>4. Idempotency & Tamper Protection:</strong><br/>
-                    Central API computes SHA-256 payload hashes. Replaying lost ACKs is completely safe, while payload tampering triggers automatic HTTP 409 conflict rejection.
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 6: SOFTWARE UPDATES & OTA DEPLOYMENT */}
-        {ownerSubTab === 'updates' && (
-          <div>
-            {/* Header & Quick Action */}
-            <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 20, marginBottom: 24 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-                <div>
-                  <h3 style={{ fontSize: 16, margin: 0, color: '#8B1E2D', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span>🔄</span> Software Updates & Over-The-Air (OTA) Deployment
-                  </h3>
-                  <p style={{ fontSize: 12, color: '#666', margin: '4px 0 0 0' }}>
-                    Cryptographically signed desktop updates for counter terminals. Changes download securely and relaunch with zero loss of offline sales or customer tabs.
-                  </p>
-                </div>
-
-                <button
-                  onClick={() => handleCheckForUpdates(false)}
-                  disabled={isCheckingUpdate || isUpdating}
-                  style={{
-                    padding: '10px 18px',
-                    backgroundColor: isCheckingUpdate ? '#7A1A28' : '#8B1E2D',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: 6,
-                    fontWeight: 700,
-                    fontSize: 13,
-                    cursor: isCheckingUpdate || isUpdating ? 'wait' : 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    boxShadow: '0 2px 6px rgba(139,30,45,0.25)',
-                    opacity: isCheckingUpdate || isUpdating ? 0.75 : 1,
-                  }}
-                >
-                  <span>{isCheckingUpdate ? '⏳' : '🔄'}</span>
-                  <span>{isCheckingUpdate ? 'Checking GitHub Releases...' : 'Check for Updates Now'}</span>
-                </button>
-              </div>
-
-              {/* Status Alert Messages */}
-              {updateErrorMessage && (
-                <div style={{ marginTop: 16, backgroundColor: '#FFEBEE', border: '1px solid #FFCDD2', color: '#C62828', padding: '12px 16px', borderRadius: 6, fontSize: 13 }}>
-                  <div style={{ fontWeight: 800, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span>⚠️</span> Update Server Warning
-                  </div>
-                  <div>{updateErrorMessage}</div>
-                  <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
-                    Cashier billing operates normally in offline mode. Software updates require an active internet connection.
-                  </div>
-                </div>
-              )}
-
-              {updateStatusMessage && !updateErrorMessage && !availableUpdate && (
-                <div style={{ marginTop: 16, backgroundColor: '#E8F5E9', border: '1px solid #C8E6C9', color: '#2E7D32', padding: '12px 16px', borderRadius: 6, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 16 }}>✓</span>
-                  <span>{updateStatusMessage}</span>
-                </div>
-              )}
-
-              {/* Available Update Card */}
-              {availableUpdate && (
-                <div style={{ marginTop: 16, backgroundColor: '#FFFBEB', border: '1px solid #F59E0B', borderRadius: 8, padding: 18 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontSize: 20 }}>🚀</span>
-                        <h4 style={{ margin: 0, fontSize: 16, color: '#92400E', fontWeight: 800 }}>
-                          New Version Available: v{availableUpdate.version}
-                        </h4>
-                        <span style={{ backgroundColor: '#FEF3C7', color: '#B45309', padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 700, border: '1px solid #FDE68A' }}>
-                          Signed & Verified
-                        </span>
+                    <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
+                      <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Outbox Synced</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#2E7D32', marginTop: 4 }}>
+                        {syncStatus ? syncStatus.synced_count : 0}
                       </div>
-                      <div style={{ fontSize: 12, color: '#78350F', marginTop: 6 }}>
-                        Current Version: <strong>v{currentAppVersion}</strong> | Published: {availableUpdate.date ? new Date(availableUpdate.date).toLocaleDateString() : 'Latest'}
+                      <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Server acknowledged</div>
+                    </div>
+
+                    <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
+                      <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Catalog Version</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: '#1565C0', marginTop: 4 }}>
+                        v{syncStatus?.last_inbound_catalog_version || 1}
                       </div>
-                      {availableUpdate.body && (
-                        <div style={{ marginTop: 10, backgroundColor: '#FEF3C7', padding: '10px 14px', borderRadius: 6, fontSize: 12, color: '#78350F', whiteSpace: 'pre-line', border: '1px solid #FDE68A', maxHeight: 120, overflowY: 'auto' }}>
-                          <strong style={{ display: 'block', marginBottom: 4 }}>Release Notes:</strong>
-                          {availableUpdate.body}
+                      <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Incremental sequence</div>
+                    </div>
+
+                    <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
+                      <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Inbound Catalog</div>
+                      <div style={{ fontSize: 16, fontWeight: 800, color: syncStatus?.last_inbound_sync_status === 'ONLINE' ? '#2E7D32' : '#F57F17', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span>{syncStatus?.last_inbound_sync_status === 'ONLINE' ? '🟢' : '🟡'}</span>
+                        <span>{syncStatus?.last_inbound_sync_status || 'ONLINE'}</span>
+                      </div>
+                      <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+                        {syncStatus?.last_inbound_sync_timestamp ? new Date(syncStatus.last_inbound_sync_timestamp).toLocaleTimeString() : 'Up to date'}
+                      </div>
+                    </div>
+
+                    <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
+                      <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Auto-Sync Worker</div>
+                      <div style={{ fontSize: 16, fontWeight: 800, color: syncStatus?.auto_sync_worker_active !== false ? '#2E7D32' : '#999', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span>{syncStatus?.auto_sync_worker_active !== false ? '⚡' : '⏸️'}</span>
+                        <span>{syncStatus?.auto_sync_worker_active !== false ? 'Active (20s)' : 'Paused'}</span>
+                      </div>
+                      <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>Automatic daemon</div>
+                    </div>
+
+                    <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 12 }}>
+                      <div style={{ fontSize: 11, color: '#777', fontWeight: 600, textTransform: 'uppercase' }}>Network Connection</div>
+                      <div style={{ fontSize: 16, fontWeight: 800, color: syncStatus?.last_sync_status === 'OFFLINE' ? '#C62828' : '#2E7D32', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span>{syncStatus?.last_sync_status === 'OFFLINE' ? '🔴' : '🟢'}</span>
+                        <span>{syncStatus?.last_sync_status === 'OFFLINE' ? 'Offline' : 'Connected'}</span>
+                      </div>
+                      <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+                        {syncStatus?.last_sync_timestamp ? `Last: ${new Date(syncStatus.last_sync_timestamp).toLocaleTimeString()}` : 'No sync recorded'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Branch Identity Configuration Form */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 24, marginBottom: 24 }}>
+                  <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 20 }}>
+                    <h3 style={{ fontSize: 14, margin: '0 0 12px 0', color: '#8B1E2D', fontWeight: 800 }}>
+                      🏢 Persistent Branch & Terminal Identity Configuration
+                    </h3>
+                    <p style={{ fontSize: 12, color: '#666', margin: '0 0 16px 0' }}>
+                      Configure this Windows POS machine's unique identity. Do not configure two branch locations with the same branch ID.
+                    </p>
+
+                    <form onSubmit={handleSaveBranchConfig}>
+                      <div style={{ marginBottom: 16 }}>
+                        <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 6 }}>
+                          ⚡ 1-Click Branch Quick Presets:
+                        </label>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSyncConfigForm({
+                                ...syncConfigForm,
+                                branch_id: 'IB',
+                                branch_name: 'Iyer Bungalow Branch (IB)',
+                              });
+                            }}
+                            style={{
+                              padding: '10px 12px',
+                              backgroundColor: syncConfigForm.branch_id === 'IB' ? '#8B1E2D' : '#F9F9F6',
+                              color: syncConfigForm.branch_id === 'IB' ? '#fff' : '#1F1F1F',
+                              border: syncConfigForm.branch_id === 'IB' ? '2px solid #8B1E2D' : '1px solid #D5D5CE',
+                              borderRadius: 8,
+                              cursor: 'pointer',
+                              fontWeight: 700,
+                              fontSize: 12,
+                              textAlign: 'left',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 2,
+                            }}
+                          >
+                            <span style={{ fontSize: 13 }}>📍 Branch 1: Iyer Bungalow</span>
+                            <span style={{ fontSize: 10, opacity: syncConfigForm.branch_id === 'IB' ? 0.85 : 0.6 }}>ID: IB • Natham Main Road</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSyncConfigForm({
+                                ...syncConfigForm,
+                                branch_id: 'UK',
+                                branch_name: 'Umachikulam Branch (UK)',
+                              });
+                            }}
+                            style={{
+                              padding: '10px 12px',
+                              backgroundColor: syncConfigForm.branch_id === 'UK' ? '#8B1E2D' : '#F9F9F6',
+                              color: syncConfigForm.branch_id === 'UK' ? '#fff' : '#1F1F1F',
+                              border: syncConfigForm.branch_id === 'UK' ? '2px solid #8B1E2D' : '1px solid #D5D5CE',
+                              borderRadius: 8,
+                              cursor: 'pointer',
+                              fontWeight: 700,
+                              fontSize: 12,
+                              textAlign: 'left',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 2,
+                            }}
+                          >
+                            <span style={{ fontSize: 13 }}>📍 Branch 2: Umachikulam</span>
+                            <span style={{ fontSize: 10, opacity: syncConfigForm.branch_id === 'UK' ? 0.85 : 0.6 }}>ID: UK • Main Road</span>
+                          </button>
                         </div>
-                      )}
-                    </div>
+                      </div>
 
-                    <div style={{ minWidth: 220 }}>
-                      {isUpdating ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
                         <div>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: '#92400E', marginBottom: 6 }}>
-                            {updateStatusMessage || 'Downloading update...'}
-                          </div>
-                          <div style={{ width: '100%', height: 10, backgroundColor: '#FDE68A', borderRadius: 5, overflow: 'hidden' }}>
-                            <div style={{ width: `${updateProgressPercent}%`, height: '100%', backgroundColor: '#D97706', transition: 'width 0.2s' }} />
-                          </div>
-                          <div style={{ fontSize: 11, color: '#B45309', textAlign: 'right', marginTop: 4, fontWeight: 700 }}>
-                            {updateProgressPercent}% Completed
-                          </div>
+                          <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+                            Branch ID Code *
+                          </label>
+                          <input
+                            type="text"
+                            value={syncConfigForm.branch_id}
+                            onChange={e => setSyncConfigForm({ ...syncConfigForm, branch_id: e.target.value.toUpperCase() })}
+                            required
+                            placeholder="e.g. IB or UK"
+                            style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontWeight: 700 }}
+                          />
+                          <span style={{ fontSize: 11, color: '#777' }}>IB = Iyer Bungalow, UK = Umachikulam</span>
                         </div>
-                      ) : (
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+                            Terminal ID *
+                          </label>
+                          <input
+                            type="text"
+                            value={syncConfigForm.terminal_id}
+                            onChange={e => setSyncConfigForm({ ...syncConfigForm, terminal_id: e.target.value.toUpperCase() })}
+                            required
+                            placeholder="e.g. T1 or T2"
+                            style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                          />
+                          <span style={{ fontSize: 11, color: '#777' }}>Physical POS machine identifier</span>
+                        </div>
+                      </div>
+
+                      <div style={{ marginBottom: 14 }}>
+                        <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+                          Branch Store Name *
+                        </label>
+                        <input
+                          type="text"
+                          value={syncConfigForm.branch_name}
+                          onChange={e => setSyncConfigForm({ ...syncConfigForm, branch_name: e.target.value })}
+                          required
+                          placeholder="e.g. Iyer Bungalow Branch (IB)"
+                          style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                        />
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14, marginBottom: 14 }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+                            Central Cloud API Endpoint *
+                          </label>
+                          <input
+                            type="text"
+                            value={syncConfigForm.cloud_api_url}
+                            onChange={e => setSyncConfigForm({ ...syncConfigForm, cloud_api_url: e.target.value })}
+                            required
+                            placeholder="http://127.0.0.1:3000"
+                            style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+                            Counter Code
+                          </label>
+                          <input
+                            type="text"
+                            value={syncConfigForm.counter_id}
+                            onChange={e => setSyncConfigForm({ ...syncConfigForm, counter_id: e.target.value })}
+                            required
+                            placeholder="C1"
+                            style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ marginBottom: 16 }}>
+                        <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
+                          Cloud API Authorization Key *
+                        </label>
+                        <input
+                          type="password"
+                          value={syncConfigForm.cloud_api_key}
+                          onChange={e => setSyncConfigForm({ ...syncConfigForm, cloud_api_key: e.target.value })}
+                          required
+                          style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}
+                        />
+                        <span style={{ fontSize: 11, color: '#777' }}>Bearer token for authenticating batch uploads</span>
+                      </div>
+
+                      <div style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input
+                          type="checkbox"
+                          id="auto_sync_cb"
+                          checked={syncConfigForm.auto_sync_enabled}
+                          onChange={e => setSyncConfigForm({ ...syncConfigForm, auto_sync_enabled: e.target.checked })}
+                          style={{ width: 16, height: 16, cursor: 'pointer' }}
+                        />
+                        <label htmlFor="auto_sync_cb" style={{ fontSize: 13, color: '#333', fontWeight: 600, cursor: 'pointer' }}>
+                          Enable automated periodic sync in background (every 30s)
+                        </label>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                         <button
-                          onClick={handleApplyUpdate}
+                          type="submit"
+                          disabled={isSavingBranchConfig}
                           style={{
-                            width: '100%',
-                            padding: '12px 18px',
-                            backgroundColor: '#D97706',
+                            padding: '11px 22px',
+                            backgroundColor: branchConfigSavedSuccess ? '#2E7D32' : isSavingBranchConfig ? '#7A1A28' : '#8B1E2D',
                             color: '#fff',
                             border: 'none',
-                            borderRadius: 6,
-                            fontWeight: 700,
+                            borderRadius: 7,
                             fontSize: 13,
-                            cursor: 'pointer',
-                            display: 'flex',
+                            fontWeight: 700,
+                            cursor: isSavingBranchConfig ? 'wait' : 'pointer',
+                            opacity: isSavingBranchConfig ? 0.72 : 1,
+                            filter: isSavingBranchConfig ? 'blur(0.8px)' : 'none',
+                            transform: isSavingBranchConfig ? 'scale(0.98)' : 'scale(1)',
+                            transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                            display: 'inline-flex',
                             alignItems: 'center',
-                            justifyContent: 'center',
                             gap: 8,
-                            boxShadow: '0 2px 6px rgba(217,119,6,0.3)',
+                            boxShadow: isSavingBranchConfig ? 'none' : '0 2px 6px rgba(139,30,45,0.22)',
                           }}
                         >
-                          <span>⚡</span>
-                          <span>Download, Install & Relaunch</span>
+                          {isSavingBranchConfig ? (
+                            <>
+                              <span style={{ display: 'inline-block' }}>⏳</span>
+                              <span>Saving Configuration...</span>
+                            </>
+                          ) : branchConfigSavedSuccess ? (
+                            <>
+                              <span>✅</span>
+                              <span>Configuration Saved!</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>💾</span>
+                              <span>Save Branch Identity Configuration</span>
+                            </>
+                          )}
                         </button>
-                      )}
+
+                        {branchConfigSavedSuccess && (
+                          <div
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              backgroundColor: '#E8F5E9',
+                              border: '1px solid #A5D6A7',
+                              borderRadius: 6,
+                              padding: '6px 12px',
+                              fontSize: 12,
+                              color: '#1B5E20',
+                              fontWeight: 700,
+                            }}
+                          >
+                            <span>🏢 Active:</span>
+                            <span>{syncConfigForm.branch_id} — {syncConfigForm.branch_name}</span>
+                          </div>
+                        )}
+                      </div>
+                    </form>
+                  </div>
+
+                  {/* 3. Architectural Safeguards Info Panel */}
+                  <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 20 }}>
+                    <h3 style={{ fontSize: 14, margin: '0 0 12px 0', color: '#6F1623', fontWeight: 800 }}>
+                      🛡️ Malgudi Multi-Branch Isolation Safeguards
+                    </h3>
+
+                    <div style={{ fontSize: 12, color: '#444', lineHeight: 1.6 }}>
+                      <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid #EFE4D8' }}>
+                        <strong style={{ color: '#8B1E2D' }}>1. Sovereign Offline Operation:</strong><br />
+                        Each branch maintains a local SQLite database with write-ahead logging (WAL). Sales, GST invoices, and stock reductions never stall when broadband drops.
+                      </div>
+
+                      <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid #EFE4D8' }}>
+                        <strong style={{ color: '#8B1E2D' }}>2. Partitioned Series Sequences:</strong><br />
+                        Branch <strong>IB</strong> issues series <code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>IB1/2627/000001</code> while Branch <strong>MN</strong> issues <code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>MN1/2627/000001</code>. Sequence collisions are mathematically impossible.
+                      </div>
+
+                      <div style={{ marginBottom: 12, paddingBottom: 10, borderBottom: '1px solid #EFE4D8' }}>
+                        <strong style={{ color: '#8B1E2D' }}>3. Durable Outbox & Restart Safety:</strong><br />
+                        Every transaction writes to <code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>sync_outbox</code> within the same ACID commit as the sale. If the Windows PC reboots or crashes, unacknowledged records remain pending.
+                      </div>
+
+                      <div>
+                        <strong style={{ color: '#8B1E2D' }}>4. Idempotency & Tamper Protection:</strong><br />
+                        Central API computes SHA-256 payload hashes. Replaying lost ACKs is completely safe, while payload tampering triggers automatic HTTP 409 conflict rejection.
+                      </div>
                     </div>
                   </div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
-            {/* Architecture & Verification Tiles */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
-              <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 18 }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                  <span>🔐</span> Cryptographic Signing
+            {/* TAB 6: SOFTWARE UPDATES & OTA DEPLOYMENT */}
+            {ownerSubTab === 'updates' && (
+              <div>
+                {/* Header & Quick Action */}
+                <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 20, marginBottom: 24 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                    <div>
+                      <h3 style={{ fontSize: 16, margin: 0, color: '#8B1E2D', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span>🔄</span> Software Updates & Over-The-Air (OTA) Deployment
+                      </h3>
+                      <p style={{ fontSize: 12, color: '#666', margin: '4px 0 0 0' }}>
+                        Cryptographically signed desktop updates for counter terminals. Changes download securely and relaunch with zero loss of offline sales or customer tabs.
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={() => handleCheckForUpdates(false)}
+                      disabled={isCheckingUpdate || isUpdating}
+                      style={{
+                        padding: '10px 18px',
+                        backgroundColor: isCheckingUpdate ? '#7A1A28' : '#8B1E2D',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 6,
+                        fontWeight: 700,
+                        fontSize: 13,
+                        cursor: isCheckingUpdate || isUpdating ? 'wait' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        boxShadow: '0 2px 6px rgba(139,30,45,0.25)',
+                        opacity: isCheckingUpdate || isUpdating ? 0.75 : 1,
+                      }}
+                    >
+                      <span>{isCheckingUpdate ? '⏳' : '🔄'}</span>
+                      <span>{isCheckingUpdate ? 'Checking GitHub Releases...' : 'Check for Updates Now'}</span>
+                    </button>
+                  </div>
+
+                  {/* Status Alert Messages */}
+                  {updateErrorMessage && (
+                    <div style={{ marginTop: 16, backgroundColor: '#FFEBEE', border: '1px solid #FFCDD2', color: '#C62828', padding: '12px 16px', borderRadius: 6, fontSize: 13 }}>
+                      <div style={{ fontWeight: 800, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>⚠️</span> Update Server Warning
+                      </div>
+                      <div>{updateErrorMessage}</div>
+                      <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                        Cashier billing operates normally in offline mode. Software updates require an active internet connection.
+                      </div>
+                    </div>
+                  )}
+
+                  {updateStatusMessage && !updateErrorMessage && !availableUpdate && (
+                    <div style={{ marginTop: 16, backgroundColor: '#E8F5E9', border: '1px solid #C8E6C9', color: '#2E7D32', padding: '12px 16px', borderRadius: 6, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 16 }}>✓</span>
+                      <span>{updateStatusMessage}</span>
+                    </div>
+                  )}
+
+                  {/* Available Update Card */}
+                  {availableUpdate && (
+                    <div style={{ marginTop: 16, backgroundColor: '#FFFBEB', border: '1px solid #F59E0B', borderRadius: 8, padding: 18 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 20 }}>🚀</span>
+                            <h4 style={{ margin: 0, fontSize: 16, color: '#92400E', fontWeight: 800 }}>
+                              New Version Available: v{availableUpdate.version}
+                            </h4>
+                            <span style={{ backgroundColor: '#FEF3C7', color: '#B45309', padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 700, border: '1px solid #FDE68A' }}>
+                              Signed & Verified
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, color: '#78350F', marginTop: 6 }}>
+                            Current Version: <strong>v{currentAppVersion}</strong> | Published: {availableUpdate.date ? new Date(availableUpdate.date).toLocaleDateString() : 'Latest'}
+                          </div>
+                          {availableUpdate.body && (
+                            <div style={{ marginTop: 10, backgroundColor: '#FEF3C7', padding: '10px 14px', borderRadius: 6, fontSize: 12, color: '#78350F', whiteSpace: 'pre-line', border: '1px solid #FDE68A', maxHeight: 120, overflowY: 'auto' }}>
+                              <strong style={{ display: 'block', marginBottom: 4 }}>Release Notes:</strong>
+                              {availableUpdate.body}
+                            </div>
+                          )}
+                        </div>
+
+                        <div style={{ minWidth: 220 }}>
+                          {isUpdating ? (
+                            <div>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: '#92400E', marginBottom: 6 }}>
+                                {updateStatusMessage || 'Downloading update...'}
+                              </div>
+                              <div style={{ width: '100%', height: 10, backgroundColor: '#FDE68A', borderRadius: 5, overflow: 'hidden' }}>
+                                <div style={{ width: `${updateProgressPercent}%`, height: '100%', backgroundColor: '#D97706', transition: 'width 0.2s' }} />
+                              </div>
+                              <div style={{ fontSize: 11, color: '#B45309', textAlign: 'right', marginTop: 4, fontWeight: 700 }}>
+                                {updateProgressPercent}% Completed
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={handleApplyUpdate}
+                              style={{
+                                width: '100%',
+                                padding: '12px 18px',
+                                backgroundColor: '#D97706',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: 6,
+                                fontWeight: 700,
+                                fontSize: 13,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 8,
+                                boxShadow: '0 2px 6px rgba(217,119,6,0.3)',
+                              }}
+                            >
+                              <span>⚡</span>
+                              <span>Download, Install & Relaunch</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div style={{ fontSize: 12, color: '#555', lineHeight: 1.5 }}>
-                  Every Windows executable is signed with an asymmetric Ed25519 private key. The desktop POS verifies the signature against the embedded public key (<code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>2BCE14FA4599BEAE</code>) before installing.
+
+                {/* Architecture & Verification Tiles */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
+                  <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 18 }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <span>🔐</span> Cryptographic Signing
+                    </div>
+                    <div style={{ fontSize: 12, color: '#555', lineHeight: 1.5 }}>
+                      Every Windows executable is signed with an asymmetric Ed25519 private key. The desktop POS verifies the signature against the embedded public key (<code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>2BCE14FA4599BEAE</code>) before installing.
+                    </div>
+                  </div>
+
+                  <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 18 }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <span>🛡️</span> Zero Data Loss Guarantee
+                    </div>
+                    <div style={{ fontSize: 12, color: '#555', lineHeight: 1.5 }}>
+                      Updating the app replaces only the binary executable. Local SQLite database (<code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>malgudi.db</code>), outbox queue, products, and offline receipts are 100% persistent and untouched.
+                    </div>
+                  </div>
+
+                  <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 18 }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <span>🌐</span> GitHub Releases Channel
+                    </div>
+                    <div style={{ fontSize: 12, color: '#555', lineHeight: 1.5 }}>
+                      Endpoints point directly to GitHub Release assets via <code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>latest.json</code>. Terminal cashiers never need to download manual zip files or touch setup wizards.
+                    </div>
+                  </div>
+                </div>
+
+                {/* Version Information Details */}
+                <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 18 }}>
+                  <h4 style={{ margin: '0 0 12px 0', fontSize: 14, color: '#8B1E2D', fontWeight: 800 }}>
+                    Terminal Software Identity
+                  </h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, fontSize: 12 }}>
+                    <div>
+                      <span style={{ color: '#777', display: 'block' }}>Current App Version:</span>
+                      <strong style={{ color: '#8B1E2D', fontSize: 14 }}>v{currentAppVersion}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#777', display: 'block' }}>Target Platform:</span>
+                      <strong>Windows x86_64 (NSIS)</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#777', display: 'block' }}>Active Branch:</span>
+                      <strong>{syncConfig?.branch_id || 'IB'} ({syncConfig?.branch_name || 'Iyer Bungalow'})</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: '#777', display: 'block' }}>Terminal Counter:</span>
+                      <strong>{syncConfig?.terminal_id || 'T1'} / {syncConfig?.counter_id || 'C1'}</strong>
+                    </div>
+                  </div>
                 </div>
               </div>
-
-              <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 18 }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                  <span>🛡️</span> Zero Data Loss Guarantee
-                </div>
-                <div style={{ fontSize: 12, color: '#555', lineHeight: 1.5 }}>
-                  Updating the app replaces only the binary executable. Local SQLite database (<code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>malgudi.db</code>), outbox queue, products, and offline receipts are 100% persistent and untouched.
-                </div>
-              </div>
-
-              <div style={{ backgroundColor: '#fff', border: '1px solid #E2E2DC', borderRadius: 8, padding: 18 }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                  <span>🌐</span> GitHub Releases Channel
-                </div>
-                <div style={{ fontSize: 12, color: '#555', lineHeight: 1.5 }}>
-                  Endpoints point directly to GitHub Release assets via <code style={{ backgroundColor: '#eee', padding: '1px 4px', borderRadius: 3 }}>latest.json</code>. Terminal cashiers never need to download manual zip files or touch setup wizards.
-                </div>
-              </div>
-            </div>
-
-            {/* Version Information Details */}
-            <div style={{ backgroundColor: '#FFFDF9', border: '1px solid #EAD8C7', borderRadius: 8, padding: 18 }}>
-              <h4 style={{ margin: '0 0 12px 0', fontSize: 14, color: '#8B1E2D', fontWeight: 800 }}>
-                Terminal Software Identity
-              </h4>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, fontSize: 12 }}>
-                <div>
-                  <span style={{ color: '#777', display: 'block' }}>Current App Version:</span>
-                  <strong style={{ color: '#8B1E2D', fontSize: 14 }}>v{currentAppVersion}</strong>
-                </div>
-                <div>
-                  <span style={{ color: '#777', display: 'block' }}>Target Platform:</span>
-                  <strong>Windows x86_64 (NSIS)</strong>
-                </div>
-                <div>
-                  <span style={{ color: '#777', display: 'block' }}>Active Branch:</span>
-                  <strong>{syncConfig?.branch_id || 'IB'} ({syncConfig?.branch_name || 'Iyer Bungalow'})</strong>
-                </div>
-                <div>
-                  <span style={{ color: '#777', display: 'block' }}>Terminal Counter:</span>
-                  <strong>{syncConfig?.terminal_id || 'T1'} / {syncConfig?.counter_id || 'C1'}</strong>
-                </div>
-              </div>
-            </div>
+            )}
           </div>
-        )}
-      </div>
-    </div>
-  )}
+        </div>
+      )}
 
       {/* 3. Main Desktop-First Two-Column POS Billing Screen */}
       {activeTab === 'billing' && (
@@ -6323,8 +6392,8 @@ export const App: React.FC = () => {
                               {product.current_stock <= 0
                                 ? '● Out of stock'
                                 : product.pricing_unit === 'PER_KG'
-                                ? `● ${(product.current_stock / 1000000).toFixed(2)} kg in stock`
-                                : `● ${product.current_stock} ${product.stock_unit.toLowerCase()} in stock`}
+                                  ? `● ${(product.current_stock / 1000000).toFixed(2)} kg in stock`
+                                  : `● ${product.current_stock} ${product.stock_unit.toLowerCase()} in stock`}
                             </span>
                           </div>
 
@@ -6782,87 +6851,43 @@ export const App: React.FC = () => {
                 )}
               </div>
 
-              {/* Action Buttons: Fast Retail Checkout */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {/* Two Prominent Quick-Payment Buttons */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  {/* 💵 Exact Cash */}
-                  <button
-                    onClick={handleExactCashSale}
-                    disabled={cartItems.length === 0 || isFinalizing}
-                    style={{
-                      padding: '11px 8px',
-                      backgroundColor: cartItems.length === 0 || isFinalizing ? '#ccc' : '#2E7D32',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 8,
-                      fontWeight: 800,
-                      cursor: cartItems.length === 0 || isFinalizing ? 'not-allowed' : 'pointer',
-                      boxShadow: cartItems.length > 0 && !isFinalizing ? '0 4px 10px rgba(46,125,50,0.25)' : 'none',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 2,
-                    }}
-                    title="1-Tap Instant Exact Cash Checkout (Enter)"
-                  >
-                    <span style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 }}>💵 Exact Cash</span>
-                    <span style={{ fontSize: 13, fontWeight: 900 }}>₹{(totalGrossPaise / 100).toFixed(2)}</span>
-                  </button>
-
-                  {/* 📱 UPI / QR */}
-                  <button
-                    onClick={() => {
-                      setUpiSimulatedVerified(false);
-                      setIsUpiModalOpen(true);
-                    }}
-                    disabled={cartItems.length === 0 || isFinalizing}
-                    style={{
-                      padding: '11px 8px',
-                      backgroundColor: cartItems.length === 0 || isFinalizing ? '#ccc' : '#1565C0',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: 8,
-                      fontWeight: 800,
-                      cursor: cartItems.length === 0 || isFinalizing ? 'not-allowed' : 'pointer',
-                      boxShadow: cartItems.length > 0 && !isFinalizing ? '0 4px 10px rgba(21,101,192,0.25)' : 'none',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 2,
-                    }}
-                    title="Instant UPI Dynamic QR Payment"
-                  >
-                    <span style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 }}>📱 UPI / QR</span>
-                    <span style={{ fontSize: 13, fontWeight: 900 }}>₹{(totalGrossPaise / 100).toFixed(2)}</span>
-                  </button>
-                </div>
-
-                {/* Secondary Option: Split Payment / Change Calculator */}
+              {/* Primary Retail Checkout Action */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <button
                   onClick={openPaymentModal}
                   disabled={cartItems.length === 0 || isFinalizing}
                   style={{
-                    padding: '10px 12px',
-                    backgroundColor: '#fff',
-                    color: '#8B1E2D',
-                    border: '1.5px solid #8B1E2D',
-                    borderRadius: 8,
-                    fontWeight: 700,
-                    fontSize: 13,
+                    width: '100%',
+                    padding: '14px 16px',
+                    backgroundColor: cartItems.length === 0 || isFinalizing ? '#E0E0DC' : '#8B1E2D',
+                    color: cartItems.length === 0 || isFinalizing ? '#888' : '#FFFFFF',
+                    border: 'none',
+                    borderRadius: 10,
+                    fontWeight: 800,
+                    fontSize: 16,
                     cursor: cartItems.length === 0 || isFinalizing ? 'not-allowed' : 'pointer',
+                    boxShadow: cartItems.length > 0 && !isFinalizing ? '0 4px 14px rgba(139,30,45,0.28)' : 'none',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 6,
+                    justifyContent: 'space-between',
+                    transition: 'all 0.15s ease',
                   }}
-                  title="Proceed to Payment & Split Tender or calculate change for custom cash note (F4)"
+                  title="Proceed to Payment (Cash, UPI, Split & Change Calculator) - Press F4 or Enter"
                 >
-                  <span>⚡ Proceed to Payment / Split</span>
-                  <span>➜</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 18 }}>💳</span>
+                    <span>Proceed to Payment</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 17, fontWeight: 900 }}>
+                      ₹{(totalGrossPaise / 100).toFixed(2)}
+                    </span>
+                    <span style={{ fontSize: 14 }}>➜</span>
+                  </div>
                 </button>
+                <div style={{ textAlign: 'center', fontSize: 11, color: '#777', marginTop: 2 }}>
+                  Cash • UPI • Split Tender • Change Calculator (Press <strong>F4</strong>)
+                </div>
               </div>
             </div>
           </div>
@@ -6967,21 +6992,21 @@ export const App: React.FC = () => {
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
                           {(weightModalUnit === 'kg'
                             ? [
-                                { label: '0.1 kg (100g)', g: 100, kg: '0.1' },
-                                { label: '0.25 kg (250g)', g: 250, kg: '0.25' },
-                                { label: '0.5 kg (500g)', g: 500, kg: '0.5' },
-                                { label: '0.75 kg (750g)', g: 750, kg: '0.75' },
-                                { label: '1.0 kg', g: 1000, kg: '1' },
-                                { label: '2.0 kg', g: 2000, kg: '2' },
-                              ]
+                              { label: '0.1 kg (100g)', g: 100, kg: '0.1' },
+                              { label: '0.25 kg (250g)', g: 250, kg: '0.25' },
+                              { label: '0.5 kg (500g)', g: 500, kg: '0.5' },
+                              { label: '0.75 kg (750g)', g: 750, kg: '0.75' },
+                              { label: '1.0 kg', g: 1000, kg: '1' },
+                              { label: '2.0 kg', g: 2000, kg: '2' },
+                            ]
                             : [
-                                { label: '100 g', g: 100, kg: '0.1' },
-                                { label: '250 g', g: 250, kg: '0.25' },
-                                { label: '375 g', g: 375, kg: '0.375' },
-                                { label: '500 g', g: 500, kg: '0.5' },
-                                { label: '750 g', g: 750, kg: '0.75' },
-                                { label: '1000 g (1kg)', g: 1000, kg: '1' },
-                              ]
+                              { label: '100 g', g: 100, kg: '0.1' },
+                              { label: '250 g', g: 250, kg: '0.25' },
+                              { label: '375 g', g: 375, kg: '0.375' },
+                              { label: '500 g', g: 500, kg: '0.5' },
+                              { label: '750 g', g: 750, kg: '0.75' },
+                              { label: '1000 g (1kg)', g: 1000, kg: '1' },
+                            ]
                           ).map(p => (
                             <button
                               key={p.label}
@@ -7347,8 +7372,8 @@ export const App: React.FC = () => {
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, borderBottom: '1px solid #eee', paddingBottom: 10 }}>
               <div>
-                <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 18 }}>
-                  ⚡ Split Payment & Change Calculator
+                <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 18, fontWeight: 800 }}>
+                  Payment & Settlement
                 </h3>
                 <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
                   Terminal {currentSession.branch_id}/{currentSession.terminal_id} • Counter {currentSession.counter_id}
@@ -7369,7 +7394,7 @@ export const App: React.FC = () => {
                 border: '1px solid #EAD8C7',
                 borderRadius: 8,
                 padding: '12px 16px',
-                marginBottom: 16,
+                marginBottom: 14,
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
@@ -7389,128 +7414,338 @@ export const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Cash Received Input & Automatic Change Calculation */}
-            <div style={{ backgroundColor: '#FDFDFD', border: '1px solid #E5E5E0', borderRadius: 8, padding: 14, marginBottom: 14 }}>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', marginBottom: 6, color: '#1F1F1F' }}>
-                💵 Cash Received from Customer (₹)
-              </label>
-              <input
-                type="number"
-                step="any"
-                min="0"
-                value={cashTenderedRupees}
-                onChange={e => setCashTenderedRupees(Number(e.target.value))}
-                style={{ width: '100%', padding: '10px 12px', fontSize: 18, fontWeight: 'bold', borderRadius: 6, border: '1.5px solid #8B1E2D', boxSizing: 'border-box', marginBottom: 8 }}
-              />
+            {/* Payment Mode Selector */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  const total = totalGrossPaise / 100;
+                  setPaymentMode('CASH');
+                  setCashTenderedRupees(total);
+                  setSplitCashRupees(total);
+                  setSplitUpiRupees(0);
+                }}
+                style={{
+                  padding: '10px 8px',
+                  backgroundColor: paymentMode === 'CASH' ? '#E8F5E9' : '#FAFAFA',
+                  border: paymentMode === 'CASH' ? '2px solid #2E7D32' : '1px solid #D0D0D0',
+                  color: paymentMode === 'CASH' ? '#1B5E20' : '#444',
+                  borderRadius: 8,
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <span>100% Cash</span>
+              </button>
 
-              {/* Quick Cash Note Presets */}
-              <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
-                {[
-                  { label: `Exact ₹${(totalGrossPaise / 100).toFixed(2)}`, val: totalGrossPaise / 100 },
-                  { label: '₹100', val: 100 },
-                  { label: '₹200', val: 200 },
-                  { label: '₹500', val: 500 },
-                  { label: '₹2000', val: 2000 },
-                ].map(p => (
-                  <button
-                    key={p.label}
-                    type="button"
-                    onClick={() => setCashTenderedRupees(p.val)}
-                    style={{ padding: '4px 10px', fontSize: 12, fontWeight: 600, backgroundColor: cashTenderedRupees === p.val ? '#FFF9F0' : '#f0f0f0', border: cashTenderedRupees === p.val ? '1.5px solid #8B1E2D' : '1px solid #ccc', color: cashTenderedRupees === p.val ? '#8B1E2D' : '#333', borderRadius: 4, cursor: 'pointer' }}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const total = totalGrossPaise / 100;
+                  setPaymentMode('UPI');
+                  setSplitUpiRupees(total);
+                  setSplitCashRupees(0);
+                  setCashTenderedRupees(0);
+                }}
+                style={{
+                  padding: '10px 8px',
+                  backgroundColor: paymentMode === 'UPI' ? '#E3F2FD' : '#FAFAFA',
+                  border: paymentMode === 'UPI' ? '2px solid #1565C0' : '1px solid #D0D0D0',
+                  color: paymentMode === 'UPI' ? '#0D47A1' : '#444',
+                  borderRadius: 8,
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <span>100% UPI</span>
+              </button>
 
-              {/* Automatic Change & Drawer Status */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, backgroundColor: '#FFF9F0', border: '1px solid #EAD8C7', padding: '10px 12px', borderRadius: 6 }}>
-                <span>Change to Return: <strong style={{ color: changeReturnedPaise > 0 ? '#2E7D32' : '#666', fontSize: 14 }}>₹{(changeReturnedPaise / 100).toFixed(2)}</strong></span>
-                <span>Physical Cash In Drawer: <strong style={{ color: '#8B1E2D' }}>₹{derivedCashAllocatedRupees.toFixed(2)}</strong></span>
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const total = totalGrossPaise / 100;
+                  const half = Math.round((total / 2) * 100) / 100;
+                  setPaymentMode('SPLIT');
+                  setSplitCashRupees(half);
+                  setSplitUpiRupees(Math.round((total - half) * 100) / 100);
+                  setCashTenderedRupees(half);
+                }}
+                style={{
+                  padding: '10px 8px',
+                  backgroundColor: paymentMode === 'SPLIT' ? '#FFF3E0' : '#FAFAFA',
+                  border: paymentMode === 'SPLIT' ? '2px solid #E65100' : '1px solid #D0D0D0',
+                  color: paymentMode === 'SPLIT' ? '#BF360C' : '#444',
+                  borderRadius: 8,
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <span>Split Tender</span>
+              </button>
             </div>
 
-            {/* Optional UPI Split Allocation */}
-            <div style={{ backgroundColor: '#FDFDFD', border: '1px solid #E5E5E0', borderRadius: 8, padding: 14, marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <span style={{ fontWeight: 'bold', fontSize: 12, color: '#333' }}>
-                  📱 UPI Amount (Optional for Split Payment)
-                </span>
-                <span style={{ fontSize: 11, color: '#666', backgroundColor: '#f0f0f0', padding: '2px 6px', borderRadius: 4 }}>
-                  Policy: {settlementPolicy === 'STRICT_GATEWAY_ONLY' ? 'Gateway Webhook' : 'Soundbox Audio'}
-                </span>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
+            {/* Mode 1: 100% Cash */}
+            {paymentMode === 'CASH' && (
+              <div style={{ backgroundColor: '#FDFDFD', border: '1px solid #E5E5E0', borderRadius: 8, padding: 14, marginBottom: 14 }}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', marginBottom: 6, color: '#1F1F1F' }}>
+                  Cash Received from Customer (INR)
+                </label>
                 <input
                   type="number"
                   step="any"
                   min="0"
-                  placeholder="0"
-                  value={upiAllocatedRupees}
-                  onChange={e => setUpiAllocatedRupees(Number(e.target.value))}
-                  style={{ flex: 1, padding: '8px 10px', fontSize: 15, fontWeight: 'bold', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box' }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setUpiAllocatedRupees(0)}
-                  style={{ padding: '8px 12px', fontSize: 12, backgroundColor: '#f5f5f5', border: '1px solid #ccc', borderRadius: 6, cursor: 'pointer' }}
-                >
-                  Clear UPI
-                </button>
-              </div>
-            </div>
-
-            {/* Split Tender Balance Status */}
-            {(() => {
-              const allocatedTotalPaise = derivedCashAllocatedPaise + Math.round(upiAllocatedRupees * 100);
-              const diffPaise = totalGrossPaise - allocatedTotalPaise;
-              const isBalanced = diffPaise === 0;
-
-              return (
-                <div
-                  style={{
-                    padding: 8,
-                    borderRadius: 6,
-                    marginBottom: 16,
-                    fontSize: 12,
-                    fontWeight: 'bold',
-                    backgroundColor: isBalanced ? '#E8F5E9' : '#FFEBEE',
-                    color: isBalanced ? '#2E7D32' : '#C62828',
-                    display: 'flex',
-                    justifyContent: 'space-between',
+                  value={cashTenderedRupees}
+                  onChange={e => setCashTenderedRupees(Number(e.target.value))}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && canCompleteSale) {
+                      e.preventDefault();
+                      handleFinalizeSale();
+                    }
                   }}
-                >
-                  <span>{isBalanced ? '✓ Tender Fully Reconciled' : diffPaise > 0 ? `⚠ Remaining to Allocate: ₹${(diffPaise / 100).toFixed(2)}` : `⚠ Over-allocated by ₹${(Math.abs(diffPaise) / 100).toFixed(2)}`}</span>
-                  <span>Total Allocated: ₹{(allocatedTotalPaise / 100).toFixed(2)}</span>
+                  style={{ width: '100%', padding: '10px 12px', fontSize: 18, fontWeight: 'bold', borderRadius: 6, border: '1.5px solid #8B1E2D', boxSizing: 'border-box', marginBottom: 8 }}
+                  autoFocus
+                />
+
+                {/* Quick Cash Note Presets */}
+                <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+                  {[
+                    { label: `Exact ₹${(totalGrossPaise / 100).toFixed(2)}`, val: totalGrossPaise / 100 },
+                    { label: '₹100', val: 100 },
+                    { label: '₹200', val: 200 },
+                    { label: '₹500', val: 500 },
+                    { label: '₹2000', val: 2000 },
+                  ].map(p => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => setCashTenderedRupees(p.val)}
+                      style={{ padding: '4px 10px', fontSize: 12, fontWeight: 600, backgroundColor: cashTenderedRupees === p.val ? '#FFF9F0' : '#f0f0f0', border: cashTenderedRupees === p.val ? '1.5px solid #8B1E2D' : '1px solid #ccc', color: cashTenderedRupees === p.val ? '#8B1E2D' : '#333', borderRadius: 4, cursor: 'pointer' }}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
                 </div>
-              );
-            })()}
+
+                {/* Automatic Change & Drawer Status */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, backgroundColor: '#FFF9F0', border: '1px solid #EAD8C7', padding: '10px 12px', borderRadius: 6 }}>
+                  <span>
+                    Change to Return:{' '}
+                    <strong style={{ color: cashTenderedRupees >= (totalGrossPaise / 100) ? '#2E7D32' : '#C62828', fontSize: 14 }}>
+                      ₹{Math.max(0, cashTenderedRupees - (totalGrossPaise / 100)).toFixed(2)}
+                    </strong>
+                  </span>
+                  <span>
+                    Physical Cash In Drawer:{' '}
+                    <strong style={{ color: '#8B1E2D' }}>
+                      ₹{(totalGrossPaise / 100).toFixed(2)}
+                    </strong>
+                  </span>
+                </div>
+                {cashTenderedRupees < (totalGrossPaise / 100) && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: '#C62828', fontWeight: 600 }}>
+                    Insufficient cash received: Short by ₹{((totalGrossPaise / 100) - cashTenderedRupees).toFixed(2)}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Mode 2: 100% UPI (Clean, no redundant QR or Clear buttons) */}
+            {paymentMode === 'UPI' && (
+              <div style={{ backgroundColor: '#F0F7FF', border: '1.5px solid #BBDEFB', borderRadius: 8, padding: 16, marginBottom: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: '#0D47A1' }}>
+                    UPI / Digital Settlement
+                  </span>
+                  <span style={{ fontSize: 11, color: '#555', backgroundColor: '#fff', border: '1px solid #BBDEFB', padding: '2px 8px', borderRadius: 4 }}>
+                    Policy: {settlementPolicy === 'STRICT_GATEWAY_ONLY' ? 'Gateway Webhook' : 'Soundbox Audio Confirmed'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', border: '1px solid #D0E3F7', padding: '14px 16px', borderRadius: 6 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: '#666', textTransform: 'uppercase', fontWeight: 600 }}>
+                      Bill Amount to Collect
+                    </div>
+                    <div style={{ fontSize: 26, fontWeight: 900, color: '#1565C0', marginTop: 2 }}>
+                      ₹{(totalGrossPaise / 100).toFixed(2)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', fontSize: 12, color: '#2E7D32', fontWeight: 600 }}>
+                    100% UPI Allocation Reconciled
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Mode 3: Split Tender (Cash + UPI with exact balancing & change logic) */}
+            {paymentMode === 'SPLIT' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
+                {/* Dual allocation grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  {/* Cash Portion Allocation */}
+                  <div style={{ backgroundColor: '#FDFBF7', border: '1.5px solid #EAD8C7', borderRadius: 8, padding: 12 }}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#8B1E2D', marginBottom: 4 }}>
+                      Cash Portion (INR)
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={splitCashRupees}
+                      onChange={e => {
+                        const val = Math.max(0, Number(e.target.value));
+                        setSplitCashRupees(val);
+                        const remainder = Math.max(0, Math.round(((totalGrossPaise / 100) - val) * 100) / 100);
+                        setSplitUpiRupees(remainder);
+                        setCashTenderedRupees(val);
+                      }}
+                      style={{ width: '100%', padding: '8px 10px', fontSize: 16, fontWeight: 'bold', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  {/* UPI Portion Allocation */}
+                  <div style={{ backgroundColor: '#F0F7FF', border: '1.5px solid #BBDEFB', borderRadius: 8, padding: 12 }}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#1565C0', marginBottom: 4 }}>
+                      UPI Portion (INR)
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={splitUpiRupees}
+                      onChange={e => {
+                        const val = Math.max(0, Number(e.target.value));
+                        setSplitUpiRupees(val);
+                        const remainder = Math.max(0, Math.round(((totalGrossPaise / 100) - val) * 100) / 100);
+                        setSplitCashRupees(remainder);
+                        setCashTenderedRupees(remainder);
+                      }}
+                      style={{ width: '100%', padding: '8px 10px', fontSize: 16, fontWeight: 'bold', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Cash Note Received from Customer for the Cash Portion */}
+                {splitCashRupees > 0 && (
+                  <div style={{ backgroundColor: '#FDFDFD', border: '1px solid #E5E5E0', borderRadius: 8, padding: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
+                        Physical Cash Received (for ₹{splitCashRupees.toFixed(2)} portion)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setCashTenderedRupees(splitCashRupees)}
+                        style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid #bbb', backgroundColor: '#f9f9f9', cursor: 'pointer' }}
+                      >
+                        Exact ₹{splitCashRupees.toFixed(2)}
+                      </button>
+                    </div>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={cashTenderedRupees}
+                      onChange={e => setCashTenderedRupees(Number(e.target.value))}
+                      style={{ width: '100%', padding: '8px 10px', fontSize: 16, fontWeight: 'bold', borderRadius: 6, border: '1px solid #8B1E2D', boxSizing: 'border-box', marginBottom: 6 }}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, backgroundColor: '#FFF9F0', border: '1px solid #EAD8C7', padding: '6px 10px', borderRadius: 4 }}>
+                      <span>
+                        Change to Return:{' '}
+                        <strong style={{ color: cashTenderedRupees >= splitCashRupees ? '#2E7D32' : '#C62828' }}>
+                          ₹{Math.max(0, cashTenderedRupees - splitCashRupees).toFixed(2)}
+                        </strong>
+                      </span>
+                      <span>
+                        Cash in Drawer:{' '}
+                        <strong style={{ color: '#8B1E2D' }}>
+                          ₹{splitCashRupees.toFixed(2)}
+                        </strong>
+                      </span>
+                    </div>
+                    {cashTenderedRupees < splitCashRupees && (
+                      <div style={{ marginTop: 6, fontSize: 11, color: '#C62828', fontWeight: 600 }}>
+                        Insufficient cash received for the cash portion (Short by ₹{(splitCashRupees - cashTenderedRupees).toFixed(2)})
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Tender Balance Validation Banner */}
+                {(() => {
+                  const totalPaise = totalGrossPaise;
+                  const allocatedPaise = Math.round(splitCashRupees * 100) + Math.round(splitUpiRupees * 100);
+                  const diffPaise = totalPaise - allocatedPaise;
+                  const isBalanced = diffPaise === 0;
+
+                  return (
+                    <div
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: 6,
+                        fontSize: 12,
+                        fontWeight: 'bold',
+                        backgroundColor: isBalanced ? '#E8F5E9' : '#FFEBEE',
+                        color: isBalanced ? '#2E7D32' : '#C62828',
+                        border: isBalanced ? '1px solid #C8E6C9' : '1px solid #FFCDD2',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <span>
+                        {isBalanced
+                          ? 'Tender Fully Reconciled'
+                          : diffPaise > 0
+                            ? `Tender Mismatch: Remaining to allocate ₹${(diffPaise / 100).toFixed(2)}`
+                            : `Tender Mismatch: Over-allocated by ₹${(Math.abs(diffPaise) / 100).toFixed(2)}`}
+                      </span>
+                      <span>
+                        Total: ₹{(allocatedPaise / 100).toFixed(2)} / ₹{(totalPaise / 100).toFixed(2)}
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
 
             {/* Modal Actions */}
             <div style={{ display: 'flex', gap: 10 }}>
               <button
                 type="button"
                 onClick={() => handleFinalizeSale()}
-                disabled={isFinalizing || cartItems.length === 0}
+                disabled={!canCompleteSale}
                 style={{
                   flex: 1,
                   padding: '14px',
-                  backgroundColor: isFinalizing ? '#999' : '#8B1E2D',
+                  backgroundColor: !canCompleteSale ? '#A0A0A0' : '#8B1E2D',
                   color: '#fff',
                   border: 'none',
                   borderRadius: 6,
                   fontWeight: 'bold',
                   fontSize: 16,
-                  cursor: isFinalizing ? 'not-allowed' : 'pointer',
-                  boxShadow: '0 4px 12px rgba(139,30,45,0.2)',
+                  cursor: !canCompleteSale ? 'not-allowed' : 'pointer',
+                  boxShadow: canCompleteSale ? '0 4px 12px rgba(139,30,45,0.2)' : 'none',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: 8,
+                  transition: 'background-color 0.15s ease',
                 }}
               >
-                <span>{isFinalizing ? '⏳' : '⚡'}</span>
-                <span>{isFinalizing ? 'Committing Atomic SQLite Transaction...' : 'Finalize Sale & Commit (Ctrl+Enter)'}</span>
+                <span>{isFinalizing ? 'Processing...' : 'Complete Sale'}</span>
               </button>
               <button
                 type="button"
@@ -7540,7 +7775,7 @@ export const App: React.FC = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: 18, color: '#1565C0', fontWeight: 800 }}>
-                  📱 UPI / QR Quick Payment
+                  UPI / QR Quick Payment
                 </h3>
                 <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
                   Terminal {currentSession.branch_id}/{currentSession.terminal_id} • Counter {currentSession.counter_id}
@@ -7567,14 +7802,14 @@ export const App: React.FC = () => {
 
             {/* Dynamic QR Display Graphic */}
             <div style={{ textAlign: 'center', padding: '16px 0', border: '1px dashed #B0BEC5', borderRadius: 8, backgroundColor: '#FAFAFA', marginBottom: 16 }}>
-              <div style={{ fontSize: 44, marginBottom: 4 }}>📲</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: '#1565C0', marginBottom: 4, letterSpacing: 1 }}>UPI QR Standee</div>
               <div style={{ fontWeight: 'bold', fontSize: 14, color: '#37474F' }}>Scan with GPay / PhonePe / Paytm</div>
               <div style={{ fontSize: 12, color: '#78909C', marginTop: 2 }}>UPI ID: malgudi.mithais@icici</div>
             </div>
 
             {/* Simple Counter Soundbox & UPI Confirmation */}
             <div style={{ padding: '12px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13, backgroundColor: '#E8F5E9', border: '1px solid #C8E6C9', color: '#2E7D32', textAlign: 'center' }}>
-              <strong>🔊 Shop QR & Counter Soundbox Mode</strong>
+              <strong>Shop QR & Counter Soundbox Mode</strong>
               <div style={{ fontSize: 12, marginTop: 4, color: '#388E3C' }}>
                 Customer scans the counter QR standee. Once payment is confirmed on your soundbox or phone, click below to finalize.
               </div>
@@ -7598,7 +7833,7 @@ export const App: React.FC = () => {
                   boxShadow: '0 4px 10px rgba(21,101,192,0.25)',
                 }}
               >
-                {isFinalizing ? 'Finalizing Bill...' : `✓ Acknowledge UPI & Finalize Bill (₹${(totalGrossPaise / 100).toFixed(2)})`}
+                {isFinalizing ? 'Finalizing Bill...' : `Confirm UPI & Finalize Bill (₹${(totalGrossPaise / 100).toFixed(2)})`}
               </button>
 
               <button
@@ -7901,8 +8136,8 @@ export const App: React.FC = () => {
                     {customerForm.phone.length === 0
                       ? 'Optional • 10 Digits'
                       : customerForm.phone.length === 10 && !customerPhoneError
-                      ? '✓ Valid 10-Digit Mobile'
-                      : `${customerForm.phone.length}/10 digits`}
+                        ? '✓ Valid 10-Digit Mobile'
+                        : `${customerForm.phone.length}/10 digits`}
                   </span>
                 </div>
                 <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
@@ -7946,8 +8181,8 @@ export const App: React.FC = () => {
                       border: customerPhoneError
                         ? '2px solid #D32F2F'
                         : customerForm.phone.length === 10
-                        ? '2px solid #2E7D32'
-                        : '1px solid #CCC',
+                          ? '2px solid #2E7D32'
+                          : '1px solid #CCC',
                       fontSize: 15,
                       fontWeight: 700,
                       letterSpacing: 1,
@@ -8164,7 +8399,7 @@ export const App: React.FC = () => {
                       {p.payment_method === 'CASH' ? (
                         <div>
                           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span>💵 Cash Tendered:</span>
+                            <span>Cash Tendered:</span>
                             <span>₹{(p.tendered_paise / 100).toFixed(2)}</span>
                           </div>
                           {p.change_returned_paise > 0 && (
@@ -8176,7 +8411,7 @@ export const App: React.FC = () => {
                         </div>
                       ) : (
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>📱 UPI / Soundbox:</span>
+                          <span>UPI / Soundbox:</span>
                           <span>₹{(p.net_amount_paise / 100).toFixed(2)}</span>
                         </div>
                       )}
@@ -8204,7 +8439,7 @@ export const App: React.FC = () => {
                 onClick={() => window.print()}
                 style={{ flex: 1, padding: '10px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
               >
-                🖨️ Send to Printer
+                Print Receipt
               </button>
               <button
                 type="button"
@@ -8375,6 +8610,44 @@ export const App: React.FC = () => {
                 ✕
               </button>
             </div>
+
+            {openingFloatError && (
+              <div
+                style={{
+                  backgroundColor: '#FDECEA',
+                  border: '1px solid #F5C6CB',
+                  color: '#721C24',
+                  borderRadius: 8,
+                  padding: '10px 14px',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  marginBottom: 14,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 10,
+                }}
+              >
+                <span>{openingFloatError}</span>
+                <button
+                  type="button"
+                  onClick={() => setOpeningFloatError(null)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#721C24',
+                    cursor: 'pointer',
+                    fontSize: 16,
+                    fontWeight: 'bold',
+                    padding: 0,
+                    lineHeight: 1,
+                  }}
+                  title="Dismiss"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             <form onSubmit={handleConfirmOpeningFloat}>
               {/* Role-based Identity Verification */}
@@ -8560,6 +8833,44 @@ export const App: React.FC = () => {
               </button>
             </div>
 
+            {dayCloseError && (
+              <div
+                style={{
+                  backgroundColor: '#FDECEA',
+                  border: '1px solid #F5C6CB',
+                  color: '#721C24',
+                  borderRadius: 8,
+                  padding: '10px 14px',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  marginBottom: 14,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 10,
+                }}
+              >
+                <span>{dayCloseError}</span>
+                <button
+                  type="button"
+                  onClick={() => setDayCloseError(null)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#721C24',
+                    cursor: 'pointer',
+                    fontSize: 16,
+                    fontWeight: 'bold',
+                    padding: 0,
+                    lineHeight: 1,
+                  }}
+                  title="Dismiss"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
             <form onSubmit={handleExecuteDayClose}>
               {/* Auto-Calculated Day Summary Card */}
               <div style={{ backgroundColor: '#FDFBF7', border: '1px solid #EAD8C7', borderRadius: 8, padding: 16, marginBottom: 16 }}>
@@ -8731,7 +9042,7 @@ export const App: React.FC = () => {
       {activeZReportModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1250, padding: 16 }}>
           <div style={{ backgroundColor: '#fff', borderRadius: 10, maxWidth: 440, width: '100%', maxHeight: '92vh', overflowY: 'auto', padding: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.3)', border: '2px solid #8B1E2D' }}>
-            
+
             {/* Top Close Bar */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: 10, marginBottom: 14 }}>
               <span style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D' }}>
@@ -8792,8 +9103,8 @@ export const App: React.FC = () => {
                     {activeZReportModal.variance_paise === 0
                       ? '₹0.00 (EXACT)'
                       : activeZReportModal.variance_paise > 0
-                      ? `+₹${(activeZReportModal.variance_paise / 100).toFixed(2)} (OVER)`
-                      : `-₹${(Math.abs(activeZReportModal.variance_paise) / 100).toFixed(2)} (SHORT)`}
+                        ? `+₹${(activeZReportModal.variance_paise / 100).toFixed(2)} (OVER)`
+                        : `-₹${(Math.abs(activeZReportModal.variance_paise) / 100).toFixed(2)} (SHORT)`}
                   </span>
                 </div>
                 {activeZReportModal.variance_notes && (
@@ -8876,7 +9187,7 @@ export const App: React.FC = () => {
               </div>
 
               <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
-              
+
               <div style={{ textAlign: 'center', fontSize: 11, marginTop: 8 }}>
                 <div>Closed by: <strong>{activeZReportModal.closed_by_user}</strong></div>
                 <div>Offline Sync Outbox: {activeZReportModal.pending_sync_count} events pending</div>
@@ -8912,7 +9223,7 @@ export const App: React.FC = () => {
                   gap: 6,
                 }}
               >
-                🖨️ Print 80mm Z-Slip
+                Print 80mm Z-Slip
               </button>
             </div>
           </div>
