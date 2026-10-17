@@ -8355,23 +8355,23 @@ export const App: React.FC = () => {
 
           return (
             <div id="receipt-print-area">
-              <div style={{ textAlign: 'center', borderBottom: '1px dashed #000', paddingBottom: 8, marginBottom: 8 }}>
-                <div style={{ fontWeight: 'bold', fontSize: 16, letterSpacing: 0.5 }}>MALGUDI MITHAIS</div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#333', marginTop: 2 }}>
+              <div style={{ textAlign: 'center', borderBottom: '1.5px dashed #000000', paddingBottom: 8, marginBottom: 8 }}>
+                <div style={{ fontWeight: 900, fontSize: 16, letterSpacing: 0.5, color: '#000000' }}>MALGUDI MITHAIS</div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: '#000000', marginTop: 2 }}>
                   {branchTitle}
                 </div>
-                <div style={{ fontSize: 11, color: '#555' }}>{branchAddress}</div>
-                <div style={{ fontSize: 11, color: '#555' }}>GSTIN: 33NNYPS3460L1ZV</div>
-                <div style={{ fontSize: 11, color: '#555' }}>FSSAI: 12418012002674</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#000000' }}>{branchAddress}</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>GSTIN: 33NNYPS3460L1ZV</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>FSSAI: 12418012002674</div>
               </div>
 
               {receipt.sale_status === 'VOIDED' && (
-                <div style={{ backgroundColor: '#FFEBEE', color: '#B71C1C', fontWeight: 900, textAlign: 'center', padding: '6px 0', margin: '6px 0', border: '1px dashed #B71C1C', fontSize: 13, letterSpacing: 1 }}>
+                <div style={{ color: '#000000', fontWeight: 900, textAlign: 'center', padding: '6px 0', margin: '6px 0', border: '2px solid #000000', fontSize: 13, letterSpacing: 1 }}>
                   *** VOIDED / REFUNDED ***
                 </div>
               )}
 
-              <div style={{ marginBottom: 8, fontSize: 11, lineHeight: 1.5 }}>
+              <div style={{ marginBottom: 8, fontSize: 11, fontWeight: 600, color: '#000000', lineHeight: 1.5 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span><strong>Invoice:</strong> {receipt.invoice_number}</span>
                   <span><strong>Status:</strong> {receipt.payment_status}</span>
@@ -8382,7 +8382,7 @@ export const App: React.FC = () => {
                 </div>
                 <div><strong>Date:</strong> {formatDateTime(receipt.created_at)}</div>
                 {(receipt.customer_name || receipt.customer_phone || receipt.customer_location) && (
-                  <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px dotted #ccc', fontSize: 11, lineHeight: 1.4 }}>
+                  <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px dashed #000000', fontSize: 11, fontWeight: 600, color: '#000000', lineHeight: 1.4 }}>
                     {receipt.customer_name && <div><strong>Customer:</strong> {receipt.customer_name}</div>}
                     {receipt.customer_phone && <div><strong>Phone:</strong> {receipt.customer_phone}</div>}
                     {receipt.customer_location && <div><strong>Location:</strong> {receipt.customer_location}</div>}
@@ -8391,38 +8391,38 @@ export const App: React.FC = () => {
               </div>
 
               {/* Itemized Table */}
-              <div style={{ borderTop: '1px dashed #000', borderBottom: '1px dashed #000', padding: '6px 0', marginBottom: 8 }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+              <div style={{ borderTop: '1.5px dashed #000000', borderBottom: '1.5px dashed #000000', padding: '6px 0', marginBottom: 8 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, color: '#000000' }}>
                   <thead>
-                    <tr style={{ borderBottom: '1px dashed #aaa', textAlign: 'left' }}>
-                      <th style={{ paddingBottom: 4, width: '45%' }}>Item</th>
-                      <th style={{ paddingBottom: 4, textAlign: 'center', width: '18%' }}>Qty</th>
-                      <th style={{ paddingBottom: 4, textAlign: 'right', width: '17%' }}>Rate</th>
-                      <th style={{ paddingBottom: 4, textAlign: 'right', width: '20%' }}>Amount</th>
+                    <tr style={{ borderBottom: '1.5px dashed #000000', textAlign: 'left' }}>
+                      <th style={{ paddingBottom: 4, width: '45%', fontWeight: 800, color: '#000000' }}>Item</th>
+                      <th style={{ paddingBottom: 4, textAlign: 'center', width: '18%', fontWeight: 800, color: '#000000' }}>Qty</th>
+                      <th style={{ paddingBottom: 4, textAlign: 'right', width: '17%', fontWeight: 800, color: '#000000' }}>Rate</th>
+                      <th style={{ paddingBottom: 4, textAlign: 'right', width: '20%', fontWeight: 800, color: '#000000' }}>Amount</th>
                     </tr>
                   </thead>
                   <tbody>
                     {receipt.items && receipt.items.length > 0 ? (
                       receipt.items.map((it, idx) => (
-                        <tr key={idx} style={{ verticalAlign: 'top', borderBottom: '1px dotted #eee' }}>
-                          <td style={{ padding: '4px 0' }}>
-                            <div style={{ fontWeight: 600 }}>{it.product_name}</div>
+                        <tr key={idx} style={{ verticalAlign: 'top', borderBottom: '1px dotted #000000' }}>
+                          <td style={{ padding: '4px 0', color: '#000000' }}>
+                            <div style={{ fontWeight: 800, fontSize: 12, color: '#000000' }}>{it.product_name}</div>
                             {it.tamil_name && it.tamil_name.trim() !== '' && it.tamil_name.trim().toLowerCase() !== it.product_name.trim().toLowerCase() && (
-                              <div style={{ fontSize: 10, color: '#666' }}>{it.tamil_name}</div>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: '#000000', marginTop: 1 }}>{it.tamil_name}</div>
                             )}
                           </td>
-                          <td style={{ padding: '4px 0', textAlign: 'center', whiteSpace: 'nowrap' }}>{it.quantity_formatted}</td>
-                          <td style={{ padding: '4px 0', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <td style={{ padding: '4px 0', textAlign: 'center', fontWeight: 700, whiteSpace: 'nowrap', color: '#000000' }}>{it.quantity_formatted}</td>
+                          <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', color: '#000000' }}>
                             ₹{(it.unit_price_paise / 100).toFixed(0)}
                           </td>
-                          <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', color: '#000000' }}>
                             ₹{(it.gross_paise / 100).toFixed(2)}
                           </td>
                         </tr>
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={4} style={{ textAlign: 'center', padding: '8px 0', color: '#666' }}>
+                        <td colSpan={4} style={{ textAlign: 'center', padding: '8px 0', fontWeight: 700, color: '#000000' }}>
                           Items Billed: {receipt.items_count || 1}
                         </td>
                       </tr>
@@ -8432,50 +8432,50 @@ export const App: React.FC = () => {
               </div>
 
               {/* Tax & Net Totals */}
-              <div style={{ borderBottom: '1px dashed #000', paddingBottom: 6, marginBottom: 8, fontSize: 11 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
+              <div style={{ borderBottom: '1.5px dashed #000000', paddingBottom: 6, marginBottom: 8, fontSize: 11, color: '#000000' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
                   <span>Taxable Subtotal:</span>
-                  <span>₹{(receipt.subtotal_taxable_paise / 100).toFixed(2)}</span>
+                  <span style={{ fontWeight: 700 }}>₹{(receipt.subtotal_taxable_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
                   <span>CGST (2.5%):</span>
-                  <span>₹{(receipt.total_cgst_paise / 100).toFixed(2)}</span>
+                  <span style={{ fontWeight: 700 }}>₹{(receipt.total_cgst_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
                   <span>SGST (2.5%):</span>
-                  <span>₹{(receipt.total_sgst_paise / 100).toFixed(2)}</span>
+                  <span style={{ fontWeight: 700 }}>₹{(receipt.total_sgst_paise / 100).toFixed(2)}</span>
                 </div>
                 {receipt.round_off_paise !== 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
                     <span>Round-off:</span>
-                    <span>₹{(receipt.round_off_paise / 100).toFixed(2)}</span>
+                    <span style={{ fontWeight: 700 }}>₹{(receipt.round_off_paise / 100).toFixed(2)}</span>
                   </div>
                 )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: 15, marginTop: 4, color: '#8B1E2D', borderTop: '1px solid #ddd', paddingTop: 4 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: 16, marginTop: 4, color: '#000000', borderTop: '1.5px dashed #000000', paddingTop: 4 }}>
                   <span>TOTAL NET PAYABLE:</span>
                   <span>₹{(receipt.net_payable_paise / 100).toFixed(2)}</span>
                 </div>
               </div>
 
               {/* Payment Tender Breakdown */}
-              <div style={{ borderBottom: '1px dashed #000', paddingBottom: 6, marginBottom: 8, fontSize: 11 }}>
+              <div style={{ borderBottom: '1.5px dashed #000000', paddingBottom: 6, marginBottom: 8, fontSize: 11, color: '#000000' }}>
                 {receipt.payments && receipt.payments.length === 1 ? (
                   (() => {
                     const p = receipt.payments[0];
                     if (p.payment_method === 'CASH') {
                       return (
                         <div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span>Payment:</span>
-                            <span style={{ fontWeight: 600 }}>CASH</span>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+                            <span style={{ fontWeight: 600 }}>Payment:</span>
+                            <span style={{ fontWeight: 800 }}>CASH</span>
                           </div>
                           {p.change_returned_paise > 0 && (
                             <>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
-                                <span>Cash Tendered:</span>
-                                <span>₹{(p.tendered_paise / 100).toFixed(2)}</span>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2, color: '#000000' }}>
+                                <span style={{ fontWeight: 600 }}>Cash Tendered:</span>
+                                <span style={{ fontWeight: 700 }}>₹{(p.tendered_paise / 100).toFixed(2)}</span>
                               </div>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#2E7D32', marginTop: 1 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 1, color: '#000000', fontWeight: 800 }}>
                                 <span>Change Returned:</span>
                                 <span>₹{(p.change_returned_paise / 100).toFixed(2)}</span>
                               </div>
@@ -8485,55 +8485,55 @@ export const App: React.FC = () => {
                       );
                     } else {
                       return (
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>Payment:</span>
-                          <span style={{ fontWeight: 600 }}>UPI / Soundbox</span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+                          <span style={{ fontWeight: 600 }}>Payment:</span>
+                          <span style={{ fontWeight: 800 }}>UPI / Soundbox</span>
                         </div>
                       );
                     }
                   })()
                 ) : receipt.payments && receipt.payments.length > 1 ? (
                   <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, marginBottom: 3 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, marginBottom: 3, color: '#000000' }}>
                       <span>Payment:</span>
                       <span>SPLIT TENDER</span>
                     </div>
                     {receipt.payments.map((p, idx) => (
-                      <div key={idx} style={{ marginBottom: 2 }}>
+                      <div key={idx} style={{ marginBottom: 2, color: '#000000' }}>
                         {p.payment_method === 'CASH' ? (
                           <div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                              <span>Cash Portion:</span>
-                              <span>₹{(p.net_amount_paise / 100).toFixed(2)}</span>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+                              <span style={{ fontWeight: 600 }}>Cash Portion:</span>
+                              <span style={{ fontWeight: 700 }}>₹{(p.net_amount_paise / 100).toFixed(2)}</span>
                             </div>
                             {p.change_returned_paise > 0 && (
-                              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', fontSize: 10 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000', fontSize: 10, fontWeight: 700 }}>
                                 <span>Tendered: ₹{(p.tendered_paise / 100).toFixed(2)}</span>
                                 <span>Change: ₹{(p.change_returned_paise / 100).toFixed(2)}</span>
                               </div>
                             )}
                           </div>
                         ) : (
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span>UPI Portion:</span>
-                            <span>₹{(p.net_amount_paise / 100).toFixed(2)}</span>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+                            <span style={{ fontWeight: 600 }}>UPI Portion:</span>
+                            <span style={{ fontWeight: 700 }}>₹{(p.net_amount_paise / 100).toFixed(2)}</span>
                           </div>
                         )}
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Payment:</span>
-                    <span style={{ fontWeight: 600 }}>{receipt.payment_status || 'SETTLED'}</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+                    <span style={{ fontWeight: 600 }}>Payment:</span>
+                    <span style={{ fontWeight: 800 }}>{receipt.payment_status || 'SETTLED'}</span>
                   </div>
                 )}
               </div>
 
               {/* Retail Customer Greetings */}
-              <div style={{ textAlign: 'center', fontSize: 11, color: '#444', margin: '10px 0 6px 0' }}>
-                <div style={{ fontWeight: 700 }}>Thank you for choosing Malgudi Mithais!</div>
-                <div style={{ fontSize: 10, color: '#777', marginTop: 2 }}>Sweetening your celebrations • Visit again!</div>
+              <div style={{ textAlign: 'center', fontSize: 11, color: '#000000', margin: '10px 0 6px 0' }}>
+                <div style={{ fontWeight: 800, color: '#000000' }}>Thank you for choosing Malgudi Mithais!</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#000000', marginTop: 2 }}>Sweetening your celebrations • Visit again!</div>
               </div>
             </div>
           );
@@ -9181,47 +9181,47 @@ export const App: React.FC = () => {
             </div>
 
             {/* 80mm Thermal Receipt Content */}
-            <div id="z-report-thermal-slip" style={{ fontFamily: 'Courier New, monospace, sans-serif', fontSize: 12, lineHeight: 1.35, color: '#000', backgroundColor: '#fff', padding: '10px 4px' }}>
-              <div style={{ textAlign: 'center', marginBottom: 8 }}>
-                <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: -0.5 }}>மால்குடி மிட்டாய்ஸ்</div>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>MALGUDI MITHAIS</div>
-                <div style={{ fontSize: 11, color: '#333' }}>{activeZReportModal.branch_name}</div>
-                <div style={{ fontSize: 10, color: '#555' }}>GSTIN: 33NNYPS3460L1ZV | FSSAI: 12418012002674</div>
-                <div style={{ fontSize: 11, color: '#444' }}>Terminal: {activeZReportModal.terminal_id} | Session: {activeZReportModal.session_id}</div>
-                <div style={{ fontSize: 11, color: '#444' }}>Date: {activeZReportModal.business_date}</div>
-                <div style={{ fontSize: 10, color: '#666' }}>Closed At: {activeZReportModal.closed_at ? formatDateTime(activeZReportModal.closed_at) : 'Active'}</div>
-                <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
-                <div style={{ fontSize: 13, fontWeight: 900, textTransform: 'uppercase' }}>*** END OF DAY Z-REPORT ***</div>
-                <div style={{ fontSize: 11, fontWeight: 700 }}>முடிவு தணிக்கை அறிக்கை</div>
-                <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+            <div id="z-report-thermal-slip" style={{ fontFamily: "'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, 'Nirmala UI', 'Noto Sans Tamil', sans-serif", fontSize: 12, lineHeight: 1.35, color: '#000000', backgroundColor: '#ffffff', padding: '10px 4px' }}>
+              <div style={{ textAlign: 'center', marginBottom: 8, color: '#000000' }}>
+                <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: -0.5, color: '#000000' }}>மால்குடி மிட்டாய்ஸ்</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: '#000000' }}>MALGUDI MITHAIS</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>{activeZReportModal.branch_name}</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>GSTIN: 33NNYPS3460L1ZV | FSSAI: 12418012002674</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#000000' }}>Terminal: {activeZReportModal.terminal_id} | Session: {activeZReportModal.session_id}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#000000' }}>Date: {activeZReportModal.business_date}</div>
+                <div style={{ fontSize: 10, fontWeight: 600, color: '#000000' }}>Closed At: {activeZReportModal.closed_at ? formatDateTime(activeZReportModal.closed_at) : 'Active'}</div>
+                <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
+                <div style={{ fontSize: 13, fontWeight: 900, textTransform: 'uppercase', color: '#000000' }}>*** END OF DAY Z-REPORT ***</div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#000000' }}>முடிவு தணிக்கை அறிக்கை</div>
+                <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
               </div>
 
               {/* Section 1: Cash Drawer Reconciliation */}
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4 }}>1. CASH RECONCILIATION</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ marginBottom: 10, color: '#000000' }}>
+                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>1. CASH RECONCILIATION</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
                   <span>Opening Cash Float:</span>
-                  <span>₹{(activeZReportModal.opening_float_paise / 100).toFixed(2)}</span>
+                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.opening_float_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
                   <span>(+) Cash Sales In:</span>
-                  <span>₹{(activeZReportModal.cash_sales_paise / 100).toFixed(2)}</span>
+                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.cash_sales_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
                   <span>(-) Cash Refunds:</span>
-                  <span>₹{(activeZReportModal.cash_refunds_paise / 100).toFixed(2)}</span>
+                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.cash_refunds_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ borderTop: '1px dotted #000', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+                <div style={{ borderTop: '1px dotted #000000', margin: '4px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: '#000000' }}>
                   <span>Expected Drawer Cash:</span>
                   <span>₹{(activeZReportModal.expected_closing_cash_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: '#000000' }}>
                   <span>Counted Closing Cash:</span>
                   <span>₹{(activeZReportModal.counted_closing_cash_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ borderTop: '1px dashed #000', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: 13 }}>
+                <div style={{ borderTop: '1.5px dashed #000000', margin: '4px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: 13, color: '#000000' }}>
                   <span>DRAWER VARIANCE:</span>
                   <span>
                     {activeZReportModal.variance_paise === 0
@@ -9232,90 +9232,90 @@ export const App: React.FC = () => {
                   </span>
                 </div>
                 {activeZReportModal.variance_notes && (
-                  <div style={{ fontSize: 10, marginTop: 2, fontStyle: 'italic' }}>
+                  <div style={{ fontSize: 10, marginTop: 2, fontStyle: 'italic', fontWeight: 600, color: '#000000' }}>
                     Note: {activeZReportModal.variance_notes}
                   </div>
                 )}
               </div>
 
-              <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+              <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
 
               {/* Section 2: Sales & Volume */}
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4 }}>2. SALES & BILL VOLUME</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ marginBottom: 10, color: '#000000' }}>
+                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>2. SALES & BILL VOLUME</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
                   <span>Total Bills Printed:</span>
-                  <span>{activeZReportModal.total_bills_recorded}</span>
+                  <span style={{ fontWeight: 700 }}>{activeZReportModal.total_bills_recorded}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
                   <span>Active Settled Bills:</span>
-                  <span>{activeZReportModal.active_bills_count}</span>
+                  <span style={{ fontWeight: 700 }}>{activeZReportModal.active_bills_count}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
                   <span>Voided/Cancelled Bills:</span>
-                  <span>{activeZReportModal.voided_bills_count}</span>
+                  <span style={{ fontWeight: 700 }}>{activeZReportModal.voided_bills_count}</span>
                 </div>
-                <div style={{ borderTop: '1px dotted #000', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800 }}>
+                <div style={{ borderTop: '1px dotted #000000', margin: '4px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#000000' }}>
                   <span>GROSS TURNOVER:</span>
                   <span>₹{(activeZReportModal.gross_sales_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#000000' }}>
                   <span>NET REVENUE:</span>
                   <span>₹{(activeZReportModal.net_sales_paise / 100).toFixed(2)}</span>
                 </div>
               </div>
 
-              <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+              <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
 
               {/* Section 3: Tender Realization */}
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4 }}>3. PAYMENT METHOD BREAKDOWN</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ marginBottom: 10, color: '#000000' }}>
+                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>3. PAYMENT METHOD BREAKDOWN</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
                   <span>Cash Realized:</span>
-                  <span>₹{(activeZReportModal.cash_realized_paise / 100).toFixed(2)}</span>
+                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.cash_realized_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
                   <span>UPI / Digital Realized:</span>
-                  <span>₹{(activeZReportModal.upi_realized_paise / 100).toFixed(2)}</span>
+                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.upi_realized_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ borderTop: '1px dotted #000', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800 }}>
+                <div style={{ borderTop: '1px dotted #000000', margin: '4px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#000000' }}>
                   <span>TOTAL REALIZED:</span>
                   <span>₹{((activeZReportModal.cash_realized_paise + activeZReportModal.upi_realized_paise) / 100).toFixed(2)}</span>
                 </div>
               </div>
 
-              <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+              <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
 
               {/* Section 4: GST Breakdown */}
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4 }}>4. GST AUDIT (5% COMPOSITE)</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ marginBottom: 10, color: '#000000' }}>
+                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>4. GST AUDIT (5% COMPOSITE)</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
                   <span>Taxable Value (Ex-Tax):</span>
-                  <span>₹{(activeZReportModal.total_taxable_paise / 100).toFixed(2)}</span>
+                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.total_taxable_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
                   <span>CGST (2.5%):</span>
-                  <span>₹{(activeZReportModal.total_cgst_paise / 100).toFixed(2)}</span>
+                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.total_cgst_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
                   <span>SGST (2.5%):</span>
-                  <span>₹{(activeZReportModal.total_sgst_paise / 100).toFixed(2)}</span>
+                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.total_sgst_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ borderTop: '1px dotted #000', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800 }}>
+                <div style={{ borderTop: '1px dotted #000000', margin: '4px 0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#000000' }}>
                   <span>TOTAL GST:</span>
                   <span>₹{(activeZReportModal.total_tax_paise / 100).toFixed(2)}</span>
                 </div>
               </div>
 
-              <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
+              <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
 
-              <div style={{ textAlign: 'center', fontSize: 11, marginTop: 8 }}>
+              <div style={{ textAlign: 'center', fontSize: 11, marginTop: 8, color: '#000000' }}>
                 <div>Closed by: <strong>{activeZReportModal.closed_by_user}</strong></div>
                 <div>Offline Sync Outbox: {activeZReportModal.pending_sync_count} events pending</div>
-                <div style={{ marginTop: 6, fontWeight: 700 }}>*** END OF OFFICIAL Z-SLIP ***</div>
+                <div style={{ marginTop: 6, fontWeight: 800, color: '#000000' }}>*** END OF OFFICIAL Z-SLIP ***</div>
               </div>
             </div>
 
