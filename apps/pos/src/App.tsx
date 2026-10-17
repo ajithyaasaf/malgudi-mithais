@@ -954,7 +954,42 @@ export const App: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [persistedHistory, setPersistedHistory] = useState<FinalizeSaleResult[]>([]);
   const [activeReceiptModal, setActiveReceiptModal] = useState<DetailedSaleReceipt | null>(null);
+  const [lastSettledReceipt, setLastSettledReceipt] = useState<DetailedSaleReceipt | null>(null);
+  const [saleSuccessToast, setSaleSuccessToast] = useState<{
+    invoice_number: string;
+    net_payable_paise: number;
+    receipt: DetailedSaleReceipt;
+  } | null>(null);
+
+  // Auto-Print Receipt setting (stored in localStorage, default true)
+  const [isAutoPrintEnabled, setIsAutoPrintEnabled] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('malgudi_auto_print');
+      return stored === null ? true : stored === 'true';
+    }
+    return true;
+  });
+
+  const toggleAutoPrint = () => {
+    setIsAutoPrintEnabled(prev => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('malgudi_auto_print', String(next));
+      }
+      return next;
+    });
+  };
+
   const [dbInfo, setDbInfo] = useState<{ db_path: string; is_wal_active: boolean; total_sales: number; pending_sync_count: number } | null>(null);
+
+  // Auto-dismiss sale success toast after 6 seconds
+  useEffect(() => {
+    if (!saleSuccessToast) return;
+    const timer = setTimeout(() => {
+      setSaleSuccessToast(null);
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [saleSuccessToast]);
 
   // --- Opening Cash Float & Live Till Drawer State ---
   const [isOpeningFloatModalOpen, setIsOpeningFloatModalOpen] = useState<boolean>(false);
@@ -2792,7 +2827,8 @@ export const App: React.FC = () => {
       };
 
       setPersistedHistory(prev => [committedRecord, ...prev]);
-      setActiveReceiptModal(detailedReceipt);
+      setLastSettledReceipt(detailedReceipt);
+      setActiveReceiptModal(null);
       setIsPaymentModalOpen(false);
       setIsUpiModalOpen(false);
       setUpiSimulatedVerified(false);
@@ -2806,6 +2842,20 @@ export const App: React.FC = () => {
       refreshCatalog(currentSession?.token);
       loadSyncStatus();
       loadLiveDrawerSummary(currentSession?.token);
+
+      // Non-blocking notification toast with 1-click view/reprint option
+      setSaleSuccessToast({
+        invoice_number: committedRecord.invoice_number,
+        net_payable_paise: totalGrossPaise,
+        receipt: detailedReceipt,
+      });
+
+      // Standard retail POS flow: Auto-print receipt directly to thermal printer
+      if (isAutoPrintEnabled) {
+        setTimeout(() => {
+          window.print();
+        }, 80);
+      }
     } catch (err: any) {
       setErrorMessage(err.message || String(err));
     } finally {
@@ -3423,6 +3473,26 @@ export const App: React.FC = () => {
           )}
 
           <button
+            onClick={toggleAutoPrint}
+            title={isAutoPrintEnabled ? 'Automatic thermal printing on sale is ON. Click to disable.' : 'Automatic thermal printing on sale is OFF. Click to enable.'}
+            style={{
+              padding: '5px 10px',
+              fontSize: 12,
+              fontWeight: 700,
+              backgroundColor: isAutoPrintEnabled ? '#E8F5E9' : '#F5F5F5',
+              color: isAutoPrintEnabled ? '#2E7D32' : '#666',
+              border: isAutoPrintEnabled ? '1px solid #A5D6A7' : '1px solid #ccc',
+              borderRadius: 4,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+            }}
+          >
+            <span>Auto-Print: {isAutoPrintEnabled ? 'ON' : 'OFF'}</span>
+          </button>
+
+          <button
             onClick={() => setIsHistoryModalOpen(true)}
             style={{
               padding: '5px 10px',
@@ -3435,7 +3505,7 @@ export const App: React.FC = () => {
               cursor: 'pointer',
             }}
           >
-            📜 Invoices & Reprints
+            Invoices & Reprints
           </button>
 
           <button
@@ -3452,7 +3522,7 @@ export const App: React.FC = () => {
               cursor: 'pointer',
             }}
           >
-            🔄 Shift Handover
+            Shift Handover
           </button>
 
           <button
@@ -3472,7 +3542,7 @@ export const App: React.FC = () => {
               gap: 4,
             }}
           >
-            🌙 Day Close & Z-Report
+            Day Close & Z-Report
           </button>
 
           <button
@@ -3488,10 +3558,88 @@ export const App: React.FC = () => {
               cursor: 'pointer',
             }}
           >
-            🚪 Logout
+            Logout
           </button>
         </div>
       </header>
+
+      {/* Non-Blocking Sale Success Banner (Instant Flow) */}
+      {saleSuccessToast && (
+        <div
+          style={{
+            backgroundColor: '#E8F5E9',
+            borderBottom: '1px solid #A5D6A7',
+            padding: '10px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontSize: 13,
+            color: '#1B5E20',
+            fontWeight: 600,
+            boxShadow: '0 2px 6px rgba(0,0,0,0.06)',
+            zIndex: 100,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 13 }}>
+              Sale Completed: Invoice <strong>{saleSuccessToast.invoice_number}</strong> Settled &bull; Total: <strong>₹{(saleSuccessToast.net_payable_paise / 100).toFixed(2)}</strong>
+            </span>
+            <span style={{ fontSize: 11, color: '#2E7D32', backgroundColor: '#C8E6C9', padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
+              Cart Cleared for Next Customer
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              style={{
+                backgroundColor: '#2E7D32',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 4,
+                padding: '5px 12px',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              Print Receipt
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveReceiptModal(saleSuccessToast.receipt)}
+              style={{
+                backgroundColor: '#fff',
+                color: '#2E7D32',
+                border: '1px solid #81C784',
+                borderRadius: 4,
+                padding: '5px 12px',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              View Receipt
+            </button>
+            <button
+              type="button"
+              onClick={() => setSaleSuccessToast(null)}
+              style={{
+                background: 'none',
+                border: 'none',
+                fontSize: 16,
+                color: '#555',
+                cursor: 'pointer',
+                marginLeft: 4,
+                lineHeight: 1,
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Global OTA Software Update Banner */}
       {availableUpdate && !updateBannerDismissed && (
@@ -8270,37 +8418,33 @@ export const App: React.FC = () => {
       {/* ========================================================= */}
       {/* MODAL 5: Tax Invoice Receipt Modal                        */}
       {/* ========================================================= */}
-      {activeReceiptModal && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1300, padding: 16 }}>
-          <div style={{ backgroundColor: '#fff', padding: 22, borderRadius: 8, width: 380, maxWidth: '95vw', fontFamily: 'monospace', fontSize: 12, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
-            {/* Printable Receipt Area */}
+      {/* ========================================================= */}
+      {/* MODAL 5: Tax Invoice Receipt (Preview & Print Buffer)     */}
+      {/* ========================================================= */}
+      {(() => {
+        const renderReceiptContent = (receipt: DetailedSaleReceipt) => {
+          const isUk =
+            receipt.branch_id === 'UK' ||
+            (receipt.branch_name || '').toLowerCase().includes('umachikulam');
+
+          const branchTitle = isUk ? 'Umachikulam Branch (UK)' : 'Iyer Bungalow Branch (IB)';
+          const branchAddress = isUk
+            ? 'Main Road, Umachikulam, Madurai - 625014'
+            : 'Natham Main Road, Iyer Bungalow, Madurai - 625014';
+
+          return (
             <div id="receipt-print-area">
               <div style={{ textAlign: 'center', borderBottom: '1px dashed #000', paddingBottom: 8, marginBottom: 8 }}>
                 <div style={{ fontWeight: 'bold', fontSize: 16, letterSpacing: 0.5 }}>MALGUDI MITHAIS</div>
-                {(() => {
-                  const isUk =
-                    activeReceiptModal.branch_id === 'UK' ||
-                    (activeReceiptModal.branch_name || '').toLowerCase().includes('umachikulam');
-
-                  const branchTitle = isUk ? 'Umachikulam Branch (UK)' : 'Iyer Bungalow Branch (IB)';
-                  const branchAddress = isUk
-                    ? 'Main Road, Umachikulam, Madurai - 625014'
-                    : 'Natham Main Road, Iyer Bungalow, Madurai - 625014';
-
-                  return (
-                    <>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#333', marginTop: 2 }}>
-                        {branchTitle}
-                      </div>
-                      <div style={{ fontSize: 11, color: '#555' }}>{branchAddress}</div>
-                    </>
-                  );
-                })()}
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#333', marginTop: 2 }}>
+                  {branchTitle}
+                </div>
+                <div style={{ fontSize: 11, color: '#555' }}>{branchAddress}</div>
                 <div style={{ fontSize: 11, color: '#555' }}>GSTIN: 33NNYPS3460L1ZV</div>
                 <div style={{ fontSize: 11, color: '#555' }}>FSSAI: 12418012002674</div>
               </div>
 
-              {activeReceiptModal.sale_status === 'VOIDED' && (
+              {receipt.sale_status === 'VOIDED' && (
                 <div style={{ backgroundColor: '#FFEBEE', color: '#B71C1C', fontWeight: 900, textAlign: 'center', padding: '6px 0', margin: '6px 0', border: '1px dashed #B71C1C', fontSize: 13, letterSpacing: 1 }}>
                   *** VOIDED / REFUNDED ***
                 </div>
@@ -8308,19 +8452,19 @@ export const App: React.FC = () => {
 
               <div style={{ marginBottom: 8, fontSize: 11, lineHeight: 1.5 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span><strong>Invoice:</strong> {activeReceiptModal.invoice_number}</span>
-                  <span><strong>Status:</strong> {activeReceiptModal.payment_status}</span>
+                  <span><strong>Invoice:</strong> {receipt.invoice_number}</span>
+                  <span><strong>Status:</strong> {receipt.payment_status}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span><strong>Cashier:</strong> {activeReceiptModal.cashier_name}</span>
-                  <span><strong>Terminal:</strong> {activeReceiptModal.branch_id}/{activeReceiptModal.terminal_id}</span>
+                  <span><strong>Cashier:</strong> {receipt.cashier_name}</span>
+                  <span><strong>Terminal:</strong> {receipt.branch_id}/{receipt.terminal_id}</span>
                 </div>
-                <div><strong>Date:</strong> {formatDateTime(activeReceiptModal.created_at)}</div>
-                {(activeReceiptModal.customer_name || activeReceiptModal.customer_phone || activeReceiptModal.customer_location) && (
+                <div><strong>Date:</strong> {formatDateTime(receipt.created_at)}</div>
+                {(receipt.customer_name || receipt.customer_phone || receipt.customer_location) && (
                   <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px dotted #ccc', fontSize: 11, lineHeight: 1.4 }}>
-                    {activeReceiptModal.customer_name && <div><strong>Customer:</strong> {activeReceiptModal.customer_name}</div>}
-                    {activeReceiptModal.customer_phone && <div><strong>Phone:</strong> {activeReceiptModal.customer_phone}</div>}
-                    {activeReceiptModal.customer_location && <div><strong>Location:</strong> {activeReceiptModal.customer_location}</div>}
+                    {receipt.customer_name && <div><strong>Customer:</strong> {receipt.customer_name}</div>}
+                    {receipt.customer_phone && <div><strong>Phone:</strong> {receipt.customer_phone}</div>}
+                    {receipt.customer_location && <div><strong>Location:</strong> {receipt.customer_location}</div>}
                   </div>
                 )}
               </div>
@@ -8337,8 +8481,8 @@ export const App: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {activeReceiptModal.items && activeReceiptModal.items.length > 0 ? (
-                      activeReceiptModal.items.map((it, idx) => (
+                    {receipt.items && receipt.items.length > 0 ? (
+                      receipt.items.map((it, idx) => (
                         <tr key={idx} style={{ verticalAlign: 'top', borderBottom: '1px dotted #eee' }}>
                           <td style={{ padding: '4px 0' }}>
                             <div style={{ fontWeight: 600 }}>{it.product_name}</div>
@@ -8358,7 +8502,7 @@ export const App: React.FC = () => {
                     ) : (
                       <tr>
                         <td colSpan={4} style={{ textAlign: 'center', padding: '8px 0', color: '#666' }}>
-                          Items Billed: {activeReceiptModal.items_count || 1}
+                          Items Billed: {receipt.items_count || 1}
                         </td>
                       </tr>
                     )}
@@ -8370,32 +8514,32 @@ export const App: React.FC = () => {
               <div style={{ borderBottom: '1px dashed #000', paddingBottom: 6, marginBottom: 8, fontSize: 11 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
                   <span>Taxable Subtotal:</span>
-                  <span>₹{(activeReceiptModal.subtotal_taxable_paise / 100).toFixed(2)}</span>
+                  <span>₹{(receipt.subtotal_taxable_paise / 100).toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
                   <span>CGST (2.5%):</span>
-                  <span>₹{(activeReceiptModal.total_cgst_paise / 100).toFixed(2)}</span>
+                  <span>₹{(receipt.total_cgst_paise / 100).toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
                   <span>SGST (2.5%):</span>
-                  <span>₹{(activeReceiptModal.total_sgst_paise / 100).toFixed(2)}</span>
+                  <span>₹{(receipt.total_sgst_paise / 100).toFixed(2)}</span>
                 </div>
-                {activeReceiptModal.round_off_paise !== 0 && (
+                {receipt.round_off_paise !== 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
                     <span>Round-off:</span>
-                    <span>₹{(activeReceiptModal.round_off_paise / 100).toFixed(2)}</span>
+                    <span>₹{(receipt.round_off_paise / 100).toFixed(2)}</span>
                   </div>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: 15, marginTop: 4, color: '#8B1E2D', borderTop: '1px solid #ddd', paddingTop: 4 }}>
                   <span>TOTAL NET PAYABLE:</span>
-                  <span>₹{(activeReceiptModal.net_payable_paise / 100).toFixed(2)}</span>
+                  <span>₹{(receipt.net_payable_paise / 100).toFixed(2)}</span>
                 </div>
               </div>
 
               {/* Payment Tender Breakdown */}
               <div style={{ borderBottom: '1px dashed #000', paddingBottom: 6, marginBottom: 8, fontSize: 11 }}>
-                {activeReceiptModal.payments && activeReceiptModal.payments.length > 0 ? (
-                  activeReceiptModal.payments.map((p, idx) => (
+                {receipt.payments && receipt.payments.length > 0 ? (
+                  receipt.payments.map((p, idx) => (
                     <div key={idx} style={{ marginBottom: 2 }}>
                       {p.payment_method === 'CASH' ? (
                         <div>
@@ -8421,7 +8565,7 @@ export const App: React.FC = () => {
                 ) : (
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span>Payment Method:</span>
-                    <span>{activeReceiptModal.payment_status}</span>
+                    <span>{receipt.payment_status}</span>
                   </div>
                 )}
               </div>
@@ -8432,27 +8576,45 @@ export const App: React.FC = () => {
                 <div style={{ fontSize: 10, color: '#777', marginTop: 2 }}>Sweetening your celebrations • Visit again!</div>
               </div>
             </div>
+          );
+        };
 
-            {/* Modal Actions */}
-            <div className="no-print" style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-              <button
-                type="button"
-                onClick={() => window.print()}
-                style={{ flex: 1, padding: '10px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
-              >
-                Print Receipt
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveReceiptModal(null)}
-                style={{ padding: '10px 18px', backgroundColor: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
-              >
-                Close
-              </button>
+        if (activeReceiptModal) {
+          return (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1300, padding: 16 }}>
+              <div style={{ backgroundColor: '#fff', padding: 22, borderRadius: 8, width: 380, maxWidth: '95vw', fontFamily: 'monospace', fontSize: 12, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
+                {renderReceiptContent(activeReceiptModal)}
+                <div className="no-print" style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    style={{ flex: 1, padding: '10px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
+                  >
+                    Print Receipt
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveReceiptModal(null)}
+                    style={{ padding: '10px 18px', backgroundColor: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          );
+        }
+
+        if (lastSettledReceipt) {
+          return (
+            <div style={{ position: 'fixed', left: -9999, top: -9999, opacity: 0, pointerEvents: 'none' }}>
+              {renderReceiptContent(lastSettledReceipt)}
+            </div>
+          );
+        }
+
+        return null;
+      })()}
 
       {/* ========================================================= */}
       {/* MODAL 5B: Custom Category Add Dialog                       */}
