@@ -728,7 +728,7 @@ export const App: React.FC = () => {
   const [updateErrorMessage, setUpdateErrorMessage] = useState<string | null>(null);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState<boolean>(false);
   const [currentAppVersion, setCurrentAppVersion] = useState<string>(
-    typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.9.25'
+    typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.9.26'
   );
 
   // --- Cloud Sync & Multi-Branch State ---
@@ -3033,65 +3033,6 @@ export const App: React.FC = () => {
           )}
 
           <form onSubmit={handleLogin}>
-            {/* Quick Demo Credentials */}
-            <div style={{ marginBottom: 16, padding: '10px 12px', backgroundColor: '#FFF3E0', border: '1px dashed #E65100', borderRadius: 8, textAlign: 'center' }}>
-              <div style={{ fontSize: 11, fontWeight: 'bold', color: '#B26A00', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-                Quick Login Credentials
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginUsername('owner');
-                    setLoginPin('123456');
-                    setAuthError(null);
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '8px 10px',
-                    backgroundColor: '#8B1E2D',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: 6,
-                    fontSize: 12,
-                    fontWeight: 'bold',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 6,
-                  }}
-                >
-                  👑 Owner (123456)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginUsername('staff');
-                    setLoginPin('123456');
-                    setAuthError(null);
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '8px 10px',
-                    backgroundColor: '#2E7D32',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: 6,
-                    fontSize: 12,
-                    fontWeight: 'bold',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 6,
-                  }}
-                >
-                  👤 Staff (123456)
-                </button>
-              </div>
-            </div>
-
             <div style={{ marginBottom: 14 }}>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', color: '#1F1F1F', marginBottom: 4 }}>
                 Username / Employee ID
@@ -3102,7 +3043,7 @@ export const App: React.FC = () => {
                 onChange={e => setLoginUsername(e.target.value)}
                 required
                 autoFocus
-                placeholder="owner or staff"
+                placeholder="Enter username"
                 style={{ width: '100%', padding: '10px 12px', borderRadius: 6, border: '1px solid #ccc', fontSize: 15, boxSizing: 'border-box' }}
               />
             </div>
