@@ -954,7 +954,6 @@ export const App: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [persistedHistory, setPersistedHistory] = useState<FinalizeSaleResult[]>([]);
   const [activeReceiptModal, setActiveReceiptModal] = useState<DetailedSaleReceipt | null>(null);
-  const [lastSettledReceipt, setLastSettledReceipt] = useState<DetailedSaleReceipt | null>(null);
   const [saleSuccessToast, setSaleSuccessToast] = useState<{
     invoice_number: string;
     net_payable_paise: number;
@@ -2827,8 +2826,7 @@ export const App: React.FC = () => {
       };
 
       setPersistedHistory(prev => [committedRecord, ...prev]);
-      setLastSettledReceipt(detailedReceipt);
-      setActiveReceiptModal(null);
+      setActiveReceiptModal(detailedReceipt);
       setIsPaymentModalOpen(false);
       setIsUpiModalOpen(false);
       setUpiSimulatedVerified(false);
@@ -2843,19 +2841,12 @@ export const App: React.FC = () => {
       loadSyncStatus();
       loadLiveDrawerSummary(currentSession?.token);
 
-      // Non-blocking notification toast with 1-click view/reprint option
+      // Notification toast with 1-click view/reprint option
       setSaleSuccessToast({
         invoice_number: committedRecord.invoice_number,
         net_payable_paise: totalGrossPaise,
         receipt: detailedReceipt,
       });
-
-      // Standard retail POS flow: Auto-print receipt directly to thermal printer
-      if (isAutoPrintEnabled) {
-        setTimeout(() => {
-          window.print();
-        }, 80);
-      }
     } catch (err: any) {
       setErrorMessage(err.message || String(err));
     } finally {
@@ -8601,14 +8592,6 @@ export const App: React.FC = () => {
                   </button>
                 </div>
               </div>
-            </div>
-          );
-        }
-
-        if (lastSettledReceipt) {
-          return (
-            <div style={{ position: 'fixed', left: -9999, top: -9999, opacity: 0, pointerEvents: 'none' }}>
-              {renderReceiptContent(lastSettledReceipt)}
             </div>
           );
         }

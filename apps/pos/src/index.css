@@ -47,6 +47,7 @@ body {
   #z-report-thermal-slip,
   #z-report-thermal-slip * {
     visibility: visible !important;
+    opacity: 1 !important;
     box-sizing: border-box !important;
   }
 
