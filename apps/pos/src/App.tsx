@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { check as checkTauriUpdate, Update as TauriUpdate, DownloadEvent } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { calculateLineItem } from '@malgudi/domain/pricing.js';
@@ -727,7 +728,7 @@ export const App: React.FC = () => {
   const [updateErrorMessage, setUpdateErrorMessage] = useState<string | null>(null);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState<boolean>(false);
   const [currentAppVersion, setCurrentAppVersion] = useState<string>(
-    typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.9.24'
+    typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.9.25'
   );
 
   // --- Cloud Sync & Multi-Branch State ---
@@ -909,9 +910,9 @@ export const App: React.FC = () => {
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState<boolean>(false);
   const [isUpiModalOpen, setIsUpiModalOpen] = useState<boolean>(false);
   const [upiSimulatedVerified, setUpiSimulatedVerified] = useState<boolean>(true);
-  const [cashTenderedRupees, setCashTenderedRupees] = useState<number>(0);
-  const [splitCashRupees, setSplitCashRupees] = useState<number>(0);
-  const [splitUpiRupees, setSplitUpiRupees] = useState<number>(0);
+  const [cashTenderedRupees, setCashTenderedRupees] = useState<number | string>(0);
+  const [splitCashRupees, setSplitCashRupees] = useState<number | string>(0);
+  const [splitUpiRupees, setSplitUpiRupees] = useState<number | string>(0);
   const [upiVerificationSource] = useState<PaymentVerificationSource>('SOUNDBOX_BROADCAST');
   const [settlementPolicy, setSettlementPolicy] = useState<SettlementPolicy>(() => {
     return 'CASHIER_ASSERTION_PERMITTED';
@@ -925,18 +926,18 @@ export const App: React.FC = () => {
     ? totalGrossPaise
     : paymentMode === 'UPI'
       ? 0
-      : Math.round(splitCashRupees * 100);
+      : Math.round((Number(splitCashRupees) || 0) * 100);
 
   const activeUpiAllocatedPaise = paymentMode === 'UPI'
     ? totalGrossPaise
     : paymentMode === 'CASH'
       ? 0
-      : Math.round(splitUpiRupees * 100);
+      : Math.round((Number(splitUpiRupees) || 0) * 100);
 
   const totalAllocatedPaise = activeCashAllocatedPaise + activeUpiAllocatedPaise;
   const tenderDiffPaise = totalGrossPaise - totalAllocatedPaise;
   const isTenderBalanced = tenderDiffPaise === 0;
-  const isCashTenderSufficient = paymentMode === 'UPI' || (Math.round(cashTenderedRupees * 100) >= activeCashAllocatedPaise);
+  const isCashTenderSufficient = paymentMode === 'UPI' || (Math.round((Number(cashTenderedRupees) || 0) * 100) >= activeCashAllocatedPaise);
   const canCompleteSale = isTenderBalanced && isCashTenderSufficient && !isFinalizing && cartItems.length > 0;
 
   // Store settlement policy updater for Owner/Admin Settings
@@ -954,6 +955,7 @@ export const App: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [persistedHistory, setPersistedHistory] = useState<FinalizeSaleResult[]>([]);
   const [activeReceiptModal, setActiveReceiptModal] = useState<DetailedSaleReceipt | null>(null);
+  const [lastSettledReceipt, setLastSettledReceipt] = useState<DetailedSaleReceipt | null>(null);
   const [saleSuccessToast, setSaleSuccessToast] = useState<{
     invoice_number: string;
     net_payable_paise: number;
@@ -1038,6 +1040,7 @@ export const App: React.FC = () => {
           sessionToken: currentSession?.token,
           invoiceOrSaleId: invoiceNumber,
         });
+        setLastSettledReceipt(detailed);
         setActiveReceiptModal(detailed);
         return;
       } catch (e) {
@@ -1073,6 +1076,7 @@ export const App: React.FC = () => {
           }
         ],
       };
+      setLastSettledReceipt(mockReceipt);
       setActiveReceiptModal(mockReceipt);
     }
   };
@@ -2618,7 +2622,7 @@ export const App: React.FC = () => {
       }
 
       // 2. Determine Cash tendered and change returned in paise
-      let rawTendered = override?.cashTendered !== undefined ? override.cashTendered : cashTenderedRupees;
+      let rawTendered = override?.cashTendered !== undefined ? override.cashTendered : (Number(cashTenderedRupees) || 0);
       let finalCashTenderedPaise = finalCashAllocatedPaise > 0
         ? Math.round(rawTendered * 100)
         : 0;
@@ -2826,7 +2830,10 @@ export const App: React.FC = () => {
       };
 
       setPersistedHistory(prev => [committedRecord, ...prev]);
-      setActiveReceiptModal(detailedReceipt);
+      flushSync(() => {
+        setLastSettledReceipt(detailedReceipt);
+        setActiveReceiptModal(null);
+      });
       setIsPaymentModalOpen(false);
       setIsUpiModalOpen(false);
       setUpiSimulatedVerified(false);
@@ -2847,6 +2854,13 @@ export const App: React.FC = () => {
         net_payable_paise: totalGrossPaise,
         receipt: detailedReceipt,
       });
+
+      // Auto-Print Receipt directly without showing any blocking modal
+      if (isAutoPrintEnabled) {
+        requestAnimationFrame(() => {
+          window.print();
+        });
+      }
     } catch (err: any) {
       setErrorMessage(err.message || String(err));
     } finally {
@@ -3583,7 +3597,14 @@ export const App: React.FC = () => {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button
               type="button"
-              onClick={() => window.print()}
+              onClick={() => {
+                flushSync(() => {
+                  setLastSettledReceipt(saleSuccessToast.receipt);
+                });
+                requestAnimationFrame(() => {
+                  window.print();
+                });
+              }}
               style={{
                 backgroundColor: '#2E7D32',
                 color: '#fff',
@@ -3599,7 +3620,10 @@ export const App: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => setActiveReceiptModal(saleSuccessToast.receipt)}
+              onClick={() => {
+                setLastSettledReceipt(saleSuccessToast.receipt);
+                setActiveReceiptModal(saleSuccessToast.receipt);
+              }}
               style={{
                 backgroundColor: '#fff',
                 color: '#2E7D32',
@@ -7648,8 +7672,10 @@ export const App: React.FC = () => {
                   type="number"
                   step="any"
                   min="0"
+                  placeholder="0.00"
                   value={cashTenderedRupees}
-                  onChange={e => setCashTenderedRupees(Number(e.target.value))}
+                  onChange={e => setCashTenderedRupees(e.target.value)}
+                  onFocus={e => e.target.select()}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && canCompleteSale) {
                       e.preventDefault();
@@ -7673,7 +7699,7 @@ export const App: React.FC = () => {
                       key={p.label}
                       type="button"
                       onClick={() => setCashTenderedRupees(p.val)}
-                      style={{ padding: '4px 10px', fontSize: 12, fontWeight: 600, backgroundColor: cashTenderedRupees === p.val ? '#FFF9F0' : '#f0f0f0', border: cashTenderedRupees === p.val ? '1.5px solid #8B1E2D' : '1px solid #ccc', color: cashTenderedRupees === p.val ? '#8B1E2D' : '#333', borderRadius: 4, cursor: 'pointer' }}
+                      style={{ padding: '4px 10px', fontSize: 12, fontWeight: 600, backgroundColor: Number(cashTenderedRupees) === p.val ? '#FFF9F0' : '#f0f0f0', border: Number(cashTenderedRupees) === p.val ? '1.5px solid #8B1E2D' : '1px solid #ccc', color: Number(cashTenderedRupees) === p.val ? '#8B1E2D' : '#333', borderRadius: 4, cursor: 'pointer' }}
                     >
                       {p.label}
                     </button>
@@ -7684,8 +7710,8 @@ export const App: React.FC = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, backgroundColor: '#FFF9F0', border: '1px solid #EAD8C7', padding: '10px 12px', borderRadius: 6 }}>
                   <span>
                     Change to Return:{' '}
-                    <strong style={{ color: cashTenderedRupees >= (totalGrossPaise / 100) ? '#2E7D32' : '#C62828', fontSize: 14 }}>
-                      ₹{Math.max(0, cashTenderedRupees - (totalGrossPaise / 100)).toFixed(2)}
+                    <strong style={{ color: (Number(cashTenderedRupees) || 0) >= (totalGrossPaise / 100) ? '#2E7D32' : '#C62828', fontSize: 14 }}>
+                      ₹{Math.max(0, (Number(cashTenderedRupees) || 0) - (totalGrossPaise / 100)).toFixed(2)}
                     </strong>
                   </span>
                   <span>
@@ -7695,9 +7721,9 @@ export const App: React.FC = () => {
                     </strong>
                   </span>
                 </div>
-                {cashTenderedRupees < (totalGrossPaise / 100) && (
+                {(Number(cashTenderedRupees) || 0) < (totalGrossPaise / 100) && (
                   <div style={{ marginTop: 8, fontSize: 12, color: '#C62828', fontWeight: 600 }}>
-                    Insufficient cash received: Short by ₹{((totalGrossPaise / 100) - cashTenderedRupees).toFixed(2)}
+                    Insufficient cash received: Short by ₹{((totalGrossPaise / 100) - (Number(cashTenderedRupees) || 0)).toFixed(2)}
                   </div>
                 )}
               </div>
@@ -7744,13 +7770,22 @@ export const App: React.FC = () => {
                       type="number"
                       step="any"
                       min="0"
+                      placeholder="0.00"
                       value={splitCashRupees}
+                      onFocus={e => e.target.select()}
                       onChange={e => {
-                        const val = Math.max(0, Number(e.target.value));
-                        setSplitCashRupees(val);
-                        const remainder = Math.max(0, Math.round(((totalGrossPaise / 100) - val) * 100) / 100);
-                        setSplitUpiRupees(remainder);
-                        setCashTenderedRupees(val);
+                        const raw = e.target.value;
+                        setSplitCashRupees(raw);
+                        if (raw === '') {
+                          const total = totalGrossPaise / 100;
+                          setSplitUpiRupees(total);
+                          setCashTenderedRupees('');
+                        } else {
+                          const val = Math.max(0, Number(raw) || 0);
+                          const remainder = Math.max(0, Math.round(((totalGrossPaise / 100) - val) * 100) / 100);
+                          setSplitUpiRupees(remainder);
+                          setCashTenderedRupees(raw);
+                        }
                       }}
                       style={{ width: '100%', padding: '8px 10px', fontSize: 16, fontWeight: 'bold', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box' }}
                     />
@@ -7765,13 +7800,22 @@ export const App: React.FC = () => {
                       type="number"
                       step="any"
                       min="0"
+                      placeholder="0.00"
                       value={splitUpiRupees}
+                      onFocus={e => e.target.select()}
                       onChange={e => {
-                        const val = Math.max(0, Number(e.target.value));
-                        setSplitUpiRupees(val);
-                        const remainder = Math.max(0, Math.round(((totalGrossPaise / 100) - val) * 100) / 100);
-                        setSplitCashRupees(remainder);
-                        setCashTenderedRupees(remainder);
+                        const raw = e.target.value;
+                        setSplitUpiRupees(raw);
+                        if (raw === '') {
+                          const total = totalGrossPaise / 100;
+                          setSplitCashRupees(total);
+                          setCashTenderedRupees(total);
+                        } else {
+                          const val = Math.max(0, Number(raw) || 0);
+                          const remainder = Math.max(0, Math.round(((totalGrossPaise / 100) - val) * 100) / 100);
+                          setSplitCashRupees(remainder);
+                          setCashTenderedRupees(remainder);
+                        }
                       }}
                       style={{ width: '100%', padding: '8px 10px', fontSize: 16, fontWeight: 'bold', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box' }}
                     />
@@ -7779,45 +7823,47 @@ export const App: React.FC = () => {
                 </div>
 
                 {/* Cash Note Received from Customer for the Cash Portion */}
-                {splitCashRupees > 0 && (
+                {(Number(splitCashRupees) || 0) > 0 && (
                   <div style={{ backgroundColor: '#FDFDFD', border: '1px solid #E5E5E0', borderRadius: 8, padding: 12 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                       <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
-                        Physical Cash Received (for ₹{splitCashRupees.toFixed(2)} portion)
+                        Physical Cash Received (for ₹{(Number(splitCashRupees) || 0).toFixed(2)} portion)
                       </label>
                       <button
                         type="button"
                         onClick={() => setCashTenderedRupees(splitCashRupees)}
                         style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid #bbb', backgroundColor: '#f9f9f9', cursor: 'pointer' }}
                       >
-                        Exact ₹{splitCashRupees.toFixed(2)}
+                        Exact ₹{(Number(splitCashRupees) || 0).toFixed(2)}
                       </button>
                     </div>
                     <input
                       type="number"
                       step="any"
                       min="0"
+                      placeholder="0.00"
                       value={cashTenderedRupees}
-                      onChange={e => setCashTenderedRupees(Number(e.target.value))}
+                      onFocus={e => e.target.select()}
+                      onChange={e => setCashTenderedRupees(e.target.value)}
                       style={{ width: '100%', padding: '8px 10px', fontSize: 16, fontWeight: 'bold', borderRadius: 6, border: '1px solid #8B1E2D', boxSizing: 'border-box', marginBottom: 6 }}
                     />
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, backgroundColor: '#FFF9F0', border: '1px solid #EAD8C7', padding: '6px 10px', borderRadius: 4 }}>
                       <span>
                         Change to Return:{' '}
-                        <strong style={{ color: cashTenderedRupees >= splitCashRupees ? '#2E7D32' : '#C62828' }}>
-                          ₹{Math.max(0, cashTenderedRupees - splitCashRupees).toFixed(2)}
+                        <strong style={{ color: (Number(cashTenderedRupees) || 0) >= (Number(splitCashRupees) || 0) ? '#2E7D32' : '#C62828' }}>
+                          ₹{Math.max(0, (Number(cashTenderedRupees) || 0) - (Number(splitCashRupees) || 0)).toFixed(2)}
                         </strong>
                       </span>
                       <span>
                         Cash in Drawer:{' '}
                         <strong style={{ color: '#8B1E2D' }}>
-                          ₹{splitCashRupees.toFixed(2)}
+                          ₹{(Number(splitCashRupees) || 0).toFixed(2)}
                         </strong>
                       </span>
                     </div>
-                    {cashTenderedRupees < splitCashRupees && (
+                    {(Number(cashTenderedRupees) || 0) < (Number(splitCashRupees) || 0) && (
                       <div style={{ marginTop: 6, fontSize: 11, color: '#C62828', fontWeight: 600 }}>
-                        Insufficient cash received for the cash portion (Short by ₹{(splitCashRupees - cashTenderedRupees).toFixed(2)})
+                        Insufficient cash received for the cash portion (Short by ₹{((Number(splitCashRupees) || 0) - (Number(cashTenderedRupees) || 0)).toFixed(2)})
                       </div>
                     )}
                   </div>
@@ -7826,7 +7872,7 @@ export const App: React.FC = () => {
                 {/* Tender Balance Validation Banner */}
                 {(() => {
                   const totalPaise = totalGrossPaise;
-                  const allocatedPaise = Math.round(splitCashRupees * 100) + Math.round(splitUpiRupees * 100);
+                  const allocatedPaise = Math.round((Number(splitCashRupees) || 0) * 100) + Math.round((Number(splitUpiRupees) || 0) * 100);
                   const diffPaise = totalPaise - allocatedPaise;
                   const isBalanced = diffPaise === 0;
 
@@ -8529,34 +8575,73 @@ export const App: React.FC = () => {
 
               {/* Payment Tender Breakdown */}
               <div style={{ borderBottom: '1px dashed #000', paddingBottom: 6, marginBottom: 8, fontSize: 11 }}>
-                {receipt.payments && receipt.payments.length > 0 ? (
-                  receipt.payments.map((p, idx) => (
-                    <div key={idx} style={{ marginBottom: 2 }}>
-                      {p.payment_method === 'CASH' ? (
+                {receipt.payments && receipt.payments.length === 1 ? (
+                  (() => {
+                    const p = receipt.payments[0];
+                    if (p.payment_method === 'CASH') {
+                      return (
                         <div>
                           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span>Cash Tendered:</span>
-                            <span>₹{(p.tendered_paise / 100).toFixed(2)}</span>
+                            <span>Payment:</span>
+                            <span style={{ fontWeight: 600 }}>CASH</span>
                           </div>
                           {p.change_returned_paise > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#2E7D32' }}>
-                              <span>Change Returned:</span>
-                              <span>₹{(p.change_returned_paise / 100).toFixed(2)}</span>
-                            </div>
+                            <>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
+                                <span>Cash Tendered:</span>
+                                <span>₹{(p.tendered_paise / 100).toFixed(2)}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#2E7D32', marginTop: 1 }}>
+                                <span>Change Returned:</span>
+                                <span>₹{(p.change_returned_paise / 100).toFixed(2)}</span>
+                              </div>
+                            </>
                           )}
                         </div>
-                      ) : (
+                      );
+                    } else {
+                      return (
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>UPI / Soundbox:</span>
-                          <span>₹{(p.net_amount_paise / 100).toFixed(2)}</span>
+                          <span>Payment:</span>
+                          <span style={{ fontWeight: 600 }}>UPI / Soundbox</span>
                         </div>
-                      )}
+                      );
+                    }
+                  })()
+                ) : receipt.payments && receipt.payments.length > 1 ? (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, marginBottom: 3 }}>
+                      <span>Payment:</span>
+                      <span>SPLIT TENDER</span>
                     </div>
-                  ))
+                    {receipt.payments.map((p, idx) => (
+                      <div key={idx} style={{ marginBottom: 2 }}>
+                        {p.payment_method === 'CASH' ? (
+                          <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span>Cash Portion:</span>
+                              <span>₹{(p.net_amount_paise / 100).toFixed(2)}</span>
+                            </div>
+                            {p.change_returned_paise > 0 && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555', fontSize: 10 }}>
+                                <span>Tendered: ₹{(p.tendered_paise / 100).toFixed(2)}</span>
+                                <span>Change: ₹{(p.change_returned_paise / 100).toFixed(2)}</span>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span>UPI Portion:</span>
+                            <span>₹{(p.net_amount_paise / 100).toFixed(2)}</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 ) : (
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Payment Method:</span>
-                    <span>{receipt.payment_status}</span>
+                    <span>Payment:</span>
+                    <span style={{ fontWeight: 600 }}>{receipt.payment_status || 'SETTLED'}</span>
                   </div>
                 )}
               </div>
@@ -8592,6 +8677,14 @@ export const App: React.FC = () => {
                   </button>
                 </div>
               </div>
+            </div>
+          );
+        }
+
+        if (lastSettledReceipt) {
+          return (
+            <div className="thermal-print-buffer">
+              {renderReceiptContent(lastSettledReceipt)}
             </div>
           );
         }
