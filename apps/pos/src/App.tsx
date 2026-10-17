@@ -728,7 +728,7 @@ export const App: React.FC = () => {
   const [updateErrorMessage, setUpdateErrorMessage] = useState<string | null>(null);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState<boolean>(false);
   const [currentAppVersion, setCurrentAppVersion] = useState<string>(
-    typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.9.27'
+    typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.9.28'
   );
 
   // --- Cloud Sync & Multi-Branch State ---
@@ -956,42 +956,12 @@ export const App: React.FC = () => {
   const [persistedHistory, setPersistedHistory] = useState<FinalizeSaleResult[]>([]);
   const [activeReceiptModal, setActiveReceiptModal] = useState<DetailedSaleReceipt | null>(null);
   const [lastSettledReceipt, setLastSettledReceipt] = useState<DetailedSaleReceipt | null>(null);
-  const [saleSuccessToast, setSaleSuccessToast] = useState<{
-    invoice_number: string;
-    net_payable_paise: number;
-    receipt: DetailedSaleReceipt;
-  } | null>(null);
 
-  // Auto-Print Receipt setting (stored in localStorage, default true)
-  const [isAutoPrintEnabled, setIsAutoPrintEnabled] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('malgudi_auto_print');
-      return stored === null ? true : stored === 'true';
-    }
-    return true;
-  });
-
-  const toggleAutoPrint = () => {
-    setIsAutoPrintEnabled(prev => {
-      const next = !prev;
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('malgudi_auto_print', String(next));
-      }
-      return next;
-    });
-  };
+  // Auto-Print Receipt is always enabled for instant silent thermal checkout
+  const isAutoPrintEnabled = true;
 
   const [dbInfo, setDbInfo] = useState<{ db_path: string; is_wal_active: boolean; total_sales: number; pending_sync_count: number } | null>(null);
   const [systemDefaultPrinter, setSystemDefaultPrinter] = useState<string>('EPSON TM-T82 Receipt');
-
-  // Auto-dismiss sale success toast after 6 seconds
-  useEffect(() => {
-    if (!saleSuccessToast) return;
-    const timer = setTimeout(() => {
-      setSaleSuccessToast(null);
-    }, 6000);
-    return () => clearTimeout(timer);
-  }, [saleSuccessToast]);
 
   // --- Opening Cash Float & Live Till Drawer State ---
   const [isOpeningFloatModalOpen, setIsOpeningFloatModalOpen] = useState<boolean>(false);
@@ -2913,13 +2883,6 @@ export const App: React.FC = () => {
       loadSyncStatus();
       loadLiveDrawerSummary(currentSession?.token);
 
-      // Notification toast with 1-click view/reprint option
-      setSaleSuccessToast({
-        invoice_number: committedRecord.invoice_number,
-        net_payable_paise: totalGrossPaise,
-        receipt: detailedReceipt,
-      });
-
       // Auto-Print Receipt directly without showing any blocking modal
       if (isAutoPrintEnabled) {
         requestAnimationFrame(() => {
@@ -3488,48 +3451,6 @@ export const App: React.FC = () => {
           )}
 
           <button
-            onClick={toggleAutoPrint}
-            title={isAutoPrintEnabled ? 'Automatic thermal printing on sale is ON. Click to disable.' : 'Automatic thermal printing on sale is OFF. Click to enable.'}
-            style={{
-              padding: '5px 10px',
-              fontSize: 12,
-              fontWeight: 700,
-              backgroundColor: isAutoPrintEnabled ? '#E8F5E9' : '#F5F5F5',
-              color: isAutoPrintEnabled ? '#2E7D32' : '#666',
-              border: isAutoPrintEnabled ? '1px solid #A5D6A7' : '1px solid #ccc',
-              borderRadius: 4,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-            }}
-          >
-            <span>Auto-Print: {isAutoPrintEnabled ? 'ON' : 'OFF'}</span>
-          </button>
-
-          <div
-            title={`Windows Default Printer: ${systemDefaultPrinter} (Silent Kiosk Printing Active)`}
-            style={{
-              padding: '4px 8px',
-              fontSize: 11,
-              fontWeight: 600,
-              backgroundColor: '#FFFDE7',
-              color: '#F57F17',
-              border: '1px solid #FFF59D',
-              borderRadius: 4,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span>🖨️</span>
-            <span style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {systemDefaultPrinter}
-            </span>
-          </div>
-
-          <button
             onClick={() => setIsHistoryModalOpen(true)}
             style={{
               padding: '5px 10px',
@@ -3599,94 +3520,6 @@ export const App: React.FC = () => {
           </button>
         </div>
       </header>
-
-      {/* Non-Blocking Sale Success Banner (Instant Flow) */}
-      {saleSuccessToast && (
-        <div
-          style={{
-            backgroundColor: '#E8F5E9',
-            borderBottom: '1px solid #A5D6A7',
-            padding: '10px 20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            fontSize: 13,
-            color: '#1B5E20',
-            fontWeight: 600,
-            boxShadow: '0 2px 6px rgba(0,0,0,0.06)',
-            zIndex: 100,
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ fontSize: 13 }}>
-              Sale Completed: Invoice <strong>{saleSuccessToast.invoice_number}</strong> Settled &bull; Total: <strong>₹{(saleSuccessToast.net_payable_paise / 100).toFixed(2)}</strong>
-            </span>
-            <span style={{ fontSize: 11, color: '#2E7D32', backgroundColor: '#C8E6C9', padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
-              Cart Cleared for Next Customer
-            </span>
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button
-              type="button"
-              onClick={() => {
-                flushSync(() => {
-                  setLastSettledReceipt(saleSuccessToast.receipt);
-                });
-                requestAnimationFrame(() => {
-                  window.print();
-                });
-              }}
-              style={{
-                backgroundColor: '#2E7D32',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 4,
-                padding: '5px 12px',
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-            >
-              Print Receipt
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setLastSettledReceipt(saleSuccessToast.receipt);
-                setActiveReceiptModal(saleSuccessToast.receipt);
-              }}
-              style={{
-                backgroundColor: '#fff',
-                color: '#2E7D32',
-                border: '1px solid #81C784',
-                borderRadius: 4,
-                padding: '5px 12px',
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              View Receipt
-            </button>
-            <button
-              type="button"
-              onClick={() => setSaleSuccessToast(null)}
-              style={{
-                background: 'none',
-                border: 'none',
-                fontSize: 16,
-                color: '#555',
-                cursor: 'pointer',
-                marginLeft: 4,
-                lineHeight: 1,
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Global OTA Software Update Banner */}
       {availableUpdate && !updateBannerDismissed && (
