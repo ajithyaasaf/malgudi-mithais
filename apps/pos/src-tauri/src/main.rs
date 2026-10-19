@@ -120,6 +120,20 @@ pub struct LiveCashDrawerSummary {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct DayEndItemSale {
+    pub product_id: String,
+    pub product_name: String,
+    pub tamil_name: String,
+    pub sku: String,
+    pub category_id: String,
+    pub pricing_unit: String,
+    pub quantity_formatted: String,
+    pub total_quantity_canonical: i64,
+    pub bills_count: i64,
+    pub gross_paise: i64,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct DayEndSummary {
     pub business_date: String,
     pub branch_name: String,
@@ -146,6 +160,7 @@ pub struct DayEndSummary {
     pub total_sgst_paise: i64,
     pub total_tax_paise: i64,
     pub pending_sync_count: i64,
+    pub item_sales: Vec<DayEndItemSale>,
 }
 
 #[tauri::command]
@@ -891,6 +906,24 @@ fn cash_record_day_close(
 
     let variance = counted_cash_paise - drawer.expected_closing_cash_paise;
 
+    let item_sales: Vec<DayEndItemSale> = reports_agg
+        .product_sales
+        .products
+        .into_iter()
+        .map(|p| DayEndItemSale {
+            product_id: p.product_id,
+            product_name: p.product_name,
+            tamil_name: p.tamil_name,
+            sku: p.sku,
+            category_id: p.category_id,
+            pricing_unit: p.pricing_unit,
+            quantity_formatted: p.quantity_formatted,
+            total_quantity_canonical: p.total_quantity_canonical,
+            bills_count: p.bills_count,
+            gross_paise: p.gross_paise,
+        })
+        .collect();
+
     Ok(DayEndSummary {
         business_date: today,
         branch_name: branch_cfg.branch_name,
@@ -917,6 +950,7 @@ fn cash_record_day_close(
         total_sgst_paise: gst.total_sgst_paise,
         total_tax_paise: gst.total_gst_paise,
         pending_sync_count,
+        item_sales,
     })
 }
 
@@ -969,6 +1003,24 @@ fn get_day_end_report(
         .unwrap_or(drawer.expected_closing_cash_paise);
     let variance = drawer.variance_paise.unwrap_or(0);
 
+    let item_sales: Vec<DayEndItemSale> = reports_agg
+        .product_sales
+        .products
+        .into_iter()
+        .map(|p| DayEndItemSale {
+            product_id: p.product_id,
+            product_name: p.product_name,
+            tamil_name: p.tamil_name,
+            sku: p.sku,
+            category_id: p.category_id,
+            pricing_unit: p.pricing_unit,
+            quantity_formatted: p.quantity_formatted,
+            total_quantity_canonical: p.total_quantity_canonical,
+            bills_count: p.bills_count,
+            gross_paise: p.gross_paise,
+        })
+        .collect();
+
     Ok(DayEndSummary {
         business_date: target_date,
         branch_name: branch_cfg.branch_name,
@@ -995,6 +1047,7 @@ fn get_day_end_report(
         total_sgst_paise: gst.total_sgst_paise,
         total_tax_paise: gst.total_gst_paise,
         pending_sync_count,
+        item_sales,
     })
 }
 

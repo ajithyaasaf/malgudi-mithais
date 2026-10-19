@@ -109,6 +109,19 @@ export interface LiveCashDrawerSummary {
   recorded_at?: string | null;
 }
 
+export interface DayEndItemSale {
+  product_id: string;
+  product_name: string;
+  tamil_name: string;
+  sku: string;
+  category_id: string;
+  pricing_unit: string;
+  quantity_formatted: string;
+  total_quantity_canonical: number;
+  bills_count: number;
+  gross_paise: number;
+}
+
 export interface DayEndSummary {
   business_date: string;
   branch_name: string;
@@ -135,6 +148,7 @@ export interface DayEndSummary {
   total_sgst_paise: number;
   total_tax_paise: number;
   pending_sync_count: number;
+  item_sales?: DayEndItemSale[];
 }
 
 export interface DBProductRecord {
@@ -2590,6 +2604,41 @@ export const App: React.FC = () => {
         await loadLiveDrawerSummary(currentSession.token);
       } else {
         const today = new Date().toISOString().split('T')[0];
+        const mockItemMap = new Map<string, DayEndItemSale>();
+        persistedHistory
+          .filter(h => h.sale_status !== 'VOIDED')
+          .forEach(h => {
+            h.items.forEach(item => {
+              const existing = mockItemMap.get(item.product_id);
+              if (existing) {
+                existing.total_quantity_canonical += item.quantity_input;
+                existing.gross_paise += item.gross_paise;
+                existing.bills_count += 1;
+                existing.quantity_formatted = item.pricing_unit === 'PER_KG'
+                  ? `${(existing.total_quantity_canonical / 1000000).toFixed(3)} kg`
+                  : `${existing.total_quantity_canonical} pcs`;
+              } else {
+                const prod = catalog.find(p => p.id === item.product_id);
+                const qFormatted = item.pricing_unit === 'PER_KG'
+                  ? `${(item.quantity_input / 1000000).toFixed(3)} kg`
+                  : `${item.quantity_input} pcs`;
+                mockItemMap.set(item.product_id, {
+                  product_id: item.product_id,
+                  product_name: prod?.name || item.product_id,
+                  tamil_name: prod?.tamil_name || '',
+                  sku: prod?.sku || 'SKU',
+                  category_id: prod?.category_id || '',
+                  pricing_unit: item.pricing_unit,
+                  quantity_formatted: qFormatted,
+                  total_quantity_canonical: item.quantity_input,
+                  bills_count: 1,
+                  gross_paise: item.gross_paise,
+                });
+              }
+            });
+          });
+        const mockItemSales = Array.from(mockItemMap.values());
+
         const mockSummary: DayEndSummary = {
           business_date: today,
           branch_name: syncConfig?.branch_name || 'Iyer Bungalow Branch (IB)',
@@ -2616,6 +2665,7 @@ export const App: React.FC = () => {
           total_sgst_paise: Math.round((totalGrossPaise - Math.round(totalGrossPaise / 1.05)) / 2),
           total_tax_paise: totalGrossPaise - Math.round(totalGrossPaise / 1.05),
           pending_sync_count: 0,
+          item_sales: mockItemSales,
         };
         setIsDayCloseModalOpen(false);
         setActiveZReportModal(mockSummary);
@@ -2634,15 +2684,79 @@ export const App: React.FC = () => {
 
   // Handler: Load Historical Z-Report for Any Past Date
   const handleLoadArchiveZReport = async (targetDate: string) => {
-    if (!currentSession || !isTauriRuntime) return;
+    if (!currentSession) return;
     setArchiveZReportLoading(true);
     setArchiveZReportError(null);
     try {
-      const summary = await window.__TAURI__!.core.invoke<DayEndSummary>('get_day_end_report', {
-        sessionToken: currentSession.token,
-        targetDate,
-      });
-      setArchiveZReportData(summary);
+      if (isTauriRuntime && window.__TAURI__?.core) {
+        const summary = await window.__TAURI__!.core.invoke<DayEndSummary>('get_day_end_report', {
+          sessionToken: currentSession.token,
+          targetDate,
+        });
+        setArchiveZReportData(summary);
+      } else {
+        const mockItemMap = new Map<string, DayEndItemSale>();
+        persistedHistory
+          .filter(h => h.sale_status !== 'VOIDED')
+          .forEach(h => {
+            h.items.forEach(item => {
+              const existing = mockItemMap.get(item.product_id);
+              if (existing) {
+                existing.total_quantity_canonical += item.quantity_input;
+                existing.gross_paise += item.gross_paise;
+                existing.bills_count += 1;
+                existing.quantity_formatted = item.pricing_unit === 'PER_KG'
+                  ? `${(existing.total_quantity_canonical / 1000000).toFixed(3)} kg`
+                  : `${existing.total_quantity_canonical} pcs`;
+              } else {
+                const prod = catalog.find(p => p.id === item.product_id);
+                const qFormatted = item.pricing_unit === 'PER_KG'
+                  ? `${(item.quantity_input / 1000000).toFixed(3)} kg`
+                  : `${item.quantity_input} pcs`;
+                mockItemMap.set(item.product_id, {
+                  product_id: item.product_id,
+                  product_name: prod?.name || item.product_id,
+                  tamil_name: prod?.tamil_name || '',
+                  sku: prod?.sku || 'SKU',
+                  category_id: prod?.category_id || '',
+                  pricing_unit: item.pricing_unit,
+                  quantity_formatted: qFormatted,
+                  total_quantity_canonical: item.quantity_input,
+                  bills_count: 1,
+                  gross_paise: item.gross_paise,
+                });
+              }
+            });
+          });
+        const mockItemSales = Array.from(mockItemMap.values());
+        setArchiveZReportData({
+          business_date: targetDate,
+          branch_name: syncConfig?.branch_name || 'Iyer Bungalow Branch (IB)',
+          terminal_id: 'TERM-01',
+          closed_by_user: currentSession?.user_name || 'Cashier',
+          closed_at: new Date().toISOString(),
+          opening_float_paise: 200000,
+          cash_sales_paise: Math.round(totalGrossPaise * 0.7),
+          cash_refunds_paise: 0,
+          expected_closing_cash_paise: 200000 + Math.round(totalGrossPaise * 0.7),
+          counted_closing_cash_paise: 200000 + Math.round(totalGrossPaise * 0.7),
+          variance_paise: 0,
+          variance_notes: null,
+          total_bills_recorded: persistedHistory.length,
+          active_bills_count: persistedHistory.filter(h => h.sale_status !== 'VOIDED').length,
+          voided_bills_count: persistedHistory.filter(h => h.sale_status === 'VOIDED').length,
+          gross_sales_paise: totalGrossPaise,
+          net_sales_paise: totalGrossPaise,
+          cash_realized_paise: Math.round(totalGrossPaise * 0.7),
+          upi_realized_paise: Math.round(totalGrossPaise * 0.3),
+          total_taxable_paise: Math.round(totalGrossPaise / 1.05),
+          total_cgst_paise: Math.round((totalGrossPaise - Math.round(totalGrossPaise / 1.05)) / 2),
+          total_sgst_paise: Math.round((totalGrossPaise - Math.round(totalGrossPaise / 1.05)) / 2),
+          total_tax_paise: totalGrossPaise - Math.round(totalGrossPaise / 1.05),
+          pending_sync_count: 0,
+          item_sales: mockItemSales,
+        });
+      }
     } catch (err: any) {
       setArchiveZReportError('Failed to load Z-Report: ' + (err.message || String(err)));
     } finally {
@@ -6728,6 +6842,98 @@ export const App: React.FC = () => {
                               <strong style={{ color: '#2E7D32' }}>₹{(archiveZReportData.total_tax_paise / 100).toFixed(2)}</strong>
                             </div>
                           </div>
+                        </div>
+
+                        {/* Card 5: Item-wise Sales Breakdown (பொருட்கள் வாரியான விற்பனை) */}
+                        <div style={{ backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: 16, marginBottom: 20 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 8 }}>
+                            <div>
+                              <div style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D' }}>
+                                📦 Item-wise Sales Breakdown
+                              </div>
+                              <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
+                                பொருட்கள் வாரியான விற்பனை விவரம்
+                              </div>
+                            </div>
+                            {archiveZReportData.item_sales && archiveZReportData.item_sales.length > 0 && (
+                              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                                <span style={{ fontSize: 12, backgroundColor: '#FFF9F0', border: '1px solid #EAD8C7', padding: '3px 10px', borderRadius: 12, fontWeight: 700, color: '#8B1E2D' }}>
+                                  {archiveZReportData.item_sales.length} Items Sold
+                                </span>
+                                <span style={{ fontSize: 12, backgroundColor: '#E8F5E9', border: '1px solid #C8E6C9', padding: '3px 10px', borderRadius: 12, fontWeight: 800, color: '#2E7D32' }}>
+                                  ₹{(archiveZReportData.item_sales.reduce((acc, it) => acc + it.gross_paise, 0) / 100).toFixed(2)} Total
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {archiveZReportData.item_sales && archiveZReportData.item_sales.length > 0 ? (
+                            <div style={{ overflowX: 'auto' }}>
+                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, textAlign: 'left' }}>
+                                <thead>
+                                  <tr style={{ backgroundColor: '#F8F9FA', borderBottom: '2px solid #E0E0E0', color: '#444' }}>
+                                    <th style={{ padding: '8px 12px', fontWeight: 800, width: '40%' }}>Product Name / பொருள்</th>
+                                    <th style={{ padding: '8px 12px', fontWeight: 700, textAlign: 'center', width: '15%' }}>SKU / Unit</th>
+                                    <th style={{ padding: '8px 12px', fontWeight: 700, textAlign: 'center', width: '15%' }}>Bills Count</th>
+                                    <th style={{ padding: '8px 12px', fontWeight: 800, textAlign: 'right', width: '15%' }}>Quantity Sold</th>
+                                    <th style={{ padding: '8px 12px', fontWeight: 800, textAlign: 'right', width: '15%' }}>Gross Sales (₹)</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {archiveZReportData.item_sales.map((item, idx) => (
+                                    <tr
+                                      key={item.product_id || idx}
+                                      style={{
+                                        borderBottom: '1px solid #EEE',
+                                        backgroundColor: idx % 2 === 0 ? '#FFFFFF' : '#FAFAFA',
+                                      }}
+                                    >
+                                      <td style={{ padding: '8px 12px' }}>
+                                        <div style={{ fontWeight: 700, color: '#222' }}>{item.product_name}</div>
+                                        {item.tamil_name && (
+                                          <div style={{ fontSize: 11, color: '#666' }}>{item.tamil_name}</div>
+                                        )}
+                                      </td>
+                                      <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                                        <span style={{ fontSize: 11, padding: '2px 6px', backgroundColor: '#EDE7F6', borderRadius: 4, color: '#4A148C', fontWeight: 600 }}>
+                                          {item.sku}
+                                        </span>
+                                        <span style={{ fontSize: 10, color: '#888', marginLeft: 4 }}>
+                                          ({item.pricing_unit === 'PER_KG' ? 'Weight' : 'Piece'})
+                                        </span>
+                                      </td>
+                                      <td style={{ padding: '8px 12px', textAlign: 'center', color: '#555', fontWeight: 600 }}>
+                                        {item.bills_count}
+                                      </td>
+                                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 800, color: '#1B5E20' }}>
+                                        {item.quantity_formatted}
+                                      </td>
+                                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 800, color: '#8B1E2D' }}>
+                                        ₹{(item.gross_paise / 100).toFixed(2)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                                <tfoot>
+                                  <tr style={{ backgroundColor: '#FFF9F0', borderTop: '2px solid #8B1E2D', fontWeight: 800 }}>
+                                    <td colSpan={3} style={{ padding: '10px 12px', color: '#8B1E2D' }}>
+                                      Total ({archiveZReportData.item_sales.length} Distinct Products)
+                                    </td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'right', color: '#1B5E20' }}>
+                                      —
+                                    </td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'right', color: '#8B1E2D', fontSize: 13 }}>
+                                      ₹{(archiveZReportData.item_sales.reduce((acc, it) => acc + it.gross_paise, 0) / 100).toFixed(2)}
+                                    </td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
+                          ) : (
+                            <div style={{ textAlign: 'center', padding: '20px', color: '#888', fontStyle: 'italic', fontSize: 12 }}>
+                              No items recorded for this shift or business date.
+                            </div>
+                          )}
                         </div>
                       </div>
                     ) : (
@@ -10885,6 +11091,60 @@ export const App: React.FC = () => {
                   <span>TOTAL GST:</span>
                   <span>₹{(activeZReportModal.total_tax_paise / 100).toFixed(2)}</span>
                 </div>
+              </div>
+
+              {/* Section 5: Item-wise Sales Breakdown (பொருட்கள் வாரியான விற்பனை) */}
+              <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
+              <div style={{ marginBottom: 10, color: '#000000' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <span style={{ fontWeight: 800, textDecoration: 'underline', color: '#000000' }}>5. ITEM-WISE SALES</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#444' }}>பொருட்கள் வாரியான பட்டியல்</span>
+                </div>
+
+                {activeZReportModal.item_sales && activeZReportModal.item_sales.length > 0 ? (
+                  <>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, color: '#000000', marginTop: 4 }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1.5px dashed #000000', textAlign: 'left' }}>
+                          <th style={{ padding: '4px 0', fontWeight: 900, textTransform: 'uppercase' }}>ItemName</th>
+                          <th style={{ padding: '4px 0', textAlign: 'right', fontWeight: 900, textTransform: 'uppercase' }}>Qty</th>
+                          <th style={{ padding: '4px 0', textAlign: 'right', fontWeight: 900, textTransform: 'uppercase' }}>Sales (₹)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activeZReportModal.item_sales.map((item, idx) => (
+                          <tr key={item.product_id || idx} style={{ borderBottom: '0.5px dotted #888' }}>
+                            <td style={{ padding: '3px 0', verticalAlign: 'top', paddingRight: 6 }}>
+                              <div style={{ fontWeight: 700, textTransform: 'uppercase' }}>{item.product_name}</div>
+                              {item.tamil_name && (
+                                <div style={{ fontSize: 9.5, color: '#333' }}>{item.tamil_name}</div>
+                              )}
+                            </td>
+                            <td style={{ padding: '3px 0', textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                              {item.quantity_formatted}
+                            </td>
+                            <td style={{ padding: '3px 0', textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                              {(item.gross_paise / 100).toFixed(2)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, marginTop: 6, paddingTop: 4, borderTop: '1px dotted #000000', fontSize: 11 }}>
+                      <span>Total Items Sold:</span>
+                      <span>
+                        {activeZReportModal.item_sales.length} items (₹{(
+                          activeZReportModal.item_sales.reduce((acc, it) => acc + it.gross_paise, 0) / 100
+                        ).toFixed(2)})
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 11, fontStyle: 'italic', color: '#666', textAlign: 'center', padding: '6px 0' }}>
+                    No items recorded for this shift.
+                  </div>
+                )}
               </div>
 
               <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />

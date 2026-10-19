@@ -1,6 +1,6 @@
 [package]
 name = "malgudi-pos-native"
-version = "2.9.31"
+version = "2.9.32"
 edition = "2021"
 description = "Native Rust SQLite database and transaction engine for Malgudi Mithais POS"
 
