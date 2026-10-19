@@ -4710,20 +4710,20 @@ export const App: React.FC = () => {
           <div style={{ marginTop: 22, paddingTop: 14, borderTop: '1px solid rgba(139, 30, 45, 0.15)', textAlign: 'center' }}>
             <div style={{
               display: 'inline-block',
-              padding: '5px 14px',
+              padding: '3px 10px',
               backgroundColor: '#FFF0F2',
               borderRadius: 6,
               border: '1px solid #FFCDD2',
-              fontSize: 12,
+              fontSize: 10.5,
               fontWeight: 800,
               color: '#8B1E2D',
-              letterSpacing: '0.5px',
+              letterSpacing: '0.4px',
               textTransform: 'uppercase',
-              marginBottom: 8
+              marginBottom: 6
             }}>
               © Copyright Malgudi Mithais
             </div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#5A4638', letterSpacing: '0.2px' }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, color: '#5A4638', letterSpacing: '0.2px' }}>
               Design &amp; Developed by <span style={{ color: '#8B1E2D', fontWeight: 800 }}>Ajith</span>
             </div>
           </div>
