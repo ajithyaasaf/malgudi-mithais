@@ -480,12 +480,12 @@ fn get_sale_details(
             .map_err(|e| format!("Unauthorized: {}", e))?;
 
     let sale_row = conn.query_row(
-        "SELECT s.id, s.invoice_number, s.business_date, s.created_at, s.cashier_id, s.terminal_id, s.branch_id,
+        "SELECT s.id, s.invoice_number, s.business_date, s.created_at, s.session_id, s.terminal_id, s.branch_id,
                 s.subtotal_taxable_paise, s.total_cgst_paise, s.total_sgst_paise, s.round_off_paise, s.net_payable_paise,
-                s.sale_status, s.payment_status, COALESCE(u.display_name, s.cashier_id) as cashier_name,
+                s.sale_status, s.payment_status,
+                COALESCE((SELECT us.display_name FROM user_sessions us WHERE us.session_id = s.session_id LIMIT 1), 'Store Owner') as cashier_name,
                 s.customer_name, s.customer_phone, s.customer_location
          FROM sales s
-         LEFT JOIN users u ON u.id = s.cashier_id
          WHERE s.id = ?1 OR s.invoice_number = ?1;",
         [&invoice_or_sale_id],
         |r| {
@@ -515,7 +515,11 @@ fn get_sale_details(
     let sale_id = sale_row.0;
     let branch_cfg = sync::get_branch_config(&conn).unwrap_or(sync::BranchConfig {
         branch_id: sale_row.6.clone(),
-        branch_name: "Iyer Bungalow Branch (IB)".to_string(),
+        branch_name: if sale_row.6 == "UK" {
+            "Umachikulam Branch (UK)".to_string()
+        } else {
+            "Iyer Bungalow Branch (IB)".to_string()
+        },
         terminal_id: sale_row.5.clone(),
         counter_id: "C1".to_string(),
         cloud_api_url: String::new(),
@@ -539,13 +543,20 @@ fn get_sale_details(
             let pricing_unit: String = r.get(3)?;
             let qty_input: i64 = r.get(4)?;
             let qty_formatted = if pricing_unit == "PER_KG" {
-                if qty_input >= 1000 {
-                    format!("{:.3} kg", (qty_input as f64) / 1000.0)
+                let grams = (qty_input as f64) / 1000.0;
+                if grams >= 1000.0 {
+                    format!("{:.3} kg", grams / 1000.0)
                 } else {
-                    format!("{}g", qty_input)
+                    format!("{}g", grams.round() as i64)
                 }
             } else {
-                format!("{} pcs", qty_input)
+                let unit_suffix = match pricing_unit.as_str() {
+                    "PER_PIECE" => "pcs",
+                    "PER_PACK" => "packs",
+                    "PER_BOX" => "boxes",
+                    _ => "units",
+                };
+                format!("{} {}", qty_input, unit_suffix)
             };
 
             Ok(DetailedReceiptItem {
@@ -1218,6 +1229,19 @@ fn inventory_toggle_product_status(
 }
 
 #[tauri::command]
+fn inventory_delete_product(
+    state: tauri::State<AppState>,
+    session_token: String,
+    product_id: String,
+) -> Result<inventory::DeleteProductResult, String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    inventory::delete_product(&conn, &session_token, &product_id)
+}
+
+#[tauri::command]
 fn inventory_adjust_stock(
     state: tauri::State<AppState>,
     session_token: String,
@@ -1536,6 +1560,7 @@ fn main() {
             inventory_create_product,
             inventory_update_product,
             inventory_toggle_product_status,
+            inventory_delete_product,
             inventory_adjust_stock,
             inventory_list_movements,
             inventory_void_sale,

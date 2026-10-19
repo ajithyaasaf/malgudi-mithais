@@ -482,3 +482,119 @@ fn test_indian_financial_year_derivation_boundaries() {
         "2627"
     );
 }
+
+#[test]
+fn test_product_deletion_safety_and_integrity() {
+    let db_path = Path::new("target/test_inv_delete.db");
+    let conn = setup_inventory_test_db(db_path);
+
+    // 1. Provision owner
+    let owner_session = auth::provision_first_owner(
+        &conn,
+        &ProvisionOwnerPayload {
+            username: "delete_owner".to_string(),
+            display_name: "Delete Owner".to_string(),
+            pin: "112233".to_string(),
+            branch_id: Some("IB".to_string()),
+            terminal_id: Some("T1".to_string()),
+            counter_id: Some("C1".to_string()),
+            session_id: Some("sess_del".to_string()),
+        },
+    ).unwrap();
+
+    // 2. Create a temporary product with 0 sales
+    let created = inventory::create_product(
+        &conn,
+        &owner_session.token,
+        &CreateProductPayload {
+            name: "Temp Sweet".to_string(),
+            tamil_name: "தற்காலிக இனிப்பு".to_string(),
+            sku: "TMP-001".to_string(),
+            barcode: None,
+            category_id: "cat_sweets".to_string(),
+            pricing_unit: "PER_KG".to_string(),
+            inventory_unit: "MG".to_string(),
+            base_price_paise: 50000,
+            piece_price_paise: None,
+            tax_rate_bps: Some(500),
+            hsn_code: "21069099".to_string(),
+            initial_stock: Some(10_000_000),
+            branch_id: Some("IB".to_string()),
+        },
+    ).unwrap();
+
+    // Hard deletion: product has 0 sales
+    let del_res = inventory::delete_product(&conn, &owner_session.token, &created.id).unwrap();
+    assert!(del_res.hard_deleted, "Expected hard deletion when product has 0 sales");
+    assert_eq!(del_res.sales_retained_count, 0);
+
+    // Verify product is gone from DB
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM products WHERE id = ?1;", [&created.id], |r| r.get(0)).unwrap();
+    assert_eq!(count, 0, "Product row must be completely removed");
+
+    // 3. Now test product with sales history:
+    // Create another product and finalize a sale with it
+    let sold_prod = inventory::create_product(
+        &conn,
+        &owner_session.token,
+        &CreateProductPayload {
+            name: "Sold Sweet".to_string(),
+            tamil_name: "விற்கப்பட்ட இனிப்பு".to_string(),
+            sku: "SLD-001".to_string(),
+            barcode: None,
+            category_id: "cat_sweets".to_string(),
+            pricing_unit: "PER_PIECE".to_string(),
+            inventory_unit: "PIECE".to_string(),
+            base_price_paise: 2000,
+            piece_price_paise: None,
+            tax_rate_bps: Some(500),
+            hsn_code: "21069099".to_string(),
+            initial_stock: Some(50),
+            branch_id: Some("IB".to_string()),
+        },
+    ).unwrap();
+
+    // Record a parent sale and a sale item to simulate sales history
+    conn.execute(
+        "INSERT INTO sales (id, invoice_number, branch_id, counter_id, terminal_id, session_id, business_date, tax_policy_version, subtotal_taxable_paise, total_cgst_paise, total_sgst_paise, total_igst_paise, round_off_paise, net_payable_paise, sale_status, payment_status, sync_status, created_at)
+         VALUES ('sale_test_1', 'IB1/2627/000999', 'IB', 'C1', 'T1', 'sess_del', '2026-10-19', '2026.1-TN', 1905, 47, 48, 0, 0, 2000, 'FINALIZED', 'SETTLED', 'SYNC_PENDING', '2026-10-19T10:00:00Z');",
+        [],
+    ).unwrap();
+
+    conn.execute(
+        "INSERT INTO sale_items (id, sale_id, product_id, quantity_input, pricing_unit, weight_input_source, unit_price_paise, taxable_paise, cgst_paise, sgst_paise, igst_paise, total_tax_paise, gross_paise, stock_deduction_delta, stock_unit)
+         VALUES ('si_test_del_1', 'sale_test_1', ?1, 1, 'PER_PIECE', 'MANUAL_KEYPAD', 2000, 1905, 47, 48, 0, 95, 2000, -1, 'PIECE');",
+        [&sold_prod.id],
+    ).unwrap();
+
+    // Now delete the product with sales history
+    let del_sold_res = inventory::delete_product(&conn, &owner_session.token, &sold_prod.id).unwrap();
+    assert!(!del_sold_res.hard_deleted, "Must soft-delete / archive when product has sales");
+    assert_eq!(del_sold_res.sales_retained_count, 1);
+
+    // Verify it is excluded from list_products
+    let active_prods = inventory::list_products(&conn, "IB", true).unwrap();
+    assert!(active_prods.iter().all(|p| p.id != sold_prod.id), "Archived product must not appear in catalog list");
+
+    // Verify original SKU SLD-001 was freed and can be reused
+    let new_with_same_sku = inventory::create_product(
+        &conn,
+        &owner_session.token,
+        &CreateProductPayload {
+            name: "Brand New Sweet with Same SKU".to_string(),
+            tamil_name: "புதிய இனிப்பு".to_string(),
+            sku: "SLD-001".to_string(),
+            barcode: None,
+            category_id: "cat_sweets".to_string(),
+            pricing_unit: "PER_PIECE".to_string(),
+            inventory_unit: "PIECE".to_string(),
+            base_price_paise: 2500,
+            piece_price_paise: None,
+            tax_rate_bps: Some(500),
+            hsn_code: "21069099".to_string(),
+            initial_stock: Some(10),
+            branch_id: Some("IB".to_string()),
+        },
+    );
+    assert!(new_with_same_sku.is_ok(), "Original SKU should be immediately reusable after deletion");
+}

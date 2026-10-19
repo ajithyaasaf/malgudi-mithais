@@ -282,6 +282,7 @@ impl DatabaseManager {
                 tax_rate_bps INTEGER NOT NULL DEFAULT 500,
                 hsn_code TEXT NOT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1,
+                is_deleted INTEGER NOT NULL DEFAULT 0,
                 version INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -328,6 +329,12 @@ impl DatabaseManager {
             if !cols.contains(&"version".to_string()) {
                 conn.execute(
                     "ALTER TABLE products ADD COLUMN version INTEGER NOT NULL DEFAULT 1;",
+                    [],
+                )?;
+            }
+            if !cols.contains(&"is_deleted".to_string()) {
+                conn.execute(
+                    "ALTER TABLE products ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0;",
                     [],
                 )?;
             }

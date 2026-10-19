@@ -86,6 +86,7 @@ export interface DetailedSaleReceipt {
   customer_name?: string | null;
   customer_phone?: string | null;
   customer_location?: string | null;
+  is_reprint?: boolean;
 }
 
 export interface OpeningFloatStatus {
@@ -171,6 +172,7 @@ export interface DBProductRecord {
   stock_unit: string;
   created_at: string;
   updated_at: string;
+  is_deleted?: boolean;
 }
 
 export function toProductDefinition(rec: DBProductRecord): ProductDefinition {
@@ -2012,6 +2014,9 @@ export const App: React.FC = () => {
   const [ownerProductSearch, setOwnerProductSearch] = useState<string>('');
   const [ownerCategoryFilter, setOwnerCategoryFilter] = useState<string>('all');
   const [ownerStatusFilter, setOwnerStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [productToDelete, setProductToDelete] = useState<DBProductRecord | null>(null);
+  const [isDeletingProduct, setIsDeletingProduct] = useState<boolean>(false);
+  const [deleteProductError, setDeleteProductError] = useState<string | null>(null);
 
   // --- OTA Software Updates State (Tauri v2 Auto-Updater) ---
   const [availableUpdate, setAvailableUpdate] = useState<TauriUpdate | null>(null);
@@ -2376,15 +2381,39 @@ export const App: React.FC = () => {
           sessionToken: currentSession?.token,
           invoiceOrSaleId: invoiceNumber,
         });
+        detailed.is_reprint = true;
         setLastSettledReceipt(detailed);
         setActiveReceiptModal(detailed);
         return;
-      } catch (e) {
+      } catch (e: any) {
         console.error('Failed to get sale details via Tauri:', e);
+        setErrorMessage('Failed to load invoice reprint details: ' + (e?.message || String(e)));
       }
     }
 
     if (fallbackSummary) {
+      const fallbackItems: DetailedReceiptItem[] = (fallbackSummary.items || []).map(item => {
+        const prod = catalog.find(p => p.id === item.product_id);
+        const qtyInput = item.pricing_unit === 'PER_KG' ? Math.round(item.quantity_input / 1000) : item.quantity_input;
+        const qtyFormatted = item.pricing_unit === 'PER_KG'
+          ? (qtyInput >= 1000 ? `${(qtyInput / 1000).toFixed(3)} kg` : `${qtyInput}g`)
+          : `${qtyInput} pcs`;
+        return {
+          product_id: item.product_id,
+          product_name: prod?.name || item.product_id,
+          tamil_name: prod?.tamil_name || '',
+          pricing_unit: item.pricing_unit,
+          quantity_input: qtyInput,
+          quantity_formatted: qtyFormatted,
+          unit_price_paise: item.unit_price_paise || (prod ? prod.base_price_paise : 0),
+          taxable_paise: item.taxable_paise,
+          cgst_paise: item.cgst_paise,
+          sgst_paise: item.sgst_paise,
+          total_tax_paise: item.total_tax_paise,
+          gross_paise: item.gross_paise,
+        };
+      });
+
       const mockReceipt: DetailedSaleReceipt = {
         sale_id: fallbackSummary.sale_id,
         invoice_number: fallbackSummary.invoice_number,
@@ -2401,7 +2430,8 @@ export const App: React.FC = () => {
         net_payable_paise: fallbackSummary.net_payable_paise,
         sale_status: fallbackSummary.sale_status || 'FINALIZED',
         payment_status: fallbackSummary.payment_status || 'SETTLED',
-        items: [],
+        items: fallbackItems,
+        is_reprint: true,
         payments: [
           {
             payment_method: fallbackSummary.cash_retained_paise > 0 ? 'CASH' : 'UPI',
@@ -3626,6 +3656,36 @@ export const App: React.FC = () => {
       }
     } catch (err: any) {
       setAdminActionError(err.message || String(err));
+    }
+  };
+
+  const handleConfirmDeleteProduct = async () => {
+    if (!productToDelete || !currentSession) return;
+    setIsDeletingProduct(true);
+    setDeleteProductError(null);
+    try {
+      if (isTauriRuntime && window.__TAURI__?.core) {
+        const res = await window.__TAURI__!.core.invoke<{
+          product_id: string;
+          hard_deleted: boolean;
+          sales_retained_count: number;
+          message: string;
+        }>('inventory_delete_product', {
+          sessionToken: currentSession.token,
+          productId: productToDelete.id,
+        });
+        setAdminActionMessage(res.message);
+        await refreshCatalog(currentSession.token);
+      } else {
+        // Browser dev fallback
+        setCatalog(prev => prev.filter(p => p.id !== productToDelete.id));
+        setAdminActionMessage(`Product '${productToDelete.name}' deleted.`);
+      }
+      setProductToDelete(null);
+    } catch (err: any) {
+      setDeleteProductError(err.message || String(err));
+    } finally {
+      setIsDeletingProduct(false);
     }
   };
 
@@ -5487,9 +5547,29 @@ export const App: React.FC = () => {
                                     borderRadius: 4,
                                     cursor: 'pointer',
                                     fontWeight: 600,
+                                    marginRight: 6,
                                   }}
                                 >
                                   {prod.is_active ? 'Deactivate' : 'Activate'}
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setDeleteProductError(null);
+                                    setProductToDelete(prod);
+                                  }}
+                                  style={{
+                                    padding: '4px 8px',
+                                    fontSize: 12,
+                                    backgroundColor: '#FFEBEE',
+                                    color: '#C62828',
+                                    border: '1px solid #FFCDD2',
+                                    borderRadius: 4,
+                                    cursor: 'pointer',
+                                    fontWeight: 600,
+                                  }}
+                                  title="Delete Product"
+                                >
+                                  🗑️ Delete
                                 </button>
                               </td>
                             </tr>
@@ -9991,6 +10071,12 @@ export const App: React.FC = () => {
                 </div>
               )}
 
+              {receipt.is_reprint && receipt.sale_status !== 'VOIDED' && (
+                <div style={{ color: '#000000', fontWeight: 900, textAlign: 'center', padding: '4px 0', margin: '4px 0', border: '1.5px dashed #000000', fontSize: 12, letterSpacing: 1 }}>
+                  *** DUPLICATE / REPRINT SLIP ***
+                </div>
+              )}
+
               <div style={{ marginBottom: 8, fontSize: 11, fontWeight: 600, color: '#000000', lineHeight: 1.5 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span><strong>Invoice:</strong> {receipt.invoice_number}</span>
@@ -11185,6 +11271,143 @@ export const App: React.FC = () => {
                 }}
               >
                 Print 80mm Z-Slip
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL: Confirm Delete Product                             */}
+      {/* ========================================================= */}
+      {productToDelete && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1300,
+            backdropFilter: 'blur(3px)',
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              borderRadius: 12,
+              padding: 24,
+              width: 500,
+              maxWidth: '92vw',
+              boxShadow: '0 12px 36px rgba(0,0,0,0.3)',
+              border: '1.5px solid #FFCDD2',
+            }}
+          >
+            {/* Modal Header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <div style={{ width: 42, height: 42, borderRadius: '50%', backgroundColor: '#FFEBEE', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>
+                🗑️
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: '#C62828' }}>
+                  Delete Product / பொருள் நீக்குதல்
+                </h3>
+                <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
+                  Catalog removal & financial audit safety protection
+                </div>
+              </div>
+            </div>
+
+            {/* Product Details Card */}
+            <div style={{ backgroundColor: '#FAFAFA', border: '1px solid #EEE', borderRadius: 8, padding: 14, marginBottom: 16 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#222' }}>
+                {productToDelete.name}
+              </div>
+              {productToDelete.tamil_name && (
+                <div style={{ fontSize: 13, color: '#555', marginTop: 2 }}>
+                  {productToDelete.tamil_name}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 12, color: '#666' }}>
+                <span>SKU: <strong>{productToDelete.sku}</strong></span>
+                <span>•</span>
+                <span>Price: <strong>₹{(productToDelete.base_price_paise / 100).toFixed(2)}</strong></span>
+                <span>•</span>
+                <span>Stock: <strong style={{ color: productToDelete.current_stock < 0 ? '#C62828' : '#2E7D32' }}>{productToDelete.current_stock} {productToDelete.stock_unit}</strong></span>
+              </div>
+            </div>
+
+            {/* Safety Explanation Notice */}
+            <div style={{ backgroundColor: '#FFF8E1', border: '1px solid #FFE082', borderRadius: 8, padding: 12, fontSize: 12, color: '#795548', marginBottom: 18, lineHeight: 1.5 }}>
+              <div style={{ fontWeight: 700, color: '#F57F17', marginBottom: 4 }}>
+                🛡️ Financial & Tax Audit Integrity:
+              </div>
+              <div>
+                • If this product has <strong>never been sold</strong>, it will be <strong>permanently purged</strong> from the database.
+              </div>
+              <div style={{ marginTop: 4 }}>
+                • If it was <strong>already sold in past invoices</strong>, it will be <strong>safely removed from your catalog and cashier screen</strong> while preserving historical sales, GST reports, and reprint audits.
+              </div>
+              <div style={{ marginTop: 4 }}>
+                • The SKU <strong>{productToDelete.sku}</strong> will be <strong>immediately freed up</strong> for future reuse.
+              </div>
+            </div>
+
+            {deleteProductError && (
+              <div style={{ backgroundColor: '#FFEBEE', border: '1px solid #FFCDD2', color: '#C62828', borderRadius: 6, padding: '8px 12px', fontSize: 12, marginBottom: 16, fontWeight: 600 }}>
+                ⚠️ {deleteProductError}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isDeletingProduct) {
+                    setProductToDelete(null);
+                    setDeleteProductError(null);
+                  }
+                }}
+                disabled={isDeletingProduct}
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: 6,
+                  border: '1px solid #CCC',
+                  backgroundColor: '#F5F5F5',
+                  color: '#333',
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: isDeletingProduct ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteProduct}
+                disabled={isDeletingProduct}
+                style={{
+                  padding: '9px 20px',
+                  borderRadius: 6,
+                  border: 'none',
+                  backgroundColor: '#C62828',
+                  color: '#FFF',
+                  fontWeight: 700,
+                  fontSize: 13,
+                  cursor: isDeletingProduct ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  boxShadow: '0 2px 6px rgba(198, 40, 40, 0.3)',
+                }}
+              >
+                {isDeletingProduct ? '⏳ Deleting...' : '🗑️ Yes, Delete Product'}
               </button>
             </div>
           </div>

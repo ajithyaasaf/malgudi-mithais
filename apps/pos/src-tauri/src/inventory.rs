@@ -25,6 +25,8 @@ pub struct ProductRecord {
     pub stock_unit: String,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub is_deleted: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -149,9 +151,11 @@ pub fn list_products(
             COALESCE(sb.current_quantity, 0) as current_stock,
             COALESCE(sb.unit, p.inventory_unit) as stock_unit,
             p.created_at, p.updated_at,
-            COALESCE(p.version, 1) as version
+            COALESCE(p.version, 1) as version,
+            COALESCE(p.is_deleted, 0) as is_deleted
          FROM products p
          LEFT JOIN stock_balances sb ON p.id = sb.product_id AND sb.branch_id = ?1
+         WHERE COALESCE(p.is_deleted, 0) = 0
          ORDER BY p.category_id, p.name;"
     } else {
         "SELECT 
@@ -161,10 +165,11 @@ pub fn list_products(
             COALESCE(sb.current_quantity, 0) as current_stock,
             COALESCE(sb.unit, p.inventory_unit) as stock_unit,
             p.created_at, p.updated_at,
-            COALESCE(p.version, 1) as version
+            COALESCE(p.version, 1) as version,
+            COALESCE(p.is_deleted, 0) as is_deleted
          FROM products p
          LEFT JOIN stock_balances sb ON p.id = sb.product_id AND sb.branch_id = ?1
-         WHERE p.is_active = 1
+         WHERE p.is_active = 1 AND COALESCE(p.is_deleted, 0) = 0
          ORDER BY p.category_id, p.name;"
     };
 
@@ -174,6 +179,7 @@ pub fn list_products(
     let rows = stmt
         .query_map([branch_id], |r| {
             let is_active_int: i64 = r.get(13)?;
+            let is_del_int: i64 = r.get(19).unwrap_or(0);
             Ok(ProductRecord {
                 id: r.get(0)?,
                 name: r.get(1)?,
@@ -194,6 +200,7 @@ pub fn list_products(
                 stock_unit: r.get(15)?,
                 created_at: r.get(16)?,
                 updated_at: r.get(17)?,
+                is_deleted: is_del_int == 1,
             })
         })
         .map_err(|e| format!("Product query map error: {}", e))?;
@@ -328,6 +335,7 @@ pub fn create_product(
         stock_unit: payload.inventory_unit.clone(),
         created_at: now.clone(),
         updated_at: now,
+        is_deleted: false,
     })
 }
 
@@ -458,6 +466,7 @@ pub fn update_product(
         stock_unit: payload.inventory_unit.clone(),
         created_at,
         updated_at: now,
+        is_deleted: false,
     })
 }
 
@@ -487,6 +496,91 @@ pub fn toggle_product_status(
     record_audit_event(conn, action, "PRODUCT", product_id, &session.user_id)?;
 
     Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DeleteProductResult {
+    pub product_id: String,
+    pub hard_deleted: bool,
+    pub sales_retained_count: i64,
+    pub message: String,
+}
+
+/// Deletes a product safely adhering to financial integrity boundaries.
+/// Strictly enforced: Admin permission `admin:manage_inventory` required.
+/// Safety rules:
+/// - If product has 0 historical sales (0 rows in sale_items):
+///     Hard deletes from `stock_movements`, `stock_balances`, and `products`.
+/// - If product has >= 1 historical sales:
+///     Soft-deletes (sets `is_deleted = 1`, `is_active = 0`), and appends a `-DEL-<suffix>`
+///     to the SKU so the original SKU is immediately freed up for reuse, while preserving
+///     historical invoice items, GST tax audit trail, and receipt reprint integrity.
+pub fn delete_product(
+    conn: &Connection,
+    session_token: &str,
+    product_id: &str,
+) -> Result<DeleteProductResult, String> {
+    let session = validate_session_and_permission(conn, session_token, "admin:manage_inventory")?;
+
+    let product: (String, String, String) = conn
+        .query_row(
+            "SELECT id, name, sku FROM products WHERE id = ?1;",
+            [product_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|_| format!("Product with ID '{}' not found", product_id))?;
+
+    let sales_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sale_items WHERE product_id = ?1;",
+            [product_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Transaction error: {}", e))?;
+
+    if sales_count == 0 {
+        tx.execute("DELETE FROM stock_movements WHERE product_id = ?1;", [product_id])
+            .map_err(|e| format!("Failed to delete stock movements: {}", e))?;
+        tx.execute("DELETE FROM stock_balances WHERE product_id = ?1;", [product_id])
+            .map_err(|e| format!("Failed to delete stock balances: {}", e))?;
+        tx.execute("DELETE FROM products WHERE id = ?1;", [product_id])
+            .map_err(|e| format!("Failed to delete product: {}", e))?;
+
+        record_audit_event(&tx, "PRODUCT_HARD_DELETED", "PRODUCT", product_id, &session.user_id)?;
+        tx.commit().map_err(|e| format!("Commit error: {}", e))?;
+
+        Ok(DeleteProductResult {
+            product_id: product_id.to_string(),
+            hard_deleted: true,
+            sales_retained_count: 0,
+            message: format!("Product '{}' ({}) was permanently deleted from the database.", product.1, product.2),
+        })
+    } else {
+        let now = get_iso_now();
+        let freed_sku = format!("{}-DEL-{}", product.2, &product.0[product.0.len().saturating_sub(6)..]);
+        tx.execute(
+            "UPDATE products SET is_deleted = 1, is_active = 0, sku = ?1, updated_at = ?2 WHERE id = ?3;",
+            params![freed_sku, now, product_id],
+        )
+        .map_err(|e| format!("Failed to archive product: {}", e))?;
+
+        record_audit_event(&tx, "PRODUCT_SOFT_DELETED", "PRODUCT", product_id, &session.user_id)?;
+        tx.commit().map_err(|e| format!("Commit error: {}", e))?;
+
+        Ok(DeleteProductResult {
+            product_id: product_id.to_string(),
+            hard_deleted: false,
+            sales_retained_count: sales_count,
+            message: format!(
+                "Product '{}' has {} past sales records. It has been removed from catalog while preserving tax & invoice audit history.",
+                product.1, sales_count
+            ),
+        })
+    }
 }
 
 /// Adjusts stock for a product with mandatory reason and audit recording.
