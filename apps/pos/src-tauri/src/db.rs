@@ -1601,6 +1601,12 @@ impl DatabaseManager {
         ];
 
         for item in official_items {
+            // Disambiguate any existing product with the same SKU to prevent UNIQUE constraint failure
+            conn.execute(
+                "UPDATE products SET sku = 'OLD-' || sku || '-' || SUBSTR(id, -6) WHERE sku = ?1 AND id != ?2;",
+                rusqlite::params![item.3, item.0],
+            )?;
+
             conn.execute(
                 "INSERT INTO products (
                     id, name, tamil_name, sku, category_id, pricing_unit, inventory_unit,
