@@ -39,6 +39,7 @@ export interface FinalizeSaleResult {
   sale_status?: string;
   payment_status: string;
   created_at: string;
+  items?: any[];
 }
 
 export interface DetailedReceiptItem {
@@ -2317,6 +2318,7 @@ export const App: React.FC = () => {
 
   // Helper: Print a quick diagnostic test slip to verify thermal printer connectivity
   const handlePrintTestSlip = () => {
+    console.log('Printing test slip to:', systemDefaultPrinter);
     const testSlip: DetailedSaleReceipt = {
       invoice_number: 'TEST-DIAGNOSTIC',
       sale_id: 'test_slip',
@@ -2335,26 +2337,27 @@ export const App: React.FC = () => {
       payment_status: 'SETTLED',
       items: [
         {
-          sale_item_id: 'test_item_1',
           product_id: 'test_prod',
           product_name: 'Printer Self-Test / சோதனை அச்சு',
-          hsn_code: 'TEST',
-          pricing_unit: 'PIECE',
-          quantity: 1,
-          quantity_display: '1 test',
+          tamil_name: 'சோதனை அச்சு',
+          pricing_unit: 'PER_PIECE',
+          quantity_input: 1,
+          quantity_formatted: '1 test',
           unit_price_paise: 0,
-          gross_total_paise: 0,
-          gst_percent: 0,
+          taxable_paise: 0,
           cgst_paise: 0,
           sgst_paise: 0,
+          total_tax_paise: 0,
+          gross_paise: 0,
         },
       ],
       payments: [
         {
-          payment_id: 'test_pay',
-          method: 'CASH',
-          amount_paise: 0,
-          details: 'Silent Kiosk Print Verified',
+          payment_method: 'CASH',
+          allocated_amount_paise: 0,
+          tendered_paise: 0,
+          change_returned_paise: 0,
+          net_amount_paise: 0,
         },
       ],
       customer_name: null,
@@ -2638,7 +2641,7 @@ export const App: React.FC = () => {
         persistedHistory
           .filter(h => h.sale_status !== 'VOIDED')
           .forEach(h => {
-            h.items.forEach(item => {
+            (h.items || []).forEach(item => {
               const existing = mockItemMap.get(item.product_id);
               if (existing) {
                 existing.total_quantity_canonical += item.quantity_input;
@@ -2729,7 +2732,7 @@ export const App: React.FC = () => {
         persistedHistory
           .filter(h => h.sale_status !== 'VOIDED')
           .forEach(h => {
-            h.items.forEach(item => {
+            (h.items || []).forEach(item => {
               const existing = mockItemMap.get(item.product_id);
               if (existing) {
                 existing.total_quantity_canonical += item.quantity_input;
@@ -2763,7 +2766,8 @@ export const App: React.FC = () => {
           business_date: targetDate,
           branch_name: syncConfig?.branch_name || 'Iyer Bungalow Branch (IB)',
           terminal_id: 'TERM-01',
-          closed_by_user: currentSession?.user_name || 'Cashier',
+          session_id: 'sess_archive_mock',
+          closed_by_user: currentSession?.display_name || currentSession?.username || 'Cashier',
           closed_at: new Date().toISOString(),
           opening_float_paise: 200000,
           cash_sales_paise: Math.round(totalGrossPaise * 0.7),
@@ -3580,7 +3584,7 @@ export const App: React.FC = () => {
 
     const finalGstPercent = prodFormGstMode === 'custom'
       ? Math.max(0, Math.min(100, parseFloat(prodFormCustomGst) || 0))
-      : Number(prodFormGstMode);
+      : prodFormGstPercent;
     const tax_rate_bps = Math.round(finalGstPercent * 100);
 
     try {
