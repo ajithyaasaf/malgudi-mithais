@@ -4723,8 +4723,8 @@ export const App: React.FC = () => {
             }}>
               © Copyright Malgudi Mithais
             </div>
-            <div style={{ fontSize: 13, fontWeight: 800, color: '#2C1810', letterSpacing: '0.2px' }}>
-              Design &amp; Developed by <span style={{ color: '#8B1E2D', fontWeight: 900 }}>Ajith</span>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#5A4638', letterSpacing: '0.2px' }}>
+              Design &amp; Developed by <span style={{ color: '#8B1E2D', fontWeight: 800 }}>Ajith</span>
             </div>
           </div>
         </div>
