@@ -480,7 +480,7 @@ fn test_product_sales_ranking_and_category_breakdown() {
                 stock_unit: "MG".to_string(),
             },
             SaleItemInput {
-                product_id: "prod_kara_sev".to_string(),
+                product_id: "prod_sattur_sevu".to_string(),
                 quantity_input: 1055555,
                 pricing_unit: "PER_KG".to_string(),
                 weight_input_source: "MANUAL".to_string(),
@@ -523,8 +523,8 @@ fn test_product_sales_ranking_and_category_breakdown() {
 
     assert_eq!(report.total_revenue_paise, 72000);
     assert_eq!(report.products.len(), 2);
-    // Highest revenue product should be first (Kara Sev @ ₹380 vs Mysore Pak @ ₹340)
-    assert_eq!(report.products[0].product_id, "prod_kara_sev");
+    // Highest revenue product should be first (Sattur Sevu @ ₹380 vs Mysore Pak @ ₹340)
+    assert_eq!(report.products[0].product_id, "prod_sattur_sevu");
     assert_eq!(report.products[1].product_id, "prod_mysore_pak");
     assert_eq!(
         report.categories.len(),
