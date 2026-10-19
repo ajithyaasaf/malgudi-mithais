@@ -1,57 +1,58 @@
-# PROPRIETARY SOFTWARE LICENSE AND END-USER LICENSE AGREEMENT (EULA)
+# EXCLUSIVE CUSTOM SOFTWARE LICENSE AGREEMENT
 
-**Product:** Malgudi Mithais Point of Sale (POS) & Billing System  
+**Product:** Malgudi Mithais Custom Point of Sale (POS) & Billing System  
 **Version:** 2.9.x Series  
-**Copyright (c) 2026 Ajith Y. (Author & Licensor). All Rights Reserved.**
+**Exclusively Developed For:** M/s. Malgudi Mithais (Madurai, Tamil Nadu)  
+**Copyright (c) 2026 Ajith Y. (Author & Developer). All Rights Reserved.**
 
 ---
 
-### IMPORTANT NOTICE: PLEASE READ CAREFULLY
+### IMPORTANT NOTICE
 
-THIS SOFTWARE PRODUCT (INCLUDING ITS SOURCE CODE, COMPILED BINARIES, NATIVE RUST ENGINE, FRONTEND USER INTERFACE, DATABASE SCHEMAS, AND DOCUMENTATION) IS PROPRIETARY AND PROTECTED BY INDIAN COPYRIGHT LAWS, THE INDIAN COPYRIGHT ACT OF 1957 (AS AMENDED), AND INTERNATIONAL INTELLECTUAL PROPERTY TREATIES.
+THIS SOFTWARE (INCLUDING ITS SOURCE CODE, COMPILED TAURI BINARY, NATIVE RUST ACID ENGINE, DATABASE SCHEMAS, TAMIL LOCALIZATION ASSETS, AND DOCUMENTATION) HAS BEEN PURPOSE-BUILT AS A DEDICATED, CUSTOM SOFTWARE SOLUTION EXCLUSIVELY FOR **M/s. MALGUDI MITHAIS** ("CLIENT / LICENSEE").
 
-BY INSTALLING, COPYING, ACCESSING, OR OTHERWISE USING THIS SOFTWARE, THE LICENSEE ("MALGUDI MITHAIS" AND ITS AUTHORIZED PROPRIETORS/PARTNERS) AGREES TO BE BOUND BY THE TERMS OF THIS AGREEMENT.
+BY DEPLOYING, EXECUTING, OR ACCESSING THIS SOFTWARE, BOTH PARTIES AGREE TO THE FOLLOWING EXCLUSIVE LICENSING AND OPERATIONAL TERMS:
 
 ---
 
-### 1. GRANT OF LICENSE
-Subject to the terms and payment of applicable license fees, the Licensor grants to the Licensee a **non-exclusive, non-transferable, revocable license** to install and execute the Software solely for its internal commercial sweet shop retail operations at designated authorized physical store branches:
-1. **Umachikulam Branch (UK)** – Madurai, Tamil Nadu
-2. **Iyer Bungalow Branch (IB)** – Madurai, Tamil Nadu
+### 1. EXCLUSIVE LICENSE & DEDICATED USE
+1. **Exclusive Grant:** The Developer grants to Malgudi Mithais an **exclusive, dedicated, perpetual commercial license** to install, execute, and operate this software system across its authorized retail store branches:
+   - **Branch 1:** Umachikulam Branch (`UK`) – Madurai, Tamil Nadu
+   - **Branch 2:** Iyer Bungalow Branch (`IB`) – Madurai, Tamil Nadu
+   - Any future authorized branches or counters established by Malgudi Mithais.
+2. **Exclusivity Covenant:** The Developer covenants and agrees that this custom-tailored software application, its unique workflows, the 97-item product catalog, Tamil terminology, and store-specific business rules will **NOT** be licensed, sold, deployed, or shared with any other sweet shop, bakery, or commercial competitor.
 
-Each terminal running this Software must be registered with the Licensor. Operating this Software on additional branches or unregistered counters requires explicit written authorization and additional terminal licensing fees.
+### 2. CLIENT DATA, CATALOG & BRAND OWNERSHIP
+- **Brand & Confidentiality:** The name "Malgudi Mithais", logos, shop recipes, pricing structures, customer records, invoices, financial ledgers, and catalog databases are the sole and exclusive proprietary property of Malgudi Mithais.
+- **Confidentiality:** The Developer shall hold all client sales data, revenue figures, customer phone numbers, and operational records in strict confidence.
 
-### 2. RESERVATION OF RIGHTS AND TITLE
-The Software is **licensed, not sold**. 
-- The Licensor retains full and exclusive ownership, copyright, title, patents, trade secrets, architecture, and all other intellectual property rights in and to the Software, its native transaction engine, source code, and subsequent updates.
-- Nothing in this Agreement transfers ownership of the underlying software architecture, code base, or algorithms to the Licensee.
-- The Licensor reserves the right to develop, adapt, customize, and commercialize similar POS and retail software solutions for other clients or industries.
+### 3. DEVELOPER BACKGROUND KNOW-HOW
+While the custom application and codebase are dedicated exclusively to Malgudi Mithais:
+- The Developer retains the general professional right to use generic programming principles, standard architectural patterns, and general technical skills acquired during development.
+- Standard open-source foundation components (such as Rust, SQLite, React, Vite, and Tauri) remain governed by their respective open-source licenses and are not the exclusive property of either party.
 
-### 3. RESTRICTIONS
-The Licensee shall NOT, directly or indirectly:
-- Decompile, reverse engineer, disassemble, decrypt, extract, or attempt to derive the source code of the compiled application or native engine.
-- Sell, rent, lease, sublicense, distribute, assign, lend, or transfer this Software or any license key to any third party, affiliate, or unauthorized branch.
-- Remove, alter, or obscure any proprietary copyright notices, trademarks, or digital watermarks embedded in the Software.
-- Use the Software to build or train a competing point-of-sale software product.
+### 4. RESTRICTIONS
+Malgudi Mithais and its staff shall not:
+- Sublicense, lease, lend, or transfer the software binaries or database files to outside third parties.
+- Attempt to decompile, reverse engineer, or tamper with the core cryptographic invoice hashing or transaction logs.
 
-### 4. DATA OWNERSHIP & BACKUPS
-- **Merchant Data:** All transaction records, customer data, sales histories, and inventory figures entered into the Software belong exclusively to the Licensee.
-- **Backups:** The Software provides local database storage (SQLite ACID ledger) and manual/automated backup features. The Licensee is solely responsible for verifying regular off-site and secondary backups of the database (`malgudi_pos.db`) to guard against local hardware failure, operating system crash, theft, or fire.
+### 5. TAXATION, STATUTORY & LEGAL COMPLIANCE DISCLAIMER
+- **Billing Automation Tool:** The software functions as a local billing calculation and record-keeping tool.
+- **Merchant Compliance Responsibility:** Malgudi Mithais remains solely and legally responsible for:
+  - Inputting correct GST percentage rates (0%, 5%, 10%, 18%), HSN codes, and selling prices.
+  - Ensuring daily drawer physical cash balances match counted amounts.
+  - Timely statutory filing of GSTR-1, GSTR-3B, and annual tax returns with the Commercial Taxes Department / GST authorities.
+  - Compliance with FSSAI regulations and Indian legal tender laws.
+- The Developer makes no warranty that automated calculations guarantee immunity from statutory tax audits or official inquiries.
 
-### 5. TAX, LEGAL & COMPLIANCE DISCLAIMER
-- The Software provides calculation and reporting tools for Goods and Services Tax (GST), Harmonized System of Nomenclature (HSN) codes, and Tamil Nadu state compliance.
-- The Licensee is solely and legally responsible for:
-  - Inputting accurate GST percentages, HSN codes, and selling prices.
-  - Complying with all applicable statutory taxation requirements, GST filing timelines, Food Safety and Standards Authority of India (FSSAI) licensing, and legal tender regulations.
-- The Licensor makes no representation that the Software guarantees statutory audit immunity.
+### 6. LIMITATION OF LIABILITY
+TO THE FULLEST EXTENT PERMITTED UNDER APPLICABLE LAW:
+- THE DEVELOPER SHALL NOT BE LIABLE FOR ANY INDIRECT, SPECIAL, INCIDENTAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING BUT NOT LIMITED TO LOSS OF REVENUE, LOSS OF PROFITS, SHOP DOWNTIME, CASHIER SHORTAGES, LOSS OF DATA DUE TO HARDWARE FAILURE, OR FINES/PENALTIES IMPOSED BY GOVERNMENT AUTHORITIES.
+- THE DEVELOPER'S TOTAL AGGREGATE FINANCIAL LIABILITY FOR ANY CLAIM ARISING OUT OF THIS SOFTWARE SHALL NOT EXCEED THE TOTAL DEVELOPMENT AND MAINTENANCE FEES ACTUALLY PAID BY MALGUDI MITHAIS TO THE DEVELOPER IN THE IMMEDIATELY PRECEDING TWELVE (12) MONTHS.
 
-### 6. NO WARRANTY ("AS IS")
-THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITH ALL FAULTS AND WITHOUT WARRANTY OF ANY KIND. TO THE MAXIMUM EXTENT PERMITTED UNDER APPLICABLE LAW, THE LICENSOR DISCLAIMS ALL WARRANTIES, WHETHER EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE, INCLUDING WITHOUT LIMITATION WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
-
-### 7. LIMITATION OF LIABILITY
-TO THE FULLEST EXTENT PERMITTED BY LAW:
-- IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, INCLUDING BUT NOT LIMITED TO LOSS OF PROFITS, LOSS OF REVENUE, BUSINESS INTERRUPTION, LOSS OF DATA, OR FINES/PENALTIES LEVIED BY TAX AUTHORITIES OR REGULATORY BODIES.
-- THE LICENSOR'S AGGREGATE LIABILITY ARISING OUT OF OR IN CONNECTION WITH THIS SOFTWARE UNDER ANY LEGAL THEORY SHALL NOT EXCEED THE TOTAL LICENSE FEES ACTUALLY PAID BY THE LICENSEE TO THE LICENSOR FOR THIS SOFTWARE IN THE IMMEDIATELY PRECEDING TWELVE (12) MONTHS.
+### 7. DATA BACKUPS & HARDWARE CARE
+- Store transaction data is stored locally in the high-performance SQLite database (`malgudi_pos.db`).
+- Malgudi Mithais is responsible for maintaining daily secondary backups (to external USB drive or cloud drive) to protect against local computer hardware failure, power surges, malware, or Windows OS corruption.
 
 ### 8. GOVERNING LAW & JURISDICTION
-This Agreement shall be governed by, construed, and enforced in accordance with the laws of India. Any legal dispute, controversy, or claim arising out of or relating to this Agreement shall be subject to the exclusive jurisdiction of the competent courts situated in **Madurai, Tamil Nadu, India**.
+This Agreement shall be governed by and construed in accordance with the laws of India. Any legal dispute, claim, or proceeding arising under this Agreement shall be subject to the exclusive jurisdiction of the competent courts in **Madurai, Tamil Nadu, India**.
