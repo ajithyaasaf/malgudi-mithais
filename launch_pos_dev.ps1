@@ -32,6 +32,13 @@ if (-not $vitePort) {
 }
 Write-Host "Vite dev server is ready on http://localhost:5173" -ForegroundColor Green
 
+Write-Host "Checking & building native Rust backend binary..." -ForegroundColor Yellow
+cargo build --manifest-path (Join-Path $PSScriptRoot "apps\pos\src-tauri\Cargo.toml")
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Native backend build failed. Cannot launch POS."
+    exit $LASTEXITCODE
+}
+
 $exe = Join-Path $PSScriptRoot "apps\pos\src-tauri\target\debug\malgudi-pos-native.exe"
 
 Write-Host "Launching Malgudi Mithais POS (Development Mode)..." -ForegroundColor Cyan
