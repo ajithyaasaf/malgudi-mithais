@@ -113,7 +113,7 @@ fn test_inbound_catalog_updates_applied_and_persisted() {
     // Initial check: Mysore Pak base price is 68000 paise (seeded in migration)
     let initial_price: i64 = conn
         .query_row(
-            "SELECT base_price_paise FROM products WHERE sku = 'MP-001';",
+            "SELECT base_price_paise FROM products WHERE sku = 'GHE-005';",
             [],
             |r| r.get(0),
         )
@@ -121,7 +121,7 @@ fn test_inbound_catalog_updates_applied_and_persisted() {
     assert_eq!(initial_price, 68000);
 
     // Prepare mock catalog updates:
-    // 1) Price hike and GST update for existing product (MP-001) at version 2
+    // 1) Price hike and GST update for existing product (GHE-005) at version 2
     // 2) Newly introduced product (DF-LADDU-099) at version 2
     let updates_payload = serde_json::json!({
         "latest_version": 2,
@@ -132,7 +132,7 @@ fn test_inbound_catalog_updates_applied_and_persisted() {
                 "id": "prod_mysore_pak",
                 "name": "Special Ghee Mysore Pak (Revised)",
                 "tamil_name": "நெய் மைசூர் பாகு",
-                "sku": "MP-001",
+                "sku": "GHE-005",
                 "barcode": null,
                 "category_id": "cat_sweets",
                 "pricing_unit": "PER_KG",
@@ -194,7 +194,7 @@ fn test_inbound_catalog_updates_applied_and_persisted() {
     // Verify product price updated
     let updated_price: i64 = conn
         .query_row(
-            "SELECT base_price_paise FROM products WHERE sku = 'MP-001';",
+            "SELECT base_price_paise FROM products WHERE sku = 'GHE-005';",
             [],
             |r| r.get(0),
         )
@@ -203,7 +203,7 @@ fn test_inbound_catalog_updates_applied_and_persisted() {
 
     let updated_tax: i64 = conn
         .query_row(
-            "SELECT tax_rate_bps FROM products WHERE sku = 'MP-001';",
+            "SELECT tax_rate_bps FROM products WHERE sku = 'GHE-005';",
             [],
             |r| r.get(0),
         )
@@ -261,7 +261,7 @@ fn test_safe_inventory_separation_catalog_updates_never_overwrite_local_stock() 
                 "id": "prod_mysore_pak",
                 "name": "Super Ghee Mysore Pak",
                 "tamil_name": "நெய் மைசூர் பாகு",
-                "sku": "MP-001",
+                "sku": "GHE-005",
                 "barcode": null,
                 "category_id": "cat_sweets",
                 "pricing_unit": "PER_KG",
@@ -317,7 +317,7 @@ fn test_conflict_rules_stale_update_rejected() {
 
     // Set product version to 3 locally with price 72000
     conn.execute(
-        "UPDATE products SET version = 3, base_price_paise = 72000 WHERE sku = 'MP-001';",
+        "UPDATE products SET version = 3, base_price_paise = 72000 WHERE sku = 'GHE-005';",
         [],
     )
     .unwrap();
@@ -332,7 +332,7 @@ fn test_conflict_rules_stale_update_rejected() {
                 "id": "prod_mysore_pak",
                 "name": "Old Version Mysore Pak",
                 "tamil_name": "பழைய மைசூர் பாகு",
-                "sku": "MP-001",
+                "sku": "GHE-005",
                 "barcode": null,
                 "category_id": "cat_sweets",
                 "pricing_unit": "PER_KG",
@@ -372,7 +372,7 @@ fn test_conflict_rules_stale_update_rejected() {
     // Local price remains at 72000 (NOT overwritten by 65000)
     let current_price: i64 = conn
         .query_row(
-            "SELECT base_price_paise FROM products WHERE sku = 'MP-001';",
+            "SELECT base_price_paise FROM products WHERE sku = 'GHE-005';",
             [],
             |r| r.get(0),
         )

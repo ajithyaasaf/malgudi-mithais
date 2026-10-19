@@ -782,9 +782,16 @@ pub fn get_product_sales_report(
     let mut categories = Vec::new();
     for (cat_id, (taxable, tax, gross)) in cat_map {
         let cat_name = match cat_id.as_str() {
-            "cat_sweets" => "Sweets (இனிப்புகள்)",
-            "cat_savories" => "Savouries (கார வகைகள்)",
+            "cat_kaju_sweets" => "Kaju Sweets (முந்திரி இனிப்புகள்)",
+            "cat_kaju_crunches" => "Kaju Crunches (காஜூ க்ரஞ்சஸ்)",
+            "cat_ghee_sweets" => "Ghee Sweets (நெய் இனிப்புகள்)",
+            "cat_regular_sweets" => "Regular Sweets (சாதாரண இனிப்புகள்)",
             "cat_bakery" => "Bakery (பேக்கரி)",
+            "cat_murukku" => "Murukku Varieties (முறுக்கு வகைகள்)",
+            "cat_savories" => "Savouries (கார வகைகள்)",
+            "cat_chips" => "Chips Varieties (சிப்ஸ் வகைகள்)",
+            "cat_snacks" => "Snacks & Puffs (தின்பண்டங்கள் / பஃப்ஸ்)",
+            "cat_sweets" => "Sweets (இனிப்புகள்)",
             "cat_beverages" => "Drinks & Dairy (பானங்கள்)",
             _ => "General Merchandise",
         };

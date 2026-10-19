@@ -25,14 +25,14 @@ fn test_product_seeding_and_retrieval() {
 
     // Initial products should have been seeded
     let products = inventory::list_products(&conn, "IB", false).expect("Failed to list products");
-    assert_eq!(products.len(), 12, "Expected 12 default seeded products");
+    assert_eq!(products.len(), 97, "Expected exactly 97 official catalog products");
 
     let mysore_pak = products
         .iter()
-        .find(|p| p.sku == "MP-001")
+        .find(|p| p.sku == "GHE-005")
         .expect("Mysore pak not found");
-    assert_eq!(mysore_pak.name, "Special Ghee Mysore Pak");
-    assert_eq!(mysore_pak.tamil_name, "நெய் மைசூர் பாகு");
+    assert_eq!(mysore_pak.name, "Ghee Mysorepok");
+    assert_eq!(mysore_pak.tamil_name, "நெய் மைசூர்பாக்");
     assert_eq!(mysore_pak.pricing_unit, "PER_KG");
     assert_eq!(mysore_pak.inventory_unit, "MG");
     assert_eq!(mysore_pak.base_price_paise, 68000);
@@ -384,15 +384,15 @@ fn test_multi_branch_stock_initialization_and_isolation() {
     // 1. IB products should have initialized pilot quantities
     let ib_products =
         inventory::list_products(&conn, "IB", false).expect("Failed to list IB products");
-    assert_eq!(ib_products.len(), 12);
-    let ib_mp = ib_products.iter().find(|p| p.sku == "MP-001").unwrap();
+    assert_eq!(ib_products.len(), 97);
+    let ib_mp = ib_products.iter().find(|p| p.sku == "GHE-005").unwrap();
     assert_eq!(ib_mp.current_stock, 25_000_000); // 25 kg
 
     // 2. MN products must have baseline 0 quantity without fictitious inventory
     let mn_products =
         inventory::list_products(&conn, "MN", false).expect("Failed to list MN products");
-    assert_eq!(mn_products.len(), 12);
-    let mn_mp = mn_products.iter().find(|p| p.sku == "MP-001").unwrap();
+    assert_eq!(mn_products.len(), 97);
+    let mn_mp = mn_products.iter().find(|p| p.sku == "GHE-005").unwrap();
     assert_eq!(mn_mp.current_stock, 0); // 0 stock baseline
 
     // 3. Verify stock balances exist in table for both branches
@@ -403,7 +403,7 @@ fn test_multi_branch_stock_initialization_and_isolation() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(ib_balance_count, 12);
+    assert_eq!(ib_balance_count, 97);
 
     let mn_balance_count: i64 = conn
         .query_row(
@@ -412,7 +412,7 @@ fn test_multi_branch_stock_initialization_and_isolation() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(mn_balance_count, 12);
+    assert_eq!(mn_balance_count, 97);
 
     // 4. Stock isolation: Adjusting IB does not alter MN
     conn.execute(
