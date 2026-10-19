@@ -250,6 +250,18 @@ pub fn create_product(
         return Err(format!("A product with SKU '{}' already exists", sku));
     }
 
+    // Check product name uniqueness (case-insensitive for active catalog items)
+    let name_exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM products WHERE LOWER(TRIM(name)) = LOWER(?1) AND is_active = 1;",
+            [name],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    if name_exists {
+        return Err(format!("A product named '{}' already exists in the catalog", name));
+    }
+
     let product_id = format!("prod_{}", Uuid::now_v7());
     let now = get_iso_now();
     let tax_rate = payload.tax_rate_bps.unwrap_or(500);
@@ -375,6 +387,18 @@ pub fn update_product(
         .unwrap_or(false);
     if sku_conflict {
         return Err(format!("Another product already has the SKU '{}'", sku));
+    }
+
+    // Check product name uniqueness against other products (case-insensitive for active catalog items)
+    let name_conflict: bool = conn
+        .query_row(
+            "SELECT 1 FROM products WHERE LOWER(TRIM(name)) = LOWER(?1) AND id != ?2 AND is_active = 1;",
+            params![name, payload.id],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    if name_conflict {
+        return Err(format!("Another product named '{}' already exists in the catalog", name));
     }
 
     let now = get_iso_now();

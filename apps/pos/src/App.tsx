@@ -2069,6 +2069,17 @@ export const App: React.FC = () => {
   const [prodFormInitialStock, setProdFormInitialStock] = useState<string>('25');
   const [prodFormError, setProdFormError] = useState<string | null>(null);
 
+  // Exact duplicate product name detection
+  const duplicateProductMatch = useMemo(() => {
+    const trimmed = prodFormName.trim().toLowerCase();
+    if (!trimmed || trimmed.length < 2) return null;
+    return (
+      catalog.find(
+        p => p.name.trim().toLowerCase() === trimmed && (!editingProduct || p.id !== editingProduct.id)
+      ) || null
+    );
+  }, [prodFormName, catalog, editingProduct]);
+
   // Stock Adjustment Modal & Movement Log state
   const [isStockAdjustModalOpen, setIsStockAdjustModalOpen] = useState<boolean>(false);
   const [adjustProductId, setAdjustProductId] = useState<string>('');
@@ -3570,6 +3581,11 @@ export const App: React.FC = () => {
     e.preventDefault();
     if (!currentSession) return;
     setProdFormError(null);
+
+    if (duplicateProductMatch) {
+      setProdFormError(`A product named '${duplicateProductMatch.name}' already exists in the catalog (${duplicateProductMatch.sku}). Please choose a distinct name or edit the existing product.`);
+      return;
+    }
 
     const priceRupees = parseFloat(prodFormPriceRupees);
     if (isNaN(priceRupees) || priceRupees <= 0) {
@@ -11460,8 +11476,27 @@ export const App: React.FC = () => {
             </div>
 
             {prodFormError && (
-              <div style={{ backgroundColor: '#FFEBEE', color: '#C62828', padding: '10px 12px', borderRadius: 6, marginBottom: 14, fontSize: 12, border: '1px solid #FFCDD2' }}>
-                ⚠️ {prodFormError}
+              <div style={{ backgroundColor: '#FFEBEE', color: '#C62828', padding: '10px 12px', borderRadius: 6, marginBottom: 14, fontSize: 12, border: '1px solid #FFCDD2', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <div>⚠️ {prodFormError}</div>
+                {duplicateProductMatch && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEditProduct(duplicateProductMatch)}
+                    style={{
+                      backgroundColor: '#8B1E2D',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 4,
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Edit Existing
+                  </button>
+                )}
               </div>
             )}
 
@@ -11476,9 +11511,55 @@ export const App: React.FC = () => {
                     required
                     placeholder="e.g. Special Ghee Mysore Pak"
                     value={prodFormName}
-                    onChange={e => setProdFormName(e.target.value)}
-                    style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                    onChange={e => {
+                      setProdFormName(e.target.value);
+                      if (prodFormError) setProdFormError(null);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      fontSize: 13,
+                      border: duplicateProductMatch ? '1.5px solid #E65100' : '1px solid #ccc',
+                      borderRadius: 6,
+                      boxSizing: 'border-box',
+                    }}
                   />
+                  {duplicateProductMatch && (
+                    <div style={{
+                      marginTop: 6,
+                      padding: '6px 10px',
+                      backgroundColor: '#FFF8E1',
+                      border: '1px solid #FFE082',
+                      borderRadius: 6,
+                      fontSize: 11,
+                      color: '#B78103',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 6,
+                    }}>
+                      <span>
+                        ⚠️ Already exists: <strong>{duplicateProductMatch.name}</strong> ({duplicateProductMatch.sku})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditProduct(duplicateProductMatch)}
+                        style={{
+                          backgroundColor: '#8B1E2D',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: 4,
+                          padding: '3px 8px',
+                          fontSize: 10,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Edit Existing
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
@@ -11719,19 +11800,28 @@ export const App: React.FC = () => {
               <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
                 <button
                   type="submit"
+                  disabled={Boolean(duplicateProductMatch)}
                   style={{
                     flex: 1,
                     padding: '10px 16px',
-                    backgroundColor: '#8B1E2D',
+                    backgroundColor: duplicateProductMatch ? '#9E9E9E' : '#8B1E2D',
                     color: '#fff',
                     border: 'none',
                     borderRadius: 6,
                     fontWeight: 700,
                     fontSize: 14,
-                    cursor: 'pointer',
+                    cursor: duplicateProductMatch ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
                   }}
                 >
-                  {editingProduct ? '✓ Save Product Changes' : '✓ Create & Add Product'}
+                  {duplicateProductMatch
+                    ? '⚠️ Product Already Exists (Cannot Save)'
+                    : editingProduct
+                    ? '✓ Save Product Changes'
+                    : '✓ Create & Add Product'}
                 </button>
                 <button
                   type="button"
