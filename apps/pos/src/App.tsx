@@ -4556,7 +4556,24 @@ export const App: React.FC = () => {
               {' '}<span style={{ color: '#777', fontSize: 11 }}>({syncConfig?.terminal_id || currentSession.terminal_id || 'T1'})</span>
             </span>
             <span>•</span>
-            <span>💰 Shift: <strong>{currentSession.session_id}</strong></span>
+            <span
+              title={`Active Register Shift: ${currentSession.session_id}`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                backgroundColor: '#ECFDF5',
+                color: '#065F46',
+                border: '1px solid #A7F3D0',
+                padding: '2px 8px',
+                borderRadius: 12,
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: 'default',
+              }}
+            >
+              <span style={{ fontSize: 8 }}>🟢</span> Shift Active
+            </span>
           </div>
         </div>
 
