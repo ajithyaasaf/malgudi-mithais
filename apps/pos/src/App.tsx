@@ -768,6 +768,8 @@ export const App: React.FC = () => {
   const [prodFormInventoryUnit, setProdFormInventoryUnit] = useState<InventoryUnit>('MG');
   const [prodFormPriceRupees, setProdFormPriceRupees] = useState<string>('500');
   const [prodFormGstPercent, setProdFormGstPercent] = useState<number>(5);
+  const [prodFormGstMode, setProdFormGstMode] = useState<'0' | '5' | '12' | '18' | 'custom'>('5');
+  const [prodFormCustomGst, setProdFormCustomGst] = useState<string>('28');
   const [prodFormHsn, setProdFormHsn] = useState<string>('21069099');
   const [prodFormInitialStock, setProdFormInitialStock] = useState<string>('25');
   const [prodFormError, setProdFormError] = useState<string | null>(null);
@@ -798,6 +800,8 @@ export const App: React.FC = () => {
     return defaultCatalogCategories;
   });
   const [isAddCategoryModalOpen, setIsAddCategoryModalOpen] = useState<boolean>(false);
+  const [categoryModalTab, setCategoryModalTab] = useState<'list' | 'form'>('list');
+  const [editingCategory, setEditingCategory] = useState<CatalogCategory | null>(null);
   const [newCatName, setNewCatName] = useState<string>('');
   const [newCatTamilName, setNewCatTamilName] = useState<string>('');
   const [newCatIcon, setNewCatIcon] = useState<string>('📦');
@@ -1966,36 +1970,116 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleAddCategory = (e: React.FormEvent) => {
+  const handleOpenCategoryManager = () => {
+    setEditingCategory(null);
+    setCategoryModalTab('list');
+    setNewCatName('');
+    setNewCatTamilName('');
+    setNewCatIcon('📦');
+    setNewCatSkuPrefix('');
+    setIsAddCategoryModalOpen(true);
+  };
+
+  const handleOpenEditCategory = (cat: CatalogCategory) => {
+    setEditingCategory(cat);
+    setNewCatName(cat.name);
+    setNewCatTamilName(cat.tamil_name || '');
+    setNewCatIcon(cat.icon || '📦');
+    setNewCatSkuPrefix(cat.sku_prefix || '');
+    setCategoryModalTab('form');
+  };
+
+  const handleOpenCreateCategoryForm = () => {
+    setEditingCategory(null);
+    setNewCatName('');
+    setNewCatTamilName('');
+    setNewCatIcon('📦');
+    setNewCatSkuPrefix('');
+    setCategoryModalTab('form');
+  };
+
+  const handleSaveCategory = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCatName.trim()) return;
-    const catId = `cat_${newCatName.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now().toString().slice(-4)}`;
-    const derivedPrefix = (
-      newCatSkuPrefix.trim() ||
-      newCatName.replace(/[^a-zA-Z]/g, '').slice(0, 3) ||
-      'ITM'
-    ).toUpperCase();
-    const newCat: CatalogCategory = {
-      id: catId,
-      name: newCatName.trim(),
-      tamil_name: newCatTamilName.trim() || newCatName.trim(),
-      icon: newCatIcon.trim() || '📦',
-      sku_prefix: derivedPrefix,
-    };
-    const updated = [...categories, newCat];
+
+    if (editingCategory) {
+      const derivedPrefix = (
+        newCatSkuPrefix.trim() ||
+        editingCategory.sku_prefix ||
+        newCatName.replace(/[^a-zA-Z]/g, '').slice(0, 3) ||
+        'ITM'
+      ).toUpperCase();
+
+      const updated = categories.map(c => {
+        if (c.id === editingCategory.id) {
+          return {
+            ...c,
+            name: newCatName.trim(),
+            tamil_name: newCatTamilName.trim() || newCatName.trim(),
+            icon: newCatIcon.trim() || '📦',
+            sku_prefix: derivedPrefix,
+          };
+        }
+        return c;
+      });
+
+      setCategories(updated);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('pos_custom_categories', JSON.stringify(updated));
+        } catch { }
+      }
+
+      setAdminActionMessage(`Category "${newCatName.trim()}" updated successfully.`);
+      setTimeout(() => setAdminActionMessage(null), 4000);
+      setEditingCategory(null);
+      setCategoryModalTab('list');
+    } else {
+      const catId = `cat_${newCatName.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now().toString().slice(-4)}`;
+      const derivedPrefix = (
+        newCatSkuPrefix.trim() ||
+        newCatName.replace(/[^a-zA-Z]/g, '').slice(0, 3) ||
+        'ITM'
+      ).toUpperCase();
+      const newCat: CatalogCategory = {
+        id: catId,
+        name: newCatName.trim(),
+        tamil_name: newCatTamilName.trim() || newCatName.trim(),
+        icon: newCatIcon.trim() || '📦',
+        sku_prefix: derivedPrefix,
+      };
+      const updated = [...categories, newCat];
+      setCategories(updated);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('pos_custom_categories', JSON.stringify(updated));
+        } catch { }
+      }
+      setAdminActionMessage(`New category "${newCat.name}" (Prefix: ${derivedPrefix}) added successfully.`);
+      setTimeout(() => setAdminActionMessage(null), 4000);
+      setCategoryModalTab('list');
+    }
+  };
+
+  const handleDeleteCustomCategory = (catId: string) => {
+    const assignedCount = catalog.filter(p => p.category_id === catId).length;
+    if (assignedCount > 0) {
+      alert(`Cannot delete this category because ${assignedCount} products are currently assigned to it. Please reassign or delete those products first.`);
+      return;
+    }
+    const cat = categories.find(c => c.id === catId);
+    if (!window.confirm(`Are you sure you want to delete category "${cat?.name}"?`)) {
+      return;
+    }
+    const updated = categories.filter(c => c.id !== catId);
     setCategories(updated);
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('pos_custom_categories', JSON.stringify(updated));
       } catch { }
     }
-    setNewCatName('');
-    setNewCatTamilName('');
-    setNewCatIcon('📦');
-    setNewCatSkuPrefix('');
-    setIsAddCategoryModalOpen(false);
-    setAdminActionMessage(`New category "${newCat.name}" (Prefix: ${derivedPrefix}) added successfully.`);
-    setTimeout(() => setAdminActionMessage(null), 4000);
+    setAdminActionMessage(`Category deleted.`);
+    setTimeout(() => setAdminActionMessage(null), 3000);
   };
 
   const handleOpenAddProduct = () => {
@@ -2008,7 +2092,9 @@ export const App: React.FC = () => {
     setProdFormPricingUnit('PER_KG');
     setProdFormInventoryUnit('MG');
     setProdFormPriceRupees('500');
+    setProdFormGstMode('5');
     setProdFormGstPercent(5);
+    setProdFormCustomGst('28');
     setProdFormHsn('21069099');
     setProdFormInitialStock('25');
     setProdFormError(null);
@@ -2025,7 +2111,24 @@ export const App: React.FC = () => {
     setProdFormPricingUnit(prod.pricing_unit);
     setProdFormInventoryUnit(prod.inventory_unit);
     setProdFormPriceRupees((prod.base_price_paise / 100).toString());
-    setProdFormGstPercent(prod.tax_rate_bps / 100);
+    const rate = prod.tax_rate_bps / 100;
+    setProdFormGstPercent(rate);
+    if (rate === 0) {
+      setProdFormGstMode('0');
+      setProdFormCustomGst('0');
+    } else if (rate === 5) {
+      setProdFormGstMode('5');
+      setProdFormCustomGst('5');
+    } else if (rate === 12) {
+      setProdFormGstMode('12');
+      setProdFormCustomGst('12');
+    } else if (rate === 18) {
+      setProdFormGstMode('18');
+      setProdFormCustomGst('18');
+    } else {
+      setProdFormGstMode('custom');
+      setProdFormCustomGst(rate.toString());
+    }
     setProdFormHsn(prod.hsn_code);
     setProdFormError(null);
     setIsProductModalOpen(true);
@@ -2041,6 +2144,11 @@ export const App: React.FC = () => {
       setProdFormError('Please enter a valid base selling price greater than 0.');
       return;
     }
+
+    const finalGstPercent = prodFormGstMode === 'custom'
+      ? Math.max(0, Math.min(100, parseFloat(prodFormCustomGst) || 0))
+      : Number(prodFormGstMode);
+    const tax_rate_bps = Math.round(finalGstPercent * 100);
 
     try {
       if (isTauriRuntime) {
@@ -2058,7 +2166,7 @@ export const App: React.FC = () => {
               inventory_unit: prodFormInventoryUnit,
               base_price_paise: Math.round(priceRupees * 100),
               piece_price_paise: null,
-              tax_rate_bps: Math.round(prodFormGstPercent * 100),
+              tax_rate_bps: tax_rate_bps,
               hsn_code: prodFormHsn.trim(),
               is_active: editingProduct.is_active,
             },
@@ -2085,7 +2193,7 @@ export const App: React.FC = () => {
               inventory_unit: prodFormInventoryUnit,
               base_price_paise: Math.round(priceRupees * 100),
               piece_price_paise: null,
-              tax_rate_bps: Math.round(prodFormGstPercent * 100),
+              tax_rate_bps: tax_rate_bps,
               hsn_code: prodFormHsn.trim(),
               initial_stock: initialQtyCanonical > 0 ? initialQtyCanonical : null,
               branch_id: currentSession.branch_id || 'IB',
@@ -3784,7 +3892,7 @@ export const App: React.FC = () => {
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button
                       type="button"
-                      onClick={() => setIsAddCategoryModalOpen(true)}
+                      onClick={handleOpenCategoryManager}
                       style={{
                         padding: '8px 14px',
                         backgroundColor: '#FFFDF9',
@@ -3798,9 +3906,9 @@ export const App: React.FC = () => {
                         alignItems: 'center',
                         gap: 6,
                       }}
-                      title="Add a custom product category"
+                      title="Manage, edit and create product categories"
                     >
-                      <span>📁 Add Category</span>
+                      <span>📁 Manage Categories</span>
                     </button>
 
                     <button
@@ -4770,8 +4878,8 @@ export const App: React.FC = () => {
                             {reportsData.gst_report.slabs_breakdown.map((slab, idx) => (
                               <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
                                 <td style={{ padding: '10px 12px', fontWeight: 700 }}>
-                                  <span style={{ padding: '3px 8px', borderRadius: 4, backgroundColor: '#FFF3E0', color: '#E65100', fontWeight: 800 }}>
-                                    {slab.tax_rate_percent.toFixed(1)}% GST
+                                  <span style={{ padding: '3px 8px', borderRadius: 4, backgroundColor: slab.tax_rate_percent === 0 ? '#E8F5E9' : '#FFF3E0', color: slab.tax_rate_percent === 0 ? '#2E7D32' : '#E65100', fontWeight: 800 }}>
+                                    {slab.tax_rate_percent === 0 ? '0% GST (Nil / Exempt)' : `${slab.tax_rate_percent.toFixed(1)}% GST`}
                                   </span>
                                 </td>
                                 <td style={{ padding: '10px 12px' }}>₹{(slab.taxable_paise / 100).toFixed(2)}</td>
@@ -5295,18 +5403,18 @@ export const App: React.FC = () => {
                           {/* Card 4: GST Tax Breakdown */}
                           <div style={{ backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: 16 }}>
                             <div style={{ fontSize: 13, fontWeight: 800, color: '#8B1E2D', marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 6 }}>
-                              🧾 GST Tax Breakdown (5%)
+                              🧾 GST Tax Breakdown
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
                               <span style={{ color: '#666' }}>Taxable Sales (Ex-Tax):</span>
                               <strong>₹{(archiveZReportData.total_taxable_paise / 100).toFixed(2)}</strong>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
-                              <span style={{ color: '#666' }}>CGST (2.5%):</span>
+                              <span style={{ color: '#666' }}>CGST:</span>
                               <strong>₹{(archiveZReportData.total_cgst_paise / 100).toFixed(2)}</strong>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
-                              <span style={{ color: '#666' }}>SGST (2.5%):</span>
+                              <span style={{ color: '#666' }}>SGST:</span>
                               <strong>₹{(archiveZReportData.total_sgst_paise / 100).toFixed(2)}</strong>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, borderTop: '1px dashed #ccc', paddingTop: 6 }}>
@@ -6807,7 +6915,7 @@ export const App: React.FC = () => {
                   <span>₹{(subtotalTaxablePaise / 100).toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>CGST (2.5%) + SGST (2.5%):</span>
+                  <span>{totalCgstPaise + totalSgstPaise === 0 ? 'GST (Nil / Exempt):' : 'GST (CGST + SGST):'}</span>
                   <span>₹{((totalCgstPaise + totalSgstPaise) / 100).toFixed(2)}</span>
                 </div>
               </div>
@@ -8437,14 +8545,23 @@ export const App: React.FC = () => {
                   <span>Taxable Subtotal:</span>
                   <span style={{ fontWeight: 700 }}>₹{(receipt.subtotal_taxable_paise / 100).toFixed(2)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
-                  <span>CGST (2.5%):</span>
-                  <span style={{ fontWeight: 700 }}>₹{(receipt.total_cgst_paise / 100).toFixed(2)}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
-                  <span>SGST (2.5%):</span>
-                  <span style={{ fontWeight: 700 }}>₹{(receipt.total_sgst_paise / 100).toFixed(2)}</span>
-                </div>
+                {receipt.total_cgst_paise > 0 || receipt.total_sgst_paise > 0 ? (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
+                      <span>CGST:</span>
+                      <span style={{ fontWeight: 700 }}>₹{(receipt.total_cgst_paise / 100).toFixed(2)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
+                      <span>SGST:</span>
+                      <span style={{ fontWeight: 700 }}>₹{(receipt.total_sgst_paise / 100).toFixed(2)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
+                    <span>GST (Nil / Exempt):</span>
+                    <span style={{ fontWeight: 700 }}>₹0.00</span>
+                  </div>
+                )}
                 {receipt.round_off_paise !== 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
                     <span>Round-off:</span>
@@ -8577,135 +8694,286 @@ export const App: React.FC = () => {
       })()}
 
       {/* ========================================================= */}
-      {/* MODAL 5B: Custom Category Add Dialog                       */}
+      {/* MODAL 5B: Category Management & Edit Dialog                 */}
       {/* ========================================================= */}
       {isAddCategoryModalOpen && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1260, padding: 16 }}>
-          <div style={{ backgroundColor: '#fff', border: '2px solid #8B1E2D', borderRadius: 10, width: 440, maxWidth: '95vw', padding: 24, boxShadow: '0 10px 30px rgba(0,0,0,0.25)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: 10, marginBottom: 16 }}>
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1260, padding: 16 }}>
+          <div style={{ backgroundColor: '#fff', border: '2px solid #8B1E2D', borderRadius: 10, width: categoryModalTab === 'list' ? 620 : 480, maxWidth: '95vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 10px 30px rgba(0,0,0,0.25)', overflow: 'hidden' }}>
+            
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1.5px solid #eee', padding: '16px 20px', backgroundColor: '#FFFDF9' }}>
               <div>
-                <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 17, fontWeight: 800 }}>
-                  📁 Add New Category
+                <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 18, fontWeight: 800 }}>
+                  {categoryModalTab === 'list' 
+                    ? '📁 Category Management' 
+                    : (editingCategory ? `✏️ Edit Category: ${editingCategory.name}` : '📁 Add New Category')}
                 </h3>
                 <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>
-                  Create custom product category for billing & reports
+                  {categoryModalTab === 'list'
+                    ? 'Edit existing categories, update Tamil names, SKU codes, or create new categories'
+                    : (editingCategory ? 'Update category name, Tamil translation, prefix, or emoji' : 'Create custom product category for billing & reports')}
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setIsAddCategoryModalOpen(false)}
-                style={{ border: 'none', background: 'none', fontSize: 18, cursor: 'pointer', color: '#888' }}
+                style={{ border: 'none', background: 'none', fontSize: 20, cursor: 'pointer', color: '#888', fontWeight: 'bold' }}
+                title="Close modal"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleAddCategory}>
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
-                  Category Name (English) *
-                </label>
-                <input
-                  type="text"
-                  required
-                  autoFocus
-                  placeholder="e.g. Gift Hampers, Pickles, Dry Fruits"
-                  value={newCatName}
-                  onChange={e => {
-                    const val = e.target.value;
-                    setNewCatName(val);
-                    if (!newCatSkuPrefix || newCatSkuPrefix.length <= 4) {
-                      const autoPrefix = val.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase();
-                      if (autoPrefix) setNewCatSkuPrefix(autoPrefix);
-                    }
-                  }}
-                  style={{ width: '100%', padding: '8px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
-                />
-              </div>
+            {/* Modal Body */}
+            <div style={{ padding: 20, overflowY: 'auto', flex: 1 }}>
+              {categoryModalTab === 'list' ? (
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#555' }}>
+                      {categories.filter(c => c.id !== 'all').length} Categories Configured
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleOpenCreateCategoryForm}
+                      style={{
+                        padding: '7px 14px',
+                        backgroundColor: '#8B1E2D',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 6,
+                        fontWeight: 700,
+                        fontSize: 12,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                      }}
+                    >
+                      <span>+ Add New Category</span>
+                    </button>
+                  </div>
 
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
-                  Tamil Name (Optional)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. பரிசுப் பெட்டிகள், ஊறுகாய்"
-                  value={newCatTamilName}
-                  onChange={e => setNewCatTamilName(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
-                />
-              </div>
+                  <div style={{ border: '1px solid #eee', borderRadius: 8, overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, textAlign: 'left' }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#F8F4EC', borderBottom: '1px solid #E5D5C5', color: '#4A151D', fontSize: 11, textTransform: 'uppercase' }}>
+                          <th style={{ padding: '9px 12px' }}>Category</th>
+                          <th style={{ padding: '9px 12px' }}>Tamil Name</th>
+                          <th style={{ padding: '9px 12px' }}>Prefix</th>
+                          <th style={{ padding: '9px 12px', textAlign: 'center' }}>Products</th>
+                          <th style={{ padding: '9px 12px', textAlign: 'right' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {categories.filter(c => c.id !== 'all').map((cat, idx) => {
+                          const assignedCount = catalog.filter(p => p.category_id === cat.id).length;
+                          const isDefault = ['cat_sweets', 'cat_savories', 'cat_bakery', 'cat_beverages'].includes(cat.id);
+                          return (
+                            <tr key={cat.id} style={{ borderBottom: idx < categories.length - 2 ? '1px solid #f0f0f0' : 'none', backgroundColor: idx % 2 === 0 ? '#fff' : '#FCFBF8' }}>
+                              <td style={{ padding: '10px 12px', fontWeight: 700, color: '#222' }}>
+                                <span style={{ marginRight: 8, fontSize: 16 }}>{cat.icon || '📦'}</span>
+                                {cat.name}
+                              </td>
+                              <td style={{ padding: '10px 12px', color: '#666', fontSize: 12 }}>
+                                {cat.tamil_name || '—'}
+                              </td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <span style={{ backgroundColor: '#EFEBE9', padding: '2px 6px', borderRadius: 4, fontFamily: 'monospace', fontWeight: 700, fontSize: 11, color: '#4E342E' }}>
+                                  {cat.sku_prefix || 'ITM'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                                <span style={{ backgroundColor: assignedCount > 0 ? '#E8F5E9' : '#FAFAFA', color: assignedCount > 0 ? '#2E7D32' : '#999', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 700 }}>
+                                  {assignedCount} {assignedCount === 1 ? 'item' : 'items'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                                <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditCategory(cat)}
+                                    style={{
+                                      padding: '4px 10px',
+                                      backgroundColor: '#FFF9F0',
+                                      color: '#8B1E2D',
+                                      border: '1px solid #8B1E2D',
+                                      borderRadius: 4,
+                                      cursor: 'pointer',
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                    }}
+                                    title={`Edit ${cat.name}`}
+                                  >
+                                    ✏️ Edit
+                                  </button>
+                                  {!isDefault && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteCustomCategory(cat.id)}
+                                      disabled={assignedCount > 0}
+                                      style={{
+                                        padding: '4px 8px',
+                                        backgroundColor: assignedCount > 0 ? '#f5f5f5' : '#FFEBEE',
+                                        color: assignedCount > 0 ? '#bbb' : '#C62828',
+                                        border: assignedCount > 0 ? '1px solid #ddd' : '1px solid #EF9A9A',
+                                        borderRadius: 4,
+                                        cursor: assignedCount > 0 ? 'not-allowed' : 'pointer',
+                                        fontSize: 11,
+                                        fontWeight: 600,
+                                      }}
+                                      title={assignedCount > 0 ? `Cannot delete: ${assignedCount} products assigned` : `Delete ${cat.name}`}
+                                    >
+                                      🗑️
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
 
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
-                    SKU Code Prefix (Optional)
-                  </label>
-                  <span style={{ fontSize: 11, color: '#888' }}>e.g. ICE, PIC, GFT</span>
-                </div>
-                <input
-                  type="text"
-                  maxLength={6}
-                  placeholder={newCatName ? newCatName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() : 'e.g. ICE'}
-                  value={newCatSkuPrefix}
-                  onChange={e => setNewCatSkuPrefix(e.target.value.toUpperCase())}
-                  style={{ width: '100%', padding: '8px 10px', fontSize: 14, fontFamily: 'monospace', fontWeight: 700, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
-                />
-                <span style={{ fontSize: 10, color: '#666', marginTop: 3, display: 'block' }}>
-                  Products in this category will auto-number as {newCatSkuPrefix.trim() || (newCatName ? newCatName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() : 'CODE')}-001, {newCatSkuPrefix.trim() || (newCatName ? newCatName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() : 'CODE')}-002.
-                </span>
-              </div>
-
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
-                  Display Icon (Emoji)
-                </label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    type="text"
-                    maxLength={3}
-                    value={newCatIcon}
-                    onChange={e => setNewCatIcon(e.target.value)}
-                    style={{ width: 60, padding: '8px 10px', fontSize: 20, textAlign: 'center', border: '1px solid #ccc', borderRadius: 6 }}
-                  />
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {['📦', '🎁', '🥒', '🥜', '🍪', '🥨', '🍯', '🍫', '☕'].map(icon => (
-                      <button
-                        key={icon}
-                        type="button"
-                        onClick={() => setNewCatIcon(icon)}
-                        style={{
-                          fontSize: 16,
-                          padding: '4px 8px',
-                          border: newCatIcon === icon ? '2px solid #8B1E2D' : '1px solid #ddd',
-                          backgroundColor: newCatIcon === icon ? '#FFF9F0' : '#f9f9f9',
-                          borderRadius: 4,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {icon}
-                      </button>
-                    ))}
+                  <div style={{ marginTop: 18, display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddCategoryModalOpen(false)}
+                      style={{
+                        padding: '8px 20px',
+                        backgroundColor: '#8B1E2D',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 6,
+                        fontWeight: 700,
+                        fontSize: 13,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Done
+                    </button>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <form onSubmit={handleSaveCategory}>
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                      Category Name (English) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      autoFocus
+                      placeholder="e.g. Gift Hampers, Pickles, Dry Fruits"
+                      value={newCatName}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setNewCatName(val);
+                        if (!editingCategory && (!newCatSkuPrefix || newCatSkuPrefix.length <= 4)) {
+                          const autoPrefix = val.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase();
+                          if (autoPrefix) setNewCatSkuPrefix(autoPrefix);
+                        }
+                      }}
+                      style={{ width: '100%', padding: '8px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                    />
+                  </div>
 
-              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', borderTop: '1px solid #eee', paddingTop: 14 }}>
-                <button
-                  type="button"
-                  onClick={() => setIsAddCategoryModalOpen(false)}
-                  style={{ padding: '8px 16px', border: '1px solid #ccc', borderRadius: 6, backgroundColor: '#f5f5f5', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  style={{ padding: '8px 18px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 700, cursor: 'pointer', fontSize: 13 }}
-                >
-                  ✓ Save Category
-                </button>
-              </div>
-            </form>
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                      Tamil Name (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. பரிசுப் பெட்டிகள், ஊறுகாய்"
+                      value={newCatTamilName}
+                      onChange={e => setNewCatTamilName(e.target.value)}
+                      style={{ width: '100%', padding: '8px 10px', fontSize: 14, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
+                        SKU Code Prefix (Optional)
+                      </label>
+                      <span style={{ fontSize: 11, color: '#888' }}>e.g. ICE, PIC, GFT</span>
+                    </div>
+                    <input
+                      type="text"
+                      maxLength={6}
+                      placeholder={newCatName ? newCatName.replace(/[^a-zA-Z]/g, '').slice(0, 3).toUpperCase() : 'e.g. ICE'}
+                      value={newCatSkuPrefix}
+                      onChange={e => setNewCatSkuPrefix(e.target.value.toUpperCase())}
+                      style={{ width: '100%', padding: '8px 10px', fontSize: 14, fontFamily: 'monospace', fontWeight: 700, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box' }}
+                    />
+                    <span style={{ fontSize: 10, color: '#666', marginTop: 3, display: 'block' }}>
+                      {editingCategory
+                        ? 'Existing product SKUs remain unchanged. Future products in this category will use this prefix.'
+                        : `New products in this category will auto-number with this prefix (e.g. ${newCatSkuPrefix.trim() || 'CODE'}-001).`}
+                    </span>
+                  </div>
+
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>
+                      Display Icon (Emoji)
+                    </label>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        maxLength={3}
+                        value={newCatIcon}
+                        onChange={e => setNewCatIcon(e.target.value)}
+                        style={{ width: 60, padding: '8px 10px', fontSize: 20, textAlign: 'center', border: '1px solid #ccc', borderRadius: 6 }}
+                      />
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {['🧈', '🥨', '🥖', '🥛', '📦', '🎁', '🥒', '🥜', '🍪', '🍯', '🍫', '☕'].map(icon => (
+                          <button
+                            key={icon}
+                            type="button"
+                            onClick={() => setNewCatIcon(icon)}
+                            style={{
+                              fontSize: 16,
+                              padding: '4px 8px',
+                              border: newCatIcon === icon ? '2px solid #8B1E2D' : '1px solid #ddd',
+                              backgroundColor: newCatIcon === icon ? '#FFF9F0' : '#f9f9f9',
+                              borderRadius: 4,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {icon}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', borderTop: '1px solid #eee', paddingTop: 14 }}>
+                    <button
+                      type="button"
+                      onClick={() => setCategoryModalTab('list')}
+                      style={{ padding: '8px 16px', border: '1px solid #ccc', borderRadius: 6, backgroundColor: '#f5f5f5', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+                    >
+                      ← Back to Categories
+                    </button>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddCategoryModalOpen(false)}
+                        style={{ padding: '8px 16px', border: '1px solid #ccc', borderRadius: 6, backgroundColor: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        style={{ padding: '8px 20px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 700, cursor: 'pointer', fontSize: 13 }}
+                      >
+                        {editingCategory ? '✓ Update Category' : '✓ Save Category'}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -9290,17 +9558,17 @@ export const App: React.FC = () => {
 
               {/* Section 4: GST Breakdown */}
               <div style={{ marginBottom: 10, color: '#000000' }}>
-                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>4. GST AUDIT (5% COMPOSITE)</div>
+                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>4. GST TAX AUDIT</div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
                   <span>Taxable Value (Ex-Tax):</span>
                   <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.total_taxable_paise / 100).toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                  <span>CGST (2.5%):</span>
+                  <span>CGST:</span>
                   <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.total_cgst_paise / 100).toFixed(2)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                  <span>SGST (2.5%):</span>
+                  <span>SGST:</span>
                   <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.total_sgst_paise / 100).toFixed(2)}</span>
                 </div>
                 <div style={{ borderTop: '1px dotted #000000', margin: '4px 0' }} />
@@ -9483,12 +9751,15 @@ export const App: React.FC = () => {
                         setProdFormSku(generateNextSku(newCat, catalog, categories));
                         if (newCat === 'cat_bakery') {
                           setProdFormHsn('19059020');
+                          setProdFormGstMode('5');
                           setProdFormGstPercent(5);
                         } else if (newCat === 'cat_beverages') {
                           setProdFormHsn('22029990');
+                          setProdFormGstMode('12');
                           setProdFormGstPercent(12);
                         } else {
                           setProdFormHsn('21069099');
+                          setProdFormGstMode('5');
                           setProdFormGstPercent(5);
                         }
                       }
@@ -9545,15 +9816,57 @@ export const App: React.FC = () => {
                     GST Rate (%) *
                   </label>
                   <select
-                    value={prodFormGstPercent}
-                    onChange={e => setProdFormGstPercent(Number(e.target.value))}
+                    value={prodFormGstMode}
+                    onChange={e => {
+                      const mode = e.target.value as '0' | '5' | '12' | '18' | 'custom';
+                      setProdFormGstMode(mode);
+                      if (mode !== 'custom') {
+                        setProdFormGstPercent(Number(mode));
+                      } else {
+                        const parsed = parseFloat(prodFormCustomGst) || 0;
+                        setProdFormGstPercent(parsed);
+                      }
+                    }}
                     style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', backgroundColor: '#fff' }}
                   >
-                    <option value={5}>5% (Standard Sweets / Savouries / Bakery)</option>
-                    <option value={12}>12% (Packaged / Specialty)</option>
-                    <option value={18}>18% (Commercial / Other)</option>
+                    <option value="0">0% (Nil-Rated / Exempt)</option>
+                    <option value="5">5% (Standard Sweets / Savouries / Bakery)</option>
+                    <option value="12">12% (Packaged / Specialty)</option>
+                    <option value="18">18% (Commercial / Other)</option>
+                    <option value="custom">Custom Rate % ...</option>
                   </select>
-                  <span style={{ fontSize: 10, color: '#777' }}>CGST + SGST</span>
+                  {prodFormGstMode === 'custom' ? (
+                    <div style={{ marginTop: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max="100"
+                          required
+                          placeholder="e.g. 28 or 3"
+                          value={prodFormCustomGst}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setProdFormCustomGst(val);
+                            const parsed = parseFloat(val) || 0;
+                            setProdFormGstPercent(parsed);
+                          }}
+                          style={{ width: '100%', padding: '6px 8px', fontSize: 13, border: '1.5px solid #8B1E2D', borderRadius: 5, boxSizing: 'border-box', fontWeight: 700 }}
+                        />
+                        <span style={{ fontSize: 13, fontWeight: 700, color: '#555' }}>%</span>
+                      </div>
+                      <div style={{ fontSize: 10, color: '#8B1E2D', marginTop: 2, fontWeight: 600 }}>
+                        CGST: {((parseFloat(prodFormCustomGst) || 0) / 2).toFixed(2)}% + SGST: {((parseFloat(prodFormCustomGst) || 0) / 2).toFixed(2)}%
+                      </div>
+                    </div>
+                  ) : (
+                    <span style={{ fontSize: 10, color: '#777', display: 'block', marginTop: 3 }}>
+                      {prodFormGstMode === '0'
+                        ? 'Exempt from GST (0% CGST + 0% SGST)'
+                        : `CGST ${(Number(prodFormGstMode) / 2).toFixed(1)}% + SGST ${(Number(prodFormGstMode) / 2).toFixed(1)}%`}
+                    </span>
+                  )}
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginBottom: 4, color: '#333' }}>

@@ -567,7 +567,7 @@ pub fn get_gst_report(
     let slab_rows = slabs_stmt
         .query_map(rusqlite::params_from_iter(params_vec.clone()), |r| {
             Ok(GstSlabRow {
-                tax_rate_percent: r.get(0).unwrap_or(5.0),
+                tax_rate_percent: r.get(0).unwrap_or(0.0),
                 taxable_paise: r.get(1)?,
                 cgst_paise: r.get(2)?,
                 sgst_paise: r.get(3)?,

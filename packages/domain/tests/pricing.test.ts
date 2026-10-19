@@ -156,4 +156,31 @@ describe('Pricing Engine & Precision Invariants (SC-01 & SC-02)', () => {
     expect(totals.round_off_paise).toBe(0);
     expect(totals.net_payable_paise).toBe(77200);
   });
+
+  it('Custom Tax Rate (e.g. 28% luxury/aerated drink tax-inclusive)', () => {
+    const aeratedDrink: ProductDefinition = {
+      id: 'prod_aerated_drink',
+      name: 'Sparkling Fruit Soda',
+      tamil_name: 'பழ சோடா',
+      sku: 'DRK-001',
+      category_id: 'cat_beverages',
+      pricing_unit: 'PER_PIECE',
+      inventory_unit: 'PIECE',
+      pricing_basis: 'TAX_INCLUSIVE',
+      base_price_paise: 6400, // ₹64.00 inclusive of 28% GST
+      tax_rate_bps: 2800, // 28% GST
+      hsn_code: '2202',
+      is_active: true,
+    };
+
+    const line = calculateLineItem({ product: aeratedDrink, quantityInput: 1 });
+    expect(line.gross_paise).toBe(6400);
+    // Taxable: round((6400 * 10000) / 12800) = 5000 paise (₹50.00)
+    expect(line.taxable_paise).toBe(5000);
+    // Total Tax: 6400 - 5000 = 1400 paise (₹14.00)
+    expect(line.total_tax_paise).toBe(1400);
+    // 50/50 Split: 14% CGST (700 paise) + 14% SGST (700 paise)
+    expect(line.cgst_paise).toBe(700);
+    expect(line.sgst_paise).toBe(700);
+  });
 });
