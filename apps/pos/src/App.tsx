@@ -4694,6 +4694,28 @@ export const App: React.FC = () => {
               Sign In to Terminal
             </button>
           </form>
+
+          {/* Footer Copyright & Developer Attribution */}
+          <div style={{ marginTop: 22, paddingTop: 14, borderTop: '1px solid rgba(139, 30, 45, 0.15)', textAlign: 'center' }}>
+            <div style={{
+              display: 'inline-block',
+              padding: '5px 14px',
+              backgroundColor: '#FFF0F2',
+              borderRadius: 6,
+              border: '1px solid #FFCDD2',
+              fontSize: 12,
+              fontWeight: 800,
+              color: '#8B1E2D',
+              letterSpacing: '0.5px',
+              textTransform: 'uppercase',
+              marginBottom: 8
+            }}>
+              © Copyright Malgudi Mithais
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: '#2C1810', letterSpacing: '0.2px' }}>
+              Design &amp; Developed by <span style={{ color: '#8B1E2D', fontWeight: 900 }}>Ajith</span>
+            </div>
+          </div>
         </div>
       </div>
     );
