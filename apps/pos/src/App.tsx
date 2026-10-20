@@ -105,8 +105,8 @@ export interface LiveCashDrawerSummary {
   cash_sales_paise: number;
   cash_refunds_paise: number;
   current_drawer_cash_paise: number;
-  upi_sales_paise: number;
-  total_sales_today_paise: number;
+  upi_sales_paise?: number;
+  total_sales_today_paise?: number;
   is_day_closed: boolean;
   business_date: string;
   branch_id: string;
@@ -2654,6 +2654,8 @@ export const App: React.FC = () => {
           cash_sales_paise: 0,
           cash_refunds_paise: 0,
           current_drawer_cash_paise: amountPaise,
+          upi_sales_paise: 0,
+          total_sales_today_paise: 0,
           is_day_closed: false,
           business_date: simStatus.business_date,
           branch_id: currentSession.branch_id,
@@ -4418,8 +4420,8 @@ export const App: React.FC = () => {
           change_returned_paise: 0,
           net_amount_paise: finalUpiAllocatedPaise,
           outcome: 'SUCCESS',
-          verification_source: 'SOUNDBOX_BROADCAST',
-          reference_note: 'UPI Payment Confirmed',
+          verification_source: (activeUpiSource || 'SOUNDBOX_BROADCAST') as any,
+          reference_note: activeUpiSource === 'GATEWAY_API' ? 'Dynamic QR Webhook Confirmed' : 'Soundbox Audio Confirmed',
           verified_by_user_id: currentSession.user_id,
         });
       }
