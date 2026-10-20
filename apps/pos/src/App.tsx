@@ -105,6 +105,8 @@ export interface LiveCashDrawerSummary {
   cash_sales_paise: number;
   cash_refunds_paise: number;
   current_drawer_cash_paise: number;
+  upi_sales_paise: number;
+  total_sales_today_paise: number;
   is_day_closed: boolean;
   business_date: string;
   branch_id: string;
@@ -2570,12 +2572,17 @@ export const App: React.FC = () => {
       const cashSales = persistedHistory
         .filter(s => s.payment_status === 'SETTLED' && s.sale_status !== 'VOIDED' && (s.created_at || '').startsWith(today))
         .reduce((sum, s) => sum + (s.cash_retained_paise || 0), 0);
+      const upiSales = persistedHistory
+        .filter(s => s.payment_status === 'SETTLED' && s.sale_status !== 'VOIDED' && (s.created_at || '').startsWith(today))
+        .reduce((sum, s) => sum + (s.upi_settled_paise || 0), 0);
       const simulatedSummary: LiveCashDrawerSummary = {
         has_opening_float: openingFloatStatus?.has_opening_float ?? false,
         opening_float_paise: floatPaise,
         cash_sales_paise: cashSales,
         cash_refunds_paise: 0,
         current_drawer_cash_paise: floatPaise + cashSales,
+        upi_sales_paise: upiSales,
+        total_sales_today_paise: cashSales + upiSales,
         is_day_closed: openingFloatStatus?.is_day_closed ?? false,
         business_date: today,
         branch_id: currentSession?.branch_id || 'IB',
@@ -4403,18 +4410,16 @@ export const App: React.FC = () => {
       }
 
       if (finalUpiAllocatedPaise > 0) {
-        const isGatewayConfirmed = activeUpiSource === 'GATEWAY_API';
         payments.push({
           id: `pay_upi_${Date.now()}`,
-          payment_method: isGatewayConfirmed ? 'UPI_GATEWAY_DYNAMIC' : 'UPI_MANUAL_RECORDED',
+          payment_method: 'UPI',
           allocated_amount_paise: finalUpiAllocatedPaise,
           tendered_paise: finalUpiAllocatedPaise,
           change_returned_paise: 0,
           net_amount_paise: finalUpiAllocatedPaise,
           outcome: 'SUCCESS',
-          verification_source: activeUpiSource,
-          is_gateway_confirmed: isGatewayConfirmed,
-          reference_note: activeUpiSource === 'GATEWAY_API' ? 'Dynamic QR Webhook Confirmed' : 'Soundbox Audio Confirmed',
+          verification_source: 'SOUNDBOX_BROADCAST',
+          reference_note: 'UPI Payment Confirmed',
           verified_by_user_id: currentSession.user_id,
         });
       }
@@ -4961,6 +4966,15 @@ export const App: React.FC = () => {
                 <span style={{ color: '#14532D', fontWeight: 900, fontSize: 13 }}>
                   ₹{(liveDrawerSummary.current_drawer_cash_paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
+                {(liveDrawerSummary.upi_sales_paise || 0) > 0 && (
+                  <>
+                    <span style={{ color: '#86EFAC', margin: '0 2px' }}>|</span>
+                    <span style={{ fontSize: 12 }}>📱</span>
+                    <span style={{ color: '#065F46', fontWeight: 800, fontSize: 12 }}>
+                      UPI: ₹{((liveDrawerSummary.upi_sales_paise || 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </>
+                )}
                 <span style={{ fontSize: 10, color: '#15803D' }}>▾</span>
               </button>
 
@@ -4971,7 +4985,7 @@ export const App: React.FC = () => {
                     position: 'absolute',
                     top: 'calc(100% + 8px)',
                     right: 0,
-                    width: 290,
+                    width: 300,
                     backgroundColor: '#FFFFFF',
                     border: '2px solid #8B1E2D',
                     borderRadius: 10,
@@ -4982,7 +4996,7 @@ export const App: React.FC = () => {
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #F1E5D8', paddingBottom: 6, marginBottom: 8 }}>
                     <div style={{ fontWeight: 800, color: '#8B1E2D', fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <span>💵</span> Live Cash Drawer
+                      <span>💵</span> Daily Collections Breakdown
                     </div>
                     <button
                       type="button"
@@ -4994,6 +5008,9 @@ export const App: React.FC = () => {
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
+                    <div style={{ fontWeight: 800, color: '#8B1E2D', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 }}>
+                      1. Cash Drawer (Physical Till)
+                    </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: '#555' }}>
                       <span>☀️ Opening Float:</span>
                       <strong style={{ color: '#111' }}>
@@ -5014,11 +5031,31 @@ export const App: React.FC = () => {
                         </strong>
                       </div>
                     )}
-                    <div style={{ height: 1, backgroundColor: '#EAD8C7', margin: '4px 0' }} />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13 }}>
-                      <span style={{ fontWeight: 700, color: '#1E293B' }}>Expected In Drawer:</span>
-                      <span style={{ fontWeight: 900, color: '#166534', fontSize: 15 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F0FDF4', padding: '5px 8px', borderRadius: 6, border: '1px solid #BBF7D0' }}>
+                      <span style={{ fontWeight: 700, color: '#166534' }}>💵 Cash in Drawer:</span>
+                      <span style={{ fontWeight: 900, color: '#14532D', fontSize: 14 }}>
                         ₹{(liveDrawerSummary.current_drawer_cash_paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+
+                    <div style={{ height: 1, backgroundColor: '#EAD8C7', margin: '4px 0' }} />
+
+                    <div style={{ fontWeight: 800, color: '#8B1E2D', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 }}>
+                      2. UPI / Digital Sales (Bank)
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#F8FAFC', padding: '5px 8px', borderRadius: 6, border: '1px solid #E2E8F0' }}>
+                      <span style={{ fontWeight: 700, color: '#334155' }}>📱 UPI Realized:</span>
+                      <span style={{ fontWeight: 900, color: '#0F172A', fontSize: 14 }}>
+                        ₹{((liveDrawerSummary.upi_sales_paise || 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+
+                    <div style={{ height: 1, backgroundColor: '#EAD8C7', margin: '4px 0' }} />
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFF7ED', padding: '6px 8px', borderRadius: 6, border: '1px solid #FED7AA' }}>
+                      <span style={{ fontWeight: 800, color: '#9A3412' }}>📊 Total Today's Sales:</span>
+                      <span style={{ fontWeight: 900, color: '#C2410C', fontSize: 15 }}>
+                        ₹{((liveDrawerSummary.total_sales_today_paise || (liveDrawerSummary.cash_sales_paise + (liveDrawerSummary.upi_sales_paise || 0))) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                       </span>
                     </div>
                   </div>
@@ -11703,8 +11740,8 @@ export const App: React.FC = () => {
       {/* MODAL 5E: Day-End Z-Report 80mm Printable Slip Modal      */}
       {/* ========================================================= */}
       {activeZReportModal && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1250, padding: 16 }}>
-          <div style={{ backgroundColor: '#fff', borderRadius: 10, maxWidth: 440, width: '100%', maxHeight: '92vh', overflowY: 'auto', padding: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.3)', border: '2px solid #8B1E2D' }}>
+        <div className="z-report-modal-overlay" style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1250, padding: 16 }}>
+          <div className="z-report-modal-dialog" style={{ backgroundColor: '#fff', borderRadius: 10, maxWidth: 440, width: '100%', maxHeight: '92vh', overflowY: 'auto', padding: 20, boxShadow: '0 10px 30px rgba(0,0,0,0.3)', border: '2px solid #8B1E2D' }}>
 
             {/* Top Close Bar */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: 10, marginBottom: 14 }}>

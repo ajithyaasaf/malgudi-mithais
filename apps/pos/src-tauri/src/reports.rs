@@ -482,14 +482,24 @@ pub fn get_payment_summary_report(
 
     for r in rows {
         if let Ok((method, bills, collected, tendered, change)) = r {
-            if method == "CASH" {
+            let canon = if method == "CASH" {
+                "CASH"
+            } else if method == "UPI" || method.starts_with("UPI") {
+                "UPI"
+            } else {
+                &method
+            };
+
+            if canon == "CASH" {
                 total_cash_collected_paise += collected;
                 total_cash_tendered_paise += tendered;
                 total_change_returned_paise += change;
-            } else if method == "UPI" {
+            } else if canon == "UPI" {
                 total_upi_collected_paise += collected;
             }
-            method_map.insert(method, (bills, collected));
+            let entry = method_map.entry(canon.to_string()).or_insert((0, 0));
+            entry.0 += bills;
+            entry.1 += collected;
         }
     }
 
@@ -501,7 +511,7 @@ pub fn get_payment_summary_report(
             JOIN sales s ON s.id = sp.sale_id
             WHERE s.sale_status != 'VOIDED' {}
             GROUP BY s.id
-            HAVING COUNT(DISTINCT sp.payment_method) > 1
+            HAVING COUNT(DISTINCT CASE WHEN sp.payment_method LIKE 'UPI%' THEN 'UPI' ELSE sp.payment_method END) > 1
         );",
         filter_sql
             .replace("business_date", "s.business_date")
@@ -546,12 +556,21 @@ pub fn get_payment_summary_report(
 
     for r in refund_rows {
         if let Ok((method, ref_amt)) = r {
-            if method == "CASH" {
+            let canon = if method == "CASH" {
+                "CASH"
+            } else if method == "UPI" || method.starts_with("UPI") {
+                "UPI"
+            } else {
+                &method
+            };
+
+            if canon == "CASH" {
                 cash_refunds_paise += ref_amt;
-            } else if method == "UPI" {
+            } else if canon == "UPI" {
                 upi_refunds_paise += ref_amt;
             }
-            refund_map.insert(method, ref_amt);
+            let entry = refund_map.entry(canon.to_string()).or_insert(0);
+            *entry += ref_amt;
         }
     }
 
@@ -1023,7 +1042,7 @@ pub fn get_customer_sales_report(
             s.customer_location,
             (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id = s.id) as items_count,
             COALESCE((
-                SELECT GROUP_CONCAT(DISTINCT payment_method) 
+                SELECT GROUP_CONCAT(DISTINCT CASE WHEN sp.payment_method LIKE 'UPI%' THEN 'UPI' ELSE sp.payment_method END) 
                 FROM sale_payments sp 
                 WHERE sp.sale_id = s.id
             ), 'CASH') as payment_methods

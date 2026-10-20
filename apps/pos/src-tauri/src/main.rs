@@ -113,6 +113,8 @@ pub struct LiveCashDrawerSummary {
     pub cash_sales_paise: i64,
     pub cash_refunds_paise: i64,
     pub current_drawer_cash_paise: i64,
+    pub upi_sales_paise: i64,
+    pub total_sales_today_paise: i64,
     pub is_day_closed: bool,
     pub business_date: String,
     pub branch_id: String,
@@ -832,6 +834,20 @@ fn cash_get_live_drawer_summary(
         |r| r.get(0),
     ).unwrap_or(0);
 
+    // 5. UPI digital sales for today & branch (active sales)
+    let upi_sales_paise: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(sp.net_amount_paise), 0) 
+         FROM sale_payments sp
+         JOIN sales s ON s.id = sp.sale_id
+         WHERE s.sale_status != 'VOIDED' 
+           AND s.branch_id = ?1 
+           AND s.business_date = ?2 
+           AND (sp.payment_method = 'UPI' OR sp.payment_method LIKE 'UPI%');",
+        [&branch_id, &today],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    let total_sales_today_paise = cash_sales_paise + upi_sales_paise;
     let current_drawer_cash_paise = opening_float_paise + cash_sales_paise - cash_refunds_paise;
 
     Ok(LiveCashDrawerSummary {
@@ -840,6 +856,8 @@ fn cash_get_live_drawer_summary(
         cash_sales_paise,
         cash_refunds_paise,
         current_drawer_cash_paise,
+        upi_sales_paise,
+        total_sales_today_paise,
         is_day_closed: has_closed > 0,
         business_date: today,
         branch_id,

@@ -6,6 +6,7 @@ export type PricingBasis = 'TAX_INCLUSIVE' | 'TAX_EXCLUSIVE';
 
 export type PaymentMethod = 
   | 'CASH' 
+  | 'UPI'
   | 'UPI_MANUAL_RECORDED' 
   | 'UPI_GATEWAY_DYNAMIC' 
   | 'CARD_EXTERNAL';

@@ -72,31 +72,18 @@ body {
     box-sizing: border-box !important;
   }
 
-  .thermal-print-buffer {
-    display: block !important;
-    position: fixed !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 80mm !important;
-    height: auto !important;
-    overflow: visible !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    border: none !important;
-    z-index: 999999 !important;
-  }
-
-  /* 5. Position receipt with safe printable margins on 80mm thermal paper roll */
+  /* 5. Continuous roll geometry on 80mm thermal paper roll (zero clipping, in-flow static) */
+  .thermal-print-buffer,
   #receipt-print-area,
   #z-report-thermal-slip {
-    position: fixed !important;
-    left: 0 !important;
-    top: 0 !important;
+    position: static !important;
+    display: block !important;
+    left: auto !important;
+    top: auto !important;
     width: 80mm !important;
     max-width: 80mm !important;
     min-width: 80mm !important;
+    height: auto !important;
     margin: 0 !important;
     padding: 2mm 4.5mm 12mm 5mm !important;
     box-sizing: border-box !important;
@@ -113,9 +100,34 @@ body {
     border: none !important;
     border-radius: 0 !important;
     overflow: visible !important;
-    z-index: 999999 !important;
-    display: block !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
     visibility: visible !important;
+  }
+
+  /* 5b. Neutralize screen modal dialog scroll boxes so thermal paper prints continuous full height */
+  .z-report-modal-overlay,
+  .z-report-modal-dialog,
+  div:has(#z-report-thermal-slip),
+  div:has(#receipt-print-area) {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
+  }
+
+  #z-report-thermal-slip tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
 
   /* 6. Ensure 100% solid pure black rendering on thermal heads with zero dithering */

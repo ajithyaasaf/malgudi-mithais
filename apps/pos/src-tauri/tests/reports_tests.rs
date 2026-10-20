@@ -362,6 +362,182 @@ fn test_payment_summary_and_split_reporting() {
 }
 
 #[test]
+fn test_upi_variants_and_legacy_recorded_aggregation() {
+    let mut conn = setup_test_db();
+    let admin_token = create_owner_session(&mut conn);
+
+    // 1. Sale with standard "UPI"
+    let sale_upi_standard = FinalizeSalePayload {
+        sale_id: Some(format!("sale_{}", Uuid::now_v7())),
+        branch_id: "IB".to_string(),
+        counter_id: "C1".to_string(),
+        terminal_id: "T1".to_string(),
+        session_id: "sess_reports_01".to_string(),
+        business_date: "2026-10-20".to_string(),
+        series_code: "IB1".to_string(),
+        financial_year: "2627".to_string(),
+        tax_policy_version: "2026.1-TN".to_string(),
+        subtotal_taxable_paise: 9524,
+        total_cgst_paise: 238,
+        total_sgst_paise: 238,
+        total_igst_paise: 0,
+        round_off_paise: 0,
+        net_payable_paise: 10000,
+        items: vec![SaleItemInput {
+            product_id: "prod_mysore_pak".to_string(),
+            quantity_input: 147059,
+            pricing_unit: "PER_KG".to_string(),
+            weight_input_source: "MANUAL".to_string(),
+            unit_price_paise: 68000,
+            taxable_paise: 9524,
+            cgst_paise: 238,
+            sgst_paise: 238,
+            igst_paise: 0,
+            total_tax_paise: 476,
+            gross_paise: 10000,
+            stock_deduction_delta: 147059,
+            stock_unit: "MG".to_string(),
+        }],
+        payments: vec![SalePaymentInput {
+            payment_method: "UPI".to_string(),
+            allocated_amount_paise: 10000,
+            tendered_paise: 10000,
+            change_returned_paise: 0,
+            net_amount_paise: 10000,
+            outcome: "SUCCESS".to_string(),
+            reference_note: Some("Soundbox".to_string()),
+            verified_by_user_id: None,
+        }],
+        cashier_id: "usr_owner".to_string(),
+        customer_name: None,
+        customer_phone: None,
+        customer_location: None,
+    };
+    finalize_sale_atomic(&mut conn, &sale_upi_standard, None).expect("Sale 1 should succeed");
+
+    // 2. Sale with legacy "UPI_MANUAL_RECORDED"
+    let sale_upi_legacy = FinalizeSalePayload {
+        sale_id: Some(format!("sale_{}", Uuid::now_v7())),
+        branch_id: "IB".to_string(),
+        counter_id: "C1".to_string(),
+        terminal_id: "T1".to_string(),
+        session_id: "sess_reports_01".to_string(),
+        business_date: "2026-10-20".to_string(),
+        series_code: "IB1".to_string(),
+        financial_year: "2627".to_string(),
+        tax_policy_version: "2026.1-TN".to_string(),
+        subtotal_taxable_paise: 14286,
+        total_cgst_paise: 357,
+        total_sgst_paise: 357,
+        total_igst_paise: 0,
+        round_off_paise: 0,
+        net_payable_paise: 15000,
+        items: vec![SaleItemInput {
+            product_id: "prod_mysore_pak".to_string(),
+            quantity_input: 220588,
+            pricing_unit: "PER_KG".to_string(),
+            weight_input_source: "MANUAL".to_string(),
+            unit_price_paise: 68000,
+            taxable_paise: 14286,
+            cgst_paise: 357,
+            sgst_paise: 357,
+            igst_paise: 0,
+            total_tax_paise: 714,
+            gross_paise: 15000,
+            stock_deduction_delta: 220588,
+            stock_unit: "MG".to_string(),
+        }],
+        payments: vec![SalePaymentInput {
+            payment_method: "UPI_MANUAL_RECORDED".to_string(),
+            allocated_amount_paise: 15000,
+            tendered_paise: 15000,
+            change_returned_paise: 0,
+            net_amount_paise: 15000,
+            outcome: "SUCCESS".to_string(),
+            reference_note: Some("Legacy Soundbox Recorded".to_string()),
+            verified_by_user_id: None,
+        }],
+        cashier_id: "usr_owner".to_string(),
+        customer_name: None,
+        customer_phone: None,
+        customer_location: None,
+    };
+    finalize_sale_atomic(&mut conn, &sale_upi_legacy, None).expect("Sale 2 should succeed");
+
+    // 3. Sale with legacy "UPI_GATEWAY_DYNAMIC"
+    let sale_upi_gateway = FinalizeSalePayload {
+        sale_id: Some(format!("sale_{}", Uuid::now_v7())),
+        branch_id: "IB".to_string(),
+        counter_id: "C1".to_string(),
+        terminal_id: "T1".to_string(),
+        session_id: "sess_reports_01".to_string(),
+        business_date: "2026-10-20".to_string(),
+        series_code: "IB1".to_string(),
+        financial_year: "2627".to_string(),
+        tax_policy_version: "2026.1-TN".to_string(),
+        subtotal_taxable_paise: 23810,
+        total_cgst_paise: 595,
+        total_sgst_paise: 595,
+        total_igst_paise: 0,
+        round_off_paise: 0,
+        net_payable_paise: 25000,
+        items: vec![SaleItemInput {
+            product_id: "prod_mysore_pak".to_string(),
+            quantity_input: 367647,
+            pricing_unit: "PER_KG".to_string(),
+            weight_input_source: "MANUAL".to_string(),
+            unit_price_paise: 68000,
+            taxable_paise: 23810,
+            cgst_paise: 595,
+            sgst_paise: 595,
+            igst_paise: 0,
+            total_tax_paise: 1190,
+            gross_paise: 25000,
+            stock_deduction_delta: 367647,
+            stock_unit: "MG".to_string(),
+        }],
+        payments: vec![SalePaymentInput {
+            payment_method: "UPI_GATEWAY_DYNAMIC".to_string(),
+            allocated_amount_paise: 25000,
+            tendered_paise: 25000,
+            change_returned_paise: 0,
+            net_amount_paise: 25000,
+            outcome: "SUCCESS".to_string(),
+            reference_note: Some("Gateway Confirmed".to_string()),
+            verified_by_user_id: None,
+        }],
+        cashier_id: "usr_owner".to_string(),
+        customer_name: None,
+        customer_phone: None,
+        customer_location: None,
+    };
+    finalize_sale_atomic(&mut conn, &sale_upi_gateway, None).expect("Sale 3 should succeed");
+
+    let filter = ReportFilterPayload {
+        start_date: Some("2026-10-20".to_string()),
+        end_date: Some("2026-10-20".to_string()),
+        branch_id: Some("IB".to_string()),
+    };
+
+    let report = reports::get_payment_summary_report(&conn, &admin_token, &filter)
+        .expect("Report should generate");
+
+    assert_eq!(
+        report.total_upi_collected_paise, 50000,
+        "Total UPI collected must be ₹500 across all UPI variants (100 + 150 + 250)"
+    );
+    assert_eq!(
+        report.net_upi_paise, 50000,
+        "Net UPI realized must be ₹500"
+    );
+
+    let upi_row = report.methods_breakdown.iter().find(|m| m.payment_method == "UPI").expect("UPI breakdown row must exist");
+    assert_eq!(upi_row.bills_count, 3, "All 3 UPI sales must be counted under canonical UPI");
+    assert_eq!(upi_row.total_collected_paise, 50000);
+    assert_eq!(upi_row.net_amount_paise, 50000);
+}
+
+#[test]
 fn test_gst_report_slabs_and_invoice_details() {
     let mut conn = setup_test_db();
     let admin_token = create_owner_session(&mut conn);
