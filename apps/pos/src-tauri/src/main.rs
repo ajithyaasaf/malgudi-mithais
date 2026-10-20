@@ -10,7 +10,7 @@ use malgudi_pos_native::inventory::{
     UpdateProductPayload, VoidSalePayload,
 };
 use malgudi_pos_native::reports::{
-    self, CashDrawerReport, DailySalesSummary, FinancialReportsAggregate, GstReport,
+    self, CashDrawerReport, CustomerSalesReport, DailySalesSummary, FinancialReportsAggregate, GstReport,
     PaymentSummaryReport, ProductSalesReport, ReportFilterPayload,
 };
 use malgudi_pos_native::sync;
@@ -1366,6 +1366,69 @@ fn reports_get_cash_drawer(
     reports::get_cash_drawer_report(&conn, &session_token, &filter)
 }
 
+#[tauri::command]
+fn reports_get_customer_sales(
+    state: tauri::State<AppState>,
+    session_token: String,
+    filter: ReportFilterPayload,
+) -> Result<CustomerSalesReport, String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+    reports::get_customer_sales_report(&conn, &session_token, &filter)
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct QuickCustomerLookup {
+    pub customer_name: Option<String>,
+    pub customer_phone: String,
+    pub customer_location: Option<String>,
+    pub total_orders: i64,
+    pub total_spent_paise: i64,
+}
+
+#[tauri::command]
+fn lookup_customer_by_phone(
+    state: tauri::State<AppState>,
+    phone: String,
+) -> Result<Option<QuickCustomerLookup>, String> {
+    let clean_phone = phone.trim().to_string();
+    if clean_phone.len() < 10 {
+        return Ok(None);
+    }
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT customer_name, customer_location, COUNT(*), COALESCE(SUM(net_payable_paise), 0)
+         FROM sales
+         WHERE customer_phone = ?1 AND sale_status != 'VOIDED'
+         GROUP BY customer_name, customer_location
+         ORDER BY COUNT(*) DESC
+         LIMIT 1;",
+    ).map_err(|e| e.to_string())?;
+
+    let mut rows = stmt.query([&clean_phone]).map_err(|e| e.to_string())?;
+    if let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        let name: Option<String> = row.get(0).map_err(|e| e.to_string())?;
+        let loc: Option<String> = row.get(1).map_err(|e| e.to_string())?;
+        let orders_count: i64 = row.get(2).map_err(|e| e.to_string())?;
+        let total_spent: i64 = row.get(3).map_err(|e| e.to_string())?;
+        Ok(Some(QuickCustomerLookup {
+            customer_name: name,
+            customer_phone: clean_phone,
+            customer_location: loc,
+            total_orders: orders_count,
+            total_spent_paise: total_spent,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
 pub fn get_database_path() -> std::path::PathBuf {
     #[cfg(debug_assertions)]
     {
@@ -1570,6 +1633,8 @@ fn main() {
             reports_get_gst_report,
             reports_get_product_sales,
             reports_get_cash_drawer,
+            reports_get_customer_sales,
+            lookup_customer_by_phone,
             sync_get_branch_config,
             sync_set_branch_config,
             sync_get_status,

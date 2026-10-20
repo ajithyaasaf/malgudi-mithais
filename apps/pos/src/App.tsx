@@ -371,12 +371,71 @@ export interface CashDrawerReport {
   }[];
 }
 
+export interface CustomerOrderItemRow {
+  product_id: string;
+  product_name: string;
+  tamil_name: string;
+  pricing_unit: string;
+  quantity_formatted: string;
+  unit_price_paise: number;
+  gross_paise: number;
+}
+
+export interface CustomerOrderRow {
+  sale_id: string;
+  invoice_number: string;
+  business_date: string;
+  created_at: string;
+  net_payable_paise: number;
+  sale_status: string;
+  payment_status: string;
+  payment_method: string;
+  items_count: number;
+  items_summary: string;
+  items: CustomerOrderItemRow[];
+}
+
+export interface CustomerSummaryRow {
+  customer_id: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  customer_location: string | null;
+  total_orders: number;
+  active_orders: number;
+  voided_orders: number;
+  total_spent_paise: number;
+  average_bill_paise: number;
+  first_visit_date: string;
+  last_visit_date: string;
+  orders: CustomerOrderRow[];
+}
+
+export interface CustomerSalesReport {
+  total_customers_count: number;
+  repeat_customers_count: number;
+  total_customer_sales_paise: number;
+  total_walkin_sales_paise: number;
+  total_customer_orders_count: number;
+  total_walkin_orders_count: number;
+  average_spend_per_customer_paise: number;
+  customers: CustomerSummaryRow[];
+}
+
 export interface FinancialReportsAggregate {
   daily_sales: DailySalesSummary;
   payment_summary: PaymentSummaryReport;
   gst_report: GstReport;
   product_sales: ProductSalesReport;
   cash_drawer: CashDrawerReport;
+  customer_sales: CustomerSalesReport;
+}
+
+export interface QuickCustomerLookup {
+  customer_name: string | null;
+  customer_phone: string;
+  customer_location: string | null;
+  total_orders: number;
+  total_spent_paise: number;
 }
 
 
@@ -2023,7 +2082,7 @@ export const App: React.FC = () => {
   const [updateErrorMessage, setUpdateErrorMessage] = useState<string | null>(null);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState<boolean>(false);
   const [currentAppVersion, setCurrentAppVersion] = useState<string>(
-    typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.9.28'
+    typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.9.35'
   );
 
   // --- Cloud Sync & Multi-Branch State ---
@@ -2046,10 +2105,17 @@ export const App: React.FC = () => {
   // --- Reports State ---
   const [reportsLoading, setReportsLoading] = useState<boolean>(false);
   const [reportsError, setReportsError] = useState<string | null>(null);
-  const [activeReportView, setActiveReportView] = useState<'daily' | 'payments' | 'gst' | 'products' | 'drawer' | 'zreport'>('daily');
+  const [activeReportView, setActiveReportView] = useState<'daily' | 'payments' | 'gst' | 'products' | 'drawer' | 'customers' | 'zreport'>('daily');
   const [reportStartDate, setReportStartDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [reportEndDate, setReportEndDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [reportsData, setReportsData] = useState<FinancialReportsAggregate | null>(null);
+  const [customerReportSearch, setCustomerReportSearch] = useState<string>('');
+  const [customerReportSort, setCustomerReportSort] = useState<'spent' | 'orders' | 'recent' | 'name'>('spent');
+  const [activeCustomerModal, setActiveCustomerModal] = useState<CustomerSummaryRow | null>(null);
+  const [modalOrderSearch, setModalOrderSearch] = useState<string>('');
+  const [modalOrderFilter, setModalOrderFilter] = useState<'ALL' | 'CASH' | 'UPI'>('ALL');
+  const [modalOrderPage, setModalOrderPage] = useState<number>(1);
+  const [expandedModalOrderSaleId, setExpandedModalOrderSaleId] = useState<string | null>(null);
 
   // Product Add/Edit Modal state
   const [isProductModalOpen, setIsProductModalOpen] = useState<boolean>(false);
@@ -2305,6 +2371,34 @@ export const App: React.FC = () => {
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState<boolean>(false);
   const [customerForm, setCustomerForm] = useState({ name: '', phone: '', location: '' });
   const [customerPhoneError, setCustomerPhoneError] = useState<string | null>(null);
+  const [customerLookupMatch, setCustomerLookupMatch] = useState<QuickCustomerLookup | null>(null);
+
+  const handlePhoneLookup = async (phone: string) => {
+    const clean = phone.replace(/\D/g, '').slice(0, 10);
+    if (clean.length === 10 && isTauriRuntime) {
+      try {
+        const match = await window.__TAURI__!.core.invoke<QuickCustomerLookup | null>('lookup_customer_by_phone', { phone: clean });
+        if (match) {
+          setCustomerLookupMatch(match);
+          setCustomerForm(prev => ({
+            ...prev,
+            phone: clean,
+            name: match.customer_name || prev.name,
+            location: match.customer_location || prev.location,
+          }));
+          setCustomerInfo({
+            phone: clean,
+            name: match.customer_name || '',
+            location: match.customer_location || '',
+          });
+          return;
+        }
+      } catch {
+        // Non-blocking lookup
+      }
+    }
+    setCustomerLookupMatch(null);
+  };
 
   // --- Day-End Close (Z-Report) State ---
   const [isDayCloseModalOpen, setIsDayCloseModalOpen] = useState<boolean>(false);
@@ -2849,6 +2943,18 @@ export const App: React.FC = () => {
     setCashTenderedRupees(total);
     setSplitCashRupees(total);
     setSplitUpiRupees(0);
+    if (customerInfo) {
+      setCustomerForm({
+        name: customerInfo.name || '',
+        phone: customerInfo.phone || '',
+        location: customerInfo.location || '',
+      });
+      if (customerInfo.phone && customerInfo.phone.length === 10) {
+        handlePhoneLookup(customerInfo.phone);
+      }
+    } else {
+      setCustomerLookupMatch(null);
+    }
     setIsPaymentModalOpen(true);
   };
 
@@ -2875,7 +2981,8 @@ export const App: React.FC = () => {
           openPaymentModal();
         }
       } else if (e.key === 'Escape') {
-        if (isCustomerModalOpen) setIsCustomerModalOpen(false);
+        if (activeCustomerModal) setActiveCustomerModal(null);
+        else if (isCustomerModalOpen) setIsCustomerModalOpen(false);
         else if (weightModalProduct) setWeightModalProduct(null);
         else if (isUpiModalOpen) { setIsUpiModalOpen(false); setUpiSimulatedVerified(false); }
         else if (isPaymentModalOpen) setIsPaymentModalOpen(false);
@@ -2886,7 +2993,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPaymentModalOpen, isUpiModalOpen, upiSimulatedVerified, weightModalProduct, isHistoryModalOpen, isSwitchModalOpen, activeReceiptModal, isCustomerModalOpen, cartItems, totalGrossPaise, settlementPolicy]);
+  }, [isPaymentModalOpen, isUpiModalOpen, upiSimulatedVerified, weightModalProduct, isHistoryModalOpen, isSwitchModalOpen, activeReceiptModal, activeCustomerModal, isCustomerModalOpen, cartItems, totalGrossPaise, settlementPolicy]);
 
   const checkInitialAuthStatus = async () => {
     setAuthLoading(true);
@@ -4008,6 +4115,32 @@ export const App: React.FC = () => {
         m.session_id,
       ]);
       exportCsv('cash_drawer_report', headers, rows);
+    } else if (activeReportView === 'customers') {
+      const headers = [
+        'Customer Name',
+        'Mobile Phone',
+        'Location / Area',
+        'Total Orders',
+        'Active Orders',
+        'Voided Orders',
+        'Total Spent (INR)',
+        'Avg Bill Value (INR)',
+        'First Visit',
+        'Last Visit',
+      ];
+      const rows = (reportsData.customer_sales?.customers || []).map(c => [
+        c.customer_name || 'N/A',
+        c.customer_phone || 'N/A',
+        c.customer_location || 'N/A',
+        c.total_orders,
+        c.active_orders,
+        c.voided_orders,
+        (c.total_spent_paise / 100).toFixed(2),
+        (c.average_bill_paise / 100).toFixed(2),
+        c.first_visit_date,
+        c.last_visit_date,
+      ]);
+      exportCsv('customer_sales_report', headers, rows);
     }
   };
 
@@ -4300,6 +4433,10 @@ export const App: React.FC = () => {
       const financialYearCode = getIndianFinancialYearCode(businessDate);
       const seriesCode = `${currentSession.branch_id}1`;
 
+      const finalPhone = (customerForm.phone?.trim() || customerInfo?.phone?.trim() || '') || null;
+      const finalName = (customerForm.name?.trim() || customerInfo?.name?.trim() || '') || null;
+      const finalLocation = (customerForm.location?.trim() || customerInfo?.location?.trim() || '') || null;
+
       const payload = {
         branch_id: currentSession.branch_id,
         counter_id: currentSession.counter_id,
@@ -4341,9 +4478,9 @@ export const App: React.FC = () => {
           verified_by_user_id: p.verified_by_user_id || null,
         })),
         cashier_id: currentSession.user_id,
-        customer_name: customerInfo?.name?.trim() || null,
-        customer_phone: customerInfo?.phone?.trim() || null,
-        customer_location: customerInfo?.location?.trim() || null,
+        customer_name: finalName,
+        customer_phone: finalPhone,
+        customer_location: finalLocation,
       };
 
       let committedRecord: FinalizeSaleResult;
@@ -4445,9 +4582,9 @@ export const App: React.FC = () => {
         payment_status: committedRecord.payment_status || 'SETTLED',
         items: detailedItems,
         payments: detailedPayments,
-        customer_name: customerInfo?.name?.trim() || null,
-        customer_phone: customerInfo?.phone?.trim() || null,
-        customer_location: customerInfo?.location?.trim() || null,
+        customer_name: finalName,
+        customer_phone: finalPhone,
+        customer_location: finalLocation,
       };
 
       setPersistedHistory(prev => [committedRecord, ...prev]);
@@ -4461,6 +4598,8 @@ export const App: React.FC = () => {
       setCartItems([]);
       setCustomerInfo(null);
       setCustomerForm({ name: '', phone: '', location: '' });
+      setCustomerLookupMatch(null);
+      setCustomerPhoneError(null);
       setPaymentMode('CASH');
       setCashTenderedRupees(0);
       setSplitCashRupees(0);
@@ -6108,6 +6247,7 @@ export const App: React.FC = () => {
                     { id: 'gst', label: '🧾 GST Tax Slabs & Invoices' },
                     { id: 'products', label: '🏷️ Product & Category Sales' },
                     { id: 'drawer', label: '🗄️ Cash Drawer & Movements' },
+                    { id: 'customers', label: 'Customers & Orders' },
                     { id: 'zreport', label: '📋 Day-End Z-Reports' },
                   ].map(tab => (
                     <button
@@ -6692,7 +6832,275 @@ export const App: React.FC = () => {
                   </div>
                 )}
 
-                {/* VIEW 6: Day-End Closure & Z-Report Historical Archive */}
+                {/* VIEW 6: Customers Directory & Order History */}
+                {activeReportView === 'customers' && reportsData && (
+                  <div>
+                    {/* Summary KPI Cards */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 14, marginBottom: 20 }}>
+                      <div style={{ backgroundColor: '#FDFBF7', border: '1px solid #EAD8C7', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: '#8B1E2D', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                          Registered Customers
+                        </div>
+                        <div style={{ fontSize: 24, fontWeight: 800, color: '#2B1810', marginTop: 4 }}>
+                          {reportsData.customer_sales?.total_customers_count || 0}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+                          Identified via Phone / Name
+                        </div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#F4FBF4', border: '1px solid #C8E6C9', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: '#2E7D32', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                          Repeat Customers
+                        </div>
+                        <div style={{ fontSize: 24, fontWeight: 800, color: '#1B5E20', marginTop: 4 }}>
+                          {reportsData.customer_sales?.repeat_customers_count || 0}
+                          <span style={{ fontSize: 13, fontWeight: 600, color: '#555', marginLeft: 6 }}>
+                            ({reportsData.customer_sales?.total_customers_count ? Math.round(((reportsData.customer_sales.repeat_customers_count || 0) / reportsData.customer_sales.total_customers_count) * 100) : 0}%)
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+                          Visited 2 or more times
+                        </div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#FDFBF7', border: '1px solid #EAD8C7', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: '#8B1E2D', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                          Customer Sales Revenue
+                        </div>
+                        <div style={{ fontSize: 24, fontWeight: 800, color: '#8B1E2D', marginTop: 4 }}>
+                          ₹{((reportsData.customer_sales?.total_customer_sales_paise || 0) / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+                          Avg Spend: ₹{((reportsData.customer_sales?.average_spend_per_customer_paise || 0) / 100).toFixed(2)} / customer
+                        </div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#F7F9FC', border: '1px solid #D0D8E8', borderRadius: 8, padding: 14 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: '#1A365D', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                          Walk-In (Untagged) Revenue
+                        </div>
+                        <div style={{ fontSize: 24, fontWeight: 800, color: '#1A365D', marginTop: 4 }}>
+                          ₹{((reportsData.customer_sales?.total_walkin_sales_paise || 0) / 100).toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+                          {reportsData.customer_sales?.total_walkin_orders_count || 0} anonymous walk-in bills
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Filter & Search Toolbar */}
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1, minWidth: 260 }}>
+                        <input
+                          type="text"
+                          placeholder="Search customer name, mobile phone, area..."
+                          value={customerReportSearch}
+                          onChange={e => setCustomerReportSearch(e.target.value)}
+                          style={{
+                            width: '100%',
+                            maxWidth: 360,
+                            padding: '8px 12px',
+                            borderRadius: 6,
+                            border: '1px solid #CCC',
+                            fontSize: 13,
+                          }}
+                        />
+                        {customerReportSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setCustomerReportSearch('')}
+                            style={{
+                              padding: '6px 10px',
+                              fontSize: 12,
+                              borderRadius: 4,
+                              border: '1px solid #CCC',
+                              backgroundColor: '#F5F5F5',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#555' }}>Sort By:</span>
+                        <select
+                          value={customerReportSort}
+                          onChange={e => setCustomerReportSort(e.target.value as any)}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 6,
+                            border: '1px solid #CCC',
+                            fontSize: 12,
+                            backgroundColor: '#fff',
+                            fontWeight: 600,
+                          }}
+                        >
+                          <option value="spent">Highest Spend (₹)</option>
+                          <option value="orders">Most Orders / Visits</option>
+                          <option value="recent">Most Recent Visit</option>
+                          <option value="name">Name (A-Z)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Customer Directory Table */}
+                    {(() => {
+                      const allCustomers = reportsData.customer_sales?.customers || [];
+                      const filtered = allCustomers.filter(c => {
+                        if (!customerReportSearch.trim()) return true;
+                        const q = customerReportSearch.trim().toLowerCase();
+                        const matchName = (c.customer_name || '').toLowerCase().includes(q);
+                        const matchPhone = (c.customer_phone || '').includes(q);
+                        const matchLocation = (c.customer_location || '').toLowerCase().includes(q);
+                        return matchName || matchPhone || matchLocation;
+                      });
+
+                      const sorted = [...filtered].sort((a, b) => {
+                        if (customerReportSort === 'spent') {
+                          return b.total_spent_paise - a.total_spent_paise;
+                        } else if (customerReportSort === 'orders') {
+                          return b.active_orders - a.active_orders;
+                        } else if (customerReportSort === 'recent') {
+                          return (b.last_visit_date || '').localeCompare(a.last_visit_date || '');
+                        } else {
+                          const nameA = a.customer_name || a.customer_phone || '';
+                          const nameB = b.customer_name || b.customer_phone || '';
+                          return nameA.localeCompare(nameB);
+                        }
+                      });
+
+                      if (allCustomers.length === 0) {
+                        return (
+                          <div style={{ backgroundColor: '#fff', border: '1px solid #EAD8C7', borderRadius: 8, padding: 36, textAlign: 'center' }}>
+                            <div style={{ fontSize: 15, fontWeight: 700, color: '#8B1E2D' }}>
+                              No Customer-Tagged Sales in this Period
+                            </div>
+                            <div style={{ fontSize: 13, color: '#666', marginTop: 6, maxWidth: 500, margin: '6px auto 0' }}>
+                              All {reportsData.customer_sales?.total_walkin_orders_count || 0} orders in this period were recorded as anonymous walk-in sales.
+                              Cashiers can tag customer details during checkout by clicking "+ Customer" or pressing F2.
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      if (sorted.length === 0) {
+                        return (
+                          <div style={{ backgroundColor: '#fff', border: '1px solid #EAD8C7', borderRadius: 8, padding: 36, textAlign: 'center' }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: '#888' }}>
+                              No customers match "{customerReportSearch}"
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div style={{ border: '1px solid #E5E5DF', borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                            <thead>
+                              <tr style={{ backgroundColor: '#F9F9F7', textAlign: 'left', borderBottom: '2px solid #E0E0DA' }}>
+                                <th style={{ padding: '10px 12px' }}>Customer</th>
+                                <th style={{ padding: '10px 12px' }}>Location / Area</th>
+                                <th style={{ padding: '10px 12px', textAlign: 'center' }}>Orders</th>
+                                <th style={{ padding: '10px 12px', textAlign: 'right' }}>Total Spent (₹)</th>
+                                <th style={{ padding: '10px 12px', textAlign: 'right' }}>Avg Bill (₹)</th>
+                                <th style={{ padding: '10px 12px' }}>Visits</th>
+                                <th style={{ padding: '10px 12px', textAlign: 'center' }}>Action</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sorted.map(c => {
+                                return (
+                                  <tr
+                                    key={c.customer_id}
+                                    style={{
+                                      borderBottom: '1px solid #EEE',
+                                      transition: 'background-color 0.15s ease',
+                                    }}
+                                  >
+                                    <td
+                                      style={{ padding: '10px 12px', cursor: 'pointer' }}
+                                      onClick={() => {
+                                        setActiveCustomerModal(c);
+                                        setModalOrderSearch('');
+                                        setModalOrderFilter('ALL');
+                                        setModalOrderPage(1);
+                                        setExpandedModalOrderSaleId(null);
+                                      }}
+                                      title="Click to view full customer profile and orders"
+                                    >
+                                      <div style={{ fontWeight: 700, color: '#8B1E2D', fontSize: 13 }}>
+                                        {c.customer_name || 'Walk-in Customer'}
+                                      </div>
+                                      <div style={{ fontSize: 11, color: '#666', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span>{c.customer_phone ? `+91 ${c.customer_phone}` : 'No phone recorded'}</span>
+                                        {c.active_orders > 1 && (
+                                          <span style={{ backgroundColor: '#E8F5E9', color: '#2E7D32', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10 }}>
+                                            Repeat ({c.active_orders} visits)
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td style={{ padding: '10px 12px', color: '#555' }}>
+                                      {c.customer_location || '-'}
+                                    </td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                                      <span style={{ fontWeight: 700, color: '#333' }}>{c.active_orders}</span>
+                                      {c.voided_orders > 0 && (
+                                        <div style={{ fontSize: 10, color: '#C62828' }}>
+                                          {c.voided_orders} voided
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 800, color: '#8B1E2D', fontSize: 13 }}>
+                                      ₹{(c.total_spent_paise / 100).toFixed(2)}
+                                    </td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: '#444' }}>
+                                      ₹{(c.average_bill_paise / 100).toFixed(2)}
+                                    </td>
+                                    <td style={{ padding: '10px 12px', fontSize: 11, color: '#666' }}>
+                                      <div>Latest: {c.last_visit_date}</div>
+                                      <div style={{ opacity: 0.75 }}>First: {c.first_visit_date}</div>
+                                    </td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setActiveCustomerModal(c);
+                                          setModalOrderSearch('');
+                                          setModalOrderFilter('ALL');
+                                          setModalOrderPage(1);
+                                          setExpandedModalOrderSaleId(null);
+                                        }}
+                                        style={{
+                                          padding: '5px 12px',
+                                          fontSize: 11,
+                                          fontWeight: 700,
+                                          borderRadius: 4,
+                                          border: '1px solid #8B1E2D',
+                                          backgroundColor: '#8B1E2D',
+                                          color: '#FFF',
+                                          cursor: 'pointer',
+                                          boxShadow: '0 1px 3px rgba(139,30,45,0.2)',
+                                        }}
+                                      >
+                                        View History ({c.orders.length})
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* VIEW 7: Day-End Closure & Z-Report Historical Archive */}
                 {activeReportView === 'zreport' && (
                   <div>
                     {/* Date Selector Banner */}
@@ -8213,7 +8621,6 @@ export const App: React.FC = () => {
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 18 }}>🛒</span>
                 <span style={{ fontWeight: 800, fontSize: 15, color: '#1F1F1F' }}>
                   Current Order
                 </span>
@@ -8237,6 +8644,7 @@ export const App: React.FC = () => {
                     type="button"
                     onClick={() => {
                       setCustomerForm({ name: '', phone: '', location: '' });
+                      setCustomerLookupMatch(null);
                       setCustomerPhoneError(null);
                       setIsCustomerModalOpen(true);
                     }}
@@ -8256,7 +8664,7 @@ export const App: React.FC = () => {
                       transition: 'all 0.15s ease',
                     }}
                   >
-                    <span>👤 + Customer</span>
+                    <span>+ Customer</span>
                     <span style={{ fontSize: 9, opacity: 0.75, backgroundColor: '#EAD8C7', padding: '1px 4px', borderRadius: 3 }}>F2</span>
                   </button>
                 ) : (
@@ -8282,12 +8690,17 @@ export const App: React.FC = () => {
                           location: customerInfo.location,
                         });
                         setCustomerPhoneError(null);
+                        if (customerInfo.phone && customerInfo.phone.length === 10) {
+                          handlePhoneLookup(customerInfo.phone);
+                        } else {
+                          setCustomerLookupMatch(null);
+                        }
                         setIsCustomerModalOpen(true);
                       }}
                       style={{ cursor: 'pointer' }}
                       title="Click to edit customer details"
                     >
-                      👤 {customerInfo.name || customerInfo.phone || 'Customer'}
+                      {customerInfo.name || customerInfo.phone || 'Customer'}
                       {customerInfo.phone && <span style={{ opacity: 0.75, fontSize: 10, marginLeft: 4 }}>({customerInfo.phone})</span>}
                     </span>
                     <button
@@ -8295,6 +8708,8 @@ export const App: React.FC = () => {
                       onClick={() => {
                         setCustomerInfo(null);
                         setCustomerForm({ name: '', phone: '', location: '' });
+                        setCustomerLookupMatch(null);
+                        setCustomerPhoneError(null);
                       }}
                       title="Remove customer (revert to walk-in)"
                       style={{
@@ -9179,6 +9594,212 @@ export const App: React.FC = () => {
               </div>
             </div>
 
+            {/* Embedded Optional Customer Details Bar */}
+            <div
+              style={{
+                backgroundColor: (customerInfo?.phone || customerInfo?.name || customerInfo?.location || customerForm.phone || customerForm.name || customerForm.location) ? '#F3FBF4' : '#FFFDF9',
+                border: (customerInfo?.phone || customerInfo?.name || customerInfo?.location || customerForm.phone || customerForm.name || customerForm.location) ? '1.5px solid #A5D6A7' : '1.5px solid #EAD8C7',
+                borderRadius: 8,
+                padding: '10px 14px',
+                marginBottom: 14,
+                transition: 'all 0.2s ease',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#8B1E2D' }}>
+                    Customer Details
+                  </span>
+                  <span style={{ fontSize: 10, color: '#777' }}>
+                    (Optional • Skip for Walk-in)
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {customerLookupMatch && (
+                    <span
+                      style={{
+                        backgroundColor: '#E8F5E9',
+                        color: '#2E7D32',
+                        fontSize: 10,
+                        fontWeight: 700,
+                        padding: '1px 6px',
+                        borderRadius: 10,
+                        border: '1px solid #C8E6C9',
+                      }}
+                    >
+                      Repeat Patron ({customerLookupMatch.total_orders} visits)
+                    </span>
+                  )}
+                  {(customerForm.phone || customerForm.name || customerForm.location || customerInfo) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomerInfo(null);
+                        setCustomerForm({ name: '', phone: '', location: '' });
+                        setCustomerLookupMatch(null);
+                        setCustomerPhoneError(null);
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        fontSize: 11,
+                        color: '#C62828',
+                        cursor: 'pointer',
+                        padding: '2px 4px',
+                        fontWeight: 600,
+                      }}
+                      title="Clear customer details and revert to walk-in"
+                    >
+                      Clear (Walk-in)
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Quick Input Fields - All 3 Fields */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr 1.15fr', gap: 8 }}>
+                {/* 1. Mobile Input with +91 badge */}
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <span
+                    style={{
+                      position: 'absolute',
+                      left: 6,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: '#555',
+                      backgroundColor: '#EFEBE6',
+                      padding: '2px 5px',
+                      borderRadius: 3,
+                      pointerEvents: 'none',
+                      userSelect: 'none',
+                    }}
+                  >
+                    +91
+                  </span>
+                  <input
+                    type="tel"
+                    maxLength={10}
+                    placeholder="Mobile number..."
+                    value={customerForm.phone}
+                    onChange={(e) => {
+                      const cleaned = e.target.value.replace(/\D/g, '').slice(0, 10);
+                      setCustomerForm(prev => ({ ...prev, phone: cleaned }));
+                      if (cleaned.length === 10) {
+                        handlePhoneLookup(cleaned);
+                        setCustomerInfo(prev => ({
+                          name: prev?.name || customerForm.name || '',
+                          phone: cleaned,
+                          location: prev?.location || customerForm.location || '',
+                        }));
+                        setCustomerPhoneError(null);
+                      } else {
+                        setCustomerLookupMatch(null);
+                        if (cleaned.length === 0) {
+                          setCustomerPhoneError(null);
+                          if (!customerForm.name && !customerForm.location) {
+                            setCustomerInfo(null);
+                          }
+                        } else if (!/^[6-9]/.test(cleaned)) {
+                          setCustomerPhoneError('Must start with 6-9');
+                        } else {
+                          setCustomerPhoneError(`${cleaned.length}/10`);
+                        }
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '7px 8px 7px 42px',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      borderRadius: 6,
+                      border: customerPhoneError ? '1.5px solid #D32F2F' : customerForm.phone.length === 10 ? '1.5px solid #2E7D32' : '1px solid #CCC',
+                      backgroundColor: '#FFF',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                {/* 2. Customer Name Input */}
+                <div>
+                  <input
+                    type="text"
+                    maxLength={50}
+                    placeholder="Customer Name..."
+                    value={customerForm.name}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCustomerForm(prev => ({ ...prev, name: val }));
+                      if (val.trim() || customerForm.phone.trim() || customerForm.location.trim()) {
+                        setCustomerInfo({
+                          name: val,
+                          phone: customerForm.phone,
+                          location: customerForm.location,
+                        });
+                      } else {
+                        setCustomerInfo(null);
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '7px 10px',
+                      fontSize: 13,
+                      borderRadius: 6,
+                      border: '1px solid #CCC',
+                      backgroundColor: '#FFF',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                {/* 3. Area / Landmark Input */}
+                <div>
+                  <input
+                    type="text"
+                    maxLength={100}
+                    placeholder="Area / Landmark..."
+                    value={customerForm.location}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCustomerForm(prev => ({ ...prev, location: val }));
+                      if (val.trim() || customerForm.phone.trim() || customerForm.name.trim()) {
+                        setCustomerInfo({
+                          name: customerForm.name,
+                          phone: customerForm.phone,
+                          location: val,
+                        });
+                      } else {
+                        setCustomerInfo(null);
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '7px 10px',
+                      fontSize: 13,
+                      borderRadius: 6,
+                      border: '1px solid #CCC',
+                      backgroundColor: '#FFF',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Quick feedback message */}
+              {customerLookupMatch ? (
+                <div style={{ fontSize: 11, color: '#2E7D32', marginTop: 6, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>Patron identified: {customerLookupMatch.customer_name || 'Repeat Guest'} ({customerLookupMatch.total_orders} orders recorded • ₹{(customerLookupMatch.total_spent_paise / 100).toFixed(2)})</span>
+                  {customerLookupMatch.customer_location && (
+                    <span style={{ fontSize: 10, color: '#388E3C' }}>Loc: {customerLookupMatch.customer_location}</span>
+                  )}
+                </div>
+              ) : customerPhoneError && customerForm.phone.length > 0 && customerForm.phone.length < 10 ? (
+                <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+                  {customerPhoneError === 'Must start with 6-9' ? 'Mobile must begin with 6, 7, 8, or 9' : `Enter full 10 digits (${customerForm.phone.length}/10) or leave blank`}
+                </div>
+              ) : null}
+            </div>
+
             {/* Payment Mode Selector */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
               <button
@@ -9886,20 +10507,20 @@ export const App: React.FC = () => {
       {/* ========================================================= */}
       {isCustomerModalOpen && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1250, padding: 16 }}>
-          <div style={{ backgroundColor: '#fff', padding: 22, borderRadius: 10, width: 420, maxWidth: '95vw', boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
+          <div style={{ backgroundColor: '#fff', padding: 22, borderRadius: 10, width: 440, maxWidth: '95vw', boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #EBEBE6', paddingBottom: 10, marginBottom: 16 }}>
               <div>
                 <h3 style={{ margin: 0, color: '#8B1E2D', fontSize: 17, fontWeight: 800 }}>
-                  👤 Customer Details (Optional)
+                  Customer Details (Optional)
                 </h3>
                 <div style={{ fontSize: 12, color: '#777', marginTop: 2 }}>
-                  வாடிக்கையாளர் விவரம் • Leave blank for regular walk-in
+                  Deliveries, Advance Orders & Patron Records • Blank for Walk-in
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setIsCustomerModalOpen(false)}
-                style={{ background: 'none', border: 'none', fontSize: 20, color: '#999', cursor: 'pointer' }}
+                style={{ background: 'none', border: 'none', fontSize: 20, color: '#999', cursor: 'pointer', lineHeight: 1 }}
               >
                 ✕
               </button>
@@ -9936,30 +10557,30 @@ export const App: React.FC = () => {
               <div style={{ marginBottom: 14 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                   <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
-                    📱 Mobile / Phone Number
+                    Mobile / Phone Number
                   </label>
                   <span style={{ fontSize: 11, fontWeight: 700, color: customerPhoneError ? '#D32F2F' : customerForm.phone.length === 10 ? '#2E7D32' : '#888' }}>
                     {customerForm.phone.length === 0
                       ? 'Optional • 10 Digits'
                       : customerForm.phone.length === 10 && !customerPhoneError
-                        ? '✓ Valid 10-Digit Mobile'
+                        ? 'Valid 10-Digit Mobile'
                         : `${customerForm.phone.length}/10 digits`}
                   </span>
                 </div>
                 <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                   <span style={{
                     position: 'absolute',
-                    left: 10,
+                    left: 8,
                     fontSize: 12,
                     fontWeight: 700,
                     color: '#555',
                     backgroundColor: '#F0ECE6',
-                    padding: '3px 6px',
+                    padding: '3px 7px',
                     borderRadius: 4,
                     pointerEvents: 'none',
                     userSelect: 'none',
                   }}>
-                    🇮🇳 +91
+                    +91
                   </span>
                   <input
                     type="tel"
@@ -9972,17 +10593,21 @@ export const App: React.FC = () => {
                       setCustomerForm(prev => ({ ...prev, phone: cleaned }));
                       if (cleaned.length === 0) {
                         setCustomerPhoneError(null);
+                        setCustomerLookupMatch(null);
                       } else if (!/^[6-9]/.test(cleaned)) {
                         setCustomerPhoneError('Mobile number must begin with 6, 7, 8, or 9');
+                        setCustomerLookupMatch(null);
                       } else if (cleaned.length < 10) {
                         setCustomerPhoneError(`Enter full 10-digit mobile number (${cleaned.length}/10)`);
+                        setCustomerLookupMatch(null);
                       } else {
                         setCustomerPhoneError(null);
+                        handlePhoneLookup(cleaned);
                       }
                     }}
                     style={{
                       width: '100%',
-                      padding: '9px 12px 9px 74px',
+                      padding: '9px 12px 9px 56px',
                       borderRadius: 6,
                       border: customerPhoneError
                         ? '2px solid #D32F2F'
@@ -9997,9 +10622,17 @@ export const App: React.FC = () => {
                     }}
                   />
                 </div>
+                {customerLookupMatch && (
+                  <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#E8F5E9', border: '1px solid #C8E6C9', borderRadius: 6, padding: '4px 8px', fontSize: 11, color: '#2E7D32' }}>
+                    <span style={{ fontWeight: 700 }}>
+                      Repeat Patron ({customerLookupMatch.total_orders} visits)
+                    </span>
+                    <span style={{ fontSize: 10, color: '#388E3C' }}>Auto-retrieved from history</span>
+                  </div>
+                )}
                 {customerPhoneError && (
-                  <div style={{ color: '#D32F2F', fontSize: 11, fontWeight: 600, marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span>⚠️</span> <span>{customerPhoneError}</span>
+                  <div style={{ color: '#D32F2F', fontSize: 11, fontWeight: 600, marginTop: 4 }}>
+                    {customerPhoneError}
                   </div>
                 )}
               </div>
@@ -10007,7 +10640,7 @@ export const App: React.FC = () => {
               <div style={{ marginBottom: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                   <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
-                    👤 Customer Name
+                    Customer Name
                   </label>
                   <span style={{ fontSize: 11, color: '#888' }}>Optional</span>
                 </div>
@@ -10024,14 +10657,14 @@ export const App: React.FC = () => {
               <div style={{ marginBottom: 16 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                   <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
-                    📍 Area / Landmark / Address
+                    Area / Landmark / Address
                   </label>
-                  <span style={{ fontSize: 11, color: '#888' }}>Optional</span>
+                  <span style={{ fontSize: 11, color: '#888' }}>For Delivery & Advance Orders</span>
                 </div>
                 <input
                   type="text"
                   maxLength={100}
-                  placeholder="e.g. Iyer Bungalow / KK Nagar / Home Delivery"
+                  placeholder="e.g. Iyer Bungalow / KK Nagar / Door delivery"
                   value={customerForm.location}
                   onChange={(e) => setCustomerForm(prev => ({ ...prev, location: e.target.value }))}
                   style={{ width: '100%', padding: '9px 12px', borderRadius: 6, border: '1px solid #CCC', fontSize: 14, boxSizing: 'border-box' }}
@@ -10044,6 +10677,7 @@ export const App: React.FC = () => {
                   onClick={() => {
                     setCustomerInfo(null);
                     setCustomerForm({ name: '', phone: '', location: '' });
+                    setCustomerLookupMatch(null);
                     setCustomerPhoneError(null);
                     setIsCustomerModalOpen(false);
                   }}
@@ -10065,7 +10699,7 @@ export const App: React.FC = () => {
                   type="submit"
                   style={{ padding: '8px 18px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 700, cursor: 'pointer', fontSize: 13 }}
                 >
-                  ✓ Attach to Bill
+                  Attach to Bill
                 </button>
               </div>
             </form>
@@ -12174,6 +12808,628 @@ export const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ========================================================= */}
+      {/* MODAL: Customer 360 Profile & Order History Dialog         */}
+      {/* ========================================================= */}
+      {activeCustomerModal && (() => {
+        const currentCustomer = (reportsData?.customer_sales?.customers || []).find(
+          c => c.customer_id === activeCustomerModal.customer_id
+        ) || activeCustomerModal;
+
+        const filteredOrders = (currentCustomer.orders || []).filter(order => {
+          if (modalOrderFilter !== 'ALL' && order.payment_method !== modalOrderFilter) {
+            return false;
+          }
+          if (modalOrderSearch.trim()) {
+            const q = modalOrderSearch.trim().toLowerCase();
+            const matchInv = order.invoice_number.toLowerCase().includes(q);
+            const matchDate = (order.created_at || '').toLowerCase().includes(q) || (order.business_date || '').toLowerCase().includes(q);
+            const matchSummary = (order.items_summary || '').toLowerCase().includes(q);
+            const matchItems = (order.items || []).some(it =>
+              it.product_name.toLowerCase().includes(q) ||
+              it.tamil_name.toLowerCase().includes(q)
+            );
+            if (!matchInv && !matchDate && !matchSummary && !matchItems) {
+              return false;
+            }
+          }
+          return true;
+        });
+
+        const ORDERS_PER_PAGE = 8;
+        const totalPages = Math.max(1, Math.ceil(filteredOrders.length / ORDERS_PER_PAGE));
+        const safePage = Math.min(modalOrderPage, totalPages);
+        const startIndex = (safePage - 1) * ORDERS_PER_PAGE;
+        const pageOrders = filteredOrders.slice(startIndex, startIndex + ORDERS_PER_PAGE);
+
+        return (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(0,0,0,0.65)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 1280,
+              padding: 16,
+            }}
+          >
+            <div
+              style={{
+                backgroundColor: '#FFF',
+                border: '2px solid #8B1E2D',
+                borderRadius: 10,
+                width: 980,
+                maxWidth: '96vw',
+                maxHeight: '94vh',
+                display: 'flex',
+                flexDirection: 'column',
+                boxShadow: '0 12px 36px rgba(0,0,0,0.3)',
+                overflow: 'hidden',
+              }}
+            >
+              {/* Header */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'flex-start',
+                  padding: '16px 20px',
+                  backgroundColor: '#FFFDF9',
+                  borderBottom: '1.5px solid #EAD8C7',
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <h2 style={{ margin: 0, color: '#8B1E2D', fontSize: 20, fontWeight: 800 }}>
+                      {currentCustomer.customer_name || 'Walk-in Customer'}
+                    </h2>
+                    {currentCustomer.active_orders >= 10 ? (
+                      <span
+                        style={{
+                          backgroundColor: '#FFF8E1',
+                          border: '1px solid #FFE082',
+                          color: '#B78103',
+                          fontSize: 11,
+                          fontWeight: 800,
+                          padding: '2px 8px',
+                          borderRadius: 12,
+                          letterSpacing: 0.3,
+                        }}
+                      >
+                        VIP Patron ({currentCustomer.active_orders} Orders)
+                      </span>
+                    ) : currentCustomer.active_orders >= 2 ? (
+                      <span
+                        style={{
+                          backgroundColor: '#E8F5E9',
+                          border: '1px solid #A5D6A7',
+                          color: '#2E7D32',
+                          fontSize: 11,
+                          fontWeight: 800,
+                          padding: '2px 8px',
+                          borderRadius: 12,
+                        }}
+                      >
+                        Repeat Patron ({currentCustomer.active_orders} Orders)
+                      </span>
+                    ) : (
+                      <span
+                        style={{
+                          backgroundColor: '#E3F2FD',
+                          border: '1px solid #90CAF9',
+                          color: '#1565C0',
+                          fontSize: 11,
+                          fontWeight: 800,
+                          padding: '2px 8px',
+                          borderRadius: 12,
+                        }}
+                      >
+                        New Customer (1 Order)
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#555', marginTop: 4, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                    <span>
+                      <strong>Phone:</strong> {currentCustomer.customer_phone ? `+91 ${currentCustomer.customer_phone}` : 'No phone linked'}
+                    </span>
+                    <span>
+                      <strong>Location:</strong> {currentCustomer.customer_location || 'Branch Counter'}
+                    </span>
+                    <span>
+                      <strong>Customer ID:</strong> <span style={{ fontFamily: 'monospace' }}>{currentCustomer.customer_id}</span>
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveCustomerModal(null)}
+                  style={{
+                    border: 'none',
+                    background: 'none',
+                    fontSize: 22,
+                    cursor: 'pointer',
+                    color: '#888',
+                    fontWeight: 'bold',
+                    padding: '2px 8px',
+                    lineHeight: 1,
+                  }}
+                  title="Close (Esc)"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Lifetime KPI Summary Grid */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                  gap: 10,
+                  padding: '12px 20px',
+                  backgroundColor: '#FDFBF7',
+                  borderBottom: '1px solid #EAD8C7',
+                }}
+              >
+                <div style={{ backgroundColor: '#fff', border: '1px solid #EAD8C7', borderRadius: 6, padding: '8px 12px' }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#8B1E2D', textTransform: 'uppercase' }}>Lifetime Spend</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: '#8B1E2D', marginTop: 2 }}>
+                    ₹{(currentCustomer.total_spent_paise / 100).toFixed(2)}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#666', marginTop: 1 }}>Across all completed sales</div>
+                </div>
+
+                <div style={{ backgroundColor: '#fff', border: '1px solid #EAD8C7', borderRadius: 6, padding: '8px 12px' }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#2E7D32', textTransform: 'uppercase' }}>Total Orders</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: '#1B5E20', marginTop: 2 }}>
+                    {currentCustomer.active_orders}
+                    {currentCustomer.voided_orders > 0 && (
+                      <span style={{ fontSize: 11, fontWeight: 600, color: '#C62828', marginLeft: 6 }}>
+                        ({currentCustomer.voided_orders} voided)
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#666', marginTop: 1 }}>Total bills recorded</div>
+                </div>
+
+                <div style={{ backgroundColor: '#fff', border: '1px solid #EAD8C7', borderRadius: 6, padding: '8px 12px' }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#1A365D', textTransform: 'uppercase' }}>Average Ticket</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: '#1A365D', marginTop: 2 }}>
+                    ₹{(currentCustomer.average_bill_paise / 100).toFixed(2)}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#666', marginTop: 1 }}>Avg spend per order</div>
+                </div>
+
+                <div style={{ backgroundColor: '#fff', border: '1px solid #EAD8C7', borderRadius: 6, padding: '8px 12px' }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#666', textTransform: 'uppercase' }}>Visits Timeline</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginTop: 2 }}>
+                    Latest: {currentCustomer.last_visit_date}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#888', marginTop: 1 }}>First Visit: {currentCustomer.first_visit_date}</div>
+                </div>
+              </div>
+
+              {/* Toolbar: Search inside customer orders & payment filter */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '12px 20px',
+                  backgroundColor: '#FFF',
+                  borderBottom: '1px solid #EEE',
+                  gap: 12,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1, minWidth: 260 }}>
+                  <input
+                    type="text"
+                    placeholder="Search by invoice #, item / sweet name (e.g. Laddu, Halwa), or date..."
+                    value={modalOrderSearch}
+                    onChange={e => {
+                      setModalOrderSearch(e.target.value);
+                      setModalOrderPage(1);
+                    }}
+                    style={{
+                      width: '100%',
+                      maxWidth: 420,
+                      padding: '8px 12px',
+                      borderRadius: 6,
+                      border: '1px solid #CCC',
+                      fontSize: 12,
+                    }}
+                  />
+                  {modalOrderSearch && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setModalOrderSearch('');
+                        setModalOrderPage(1);
+                      }}
+                      style={{
+                        padding: '6px 10px',
+                        fontSize: 11,
+                        borderRadius: 4,
+                        border: '1px solid #CCC',
+                        backgroundColor: '#F5F5F5',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalOrderFilter('ALL');
+                      setModalOrderPage(1);
+                    }}
+                    style={{
+                      padding: '5px 12px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      borderRadius: 20,
+                      border: modalOrderFilter === 'ALL' ? '1px solid #8B1E2D' : '1px solid #DDD',
+                      backgroundColor: modalOrderFilter === 'ALL' ? '#8B1E2D' : '#FFF',
+                      color: modalOrderFilter === 'ALL' ? '#FFF' : '#555',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    All ({currentCustomer.orders.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalOrderFilter('CASH');
+                      setModalOrderPage(1);
+                    }}
+                    style={{
+                      padding: '5px 12px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      borderRadius: 20,
+                      border: modalOrderFilter === 'CASH' ? '1px solid #2E7D32' : '1px solid #DDD',
+                      backgroundColor: modalOrderFilter === 'CASH' ? '#2E7D32' : '#FFF',
+                      color: modalOrderFilter === 'CASH' ? '#FFF' : '#555',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cash ({currentCustomer.orders.filter(o => o.payment_method === 'CASH').length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalOrderFilter('UPI');
+                      setModalOrderPage(1);
+                    }}
+                    style={{
+                      padding: '5px 12px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      borderRadius: 20,
+                      border: modalOrderFilter === 'UPI' ? '1px solid #1A365D' : '1px solid #DDD',
+                      backgroundColor: modalOrderFilter === 'UPI' ? '#1A365D' : '#FFF',
+                      color: modalOrderFilter === 'UPI' ? '#FFF' : '#555',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    UPI ({currentCustomer.orders.filter(o => o.payment_method === 'UPI').length})
+                  </button>
+                </div>
+              </div>
+
+              {/* Orders List Container */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '14px 20px', backgroundColor: '#F9F8F5' }}>
+                {filteredOrders.length === 0 ? (
+                  <div
+                    style={{
+                      backgroundColor: '#fff',
+                      border: '1px solid #EAD8C7',
+                      borderRadius: 8,
+                      padding: 32,
+                      textAlign: 'center',
+                      color: '#888',
+                    }}
+                  >
+                    <div style={{ fontSize: 14, fontWeight: 700 }}>No orders match your search or filter</div>
+                    <div style={{ fontSize: 12, marginTop: 4 }}>
+                      Try adjusting your search query or switching to 'All' payment methods.
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {pageOrders.map(order => {
+                      const isOrderExpanded = expandedModalOrderSaleId === order.sale_id;
+                      return (
+                        <div
+                          key={order.sale_id}
+                          style={{
+                            backgroundColor: '#FFF',
+                            border: isOrderExpanded ? '1.5px solid #8B1E2D' : '1px solid #E5E0D8',
+                            borderRadius: 8,
+                            boxShadow: isOrderExpanded ? '0 2px 8px rgba(139,30,45,0.12)' : '0 1px 3px rgba(0,0,0,0.05)',
+                            overflow: 'hidden',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          {/* Order Row Main Bar */}
+                          <div
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '10px 14px',
+                              backgroundColor: isOrderExpanded ? '#FFFDF8' : '#FFF',
+                              gap: 12,
+                              flexWrap: 'wrap',
+                            }}
+                          >
+                            {/* Left: Invoice & Time */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 220 }}>
+                              <div>
+                                <div style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 13, color: '#1A365D' }}>
+                                  {order.invoice_number}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#666', marginTop: 1 }}>
+                                  {formatDateTime(order.created_at)}
+                                </div>
+                              </div>
+
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 800,
+                                  padding: '2px 8px',
+                                  borderRadius: 4,
+                                  backgroundColor: order.payment_method === 'CASH' ? '#E8F5E9' : order.payment_method === 'UPI' ? '#E3F2FD' : '#F5F5F5',
+                                  color: order.payment_method === 'CASH' ? '#2E7D32' : order.payment_method === 'UPI' ? '#1565C0' : '#444',
+                                }}
+                              >
+                                {order.payment_method}
+                              </span>
+
+                              {order.sale_status === 'VOIDED' ? (
+                                <span
+                                  style={{
+                                    fontSize: 10,
+                                    fontWeight: 800,
+                                    padding: '2px 6px',
+                                    borderRadius: 4,
+                                    backgroundColor: '#FFEBEE',
+                                    color: '#C62828',
+                                  }}
+                                >
+                                  VOIDED
+                                </span>
+                              ) : (
+                                <span
+                                  style={{
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                    padding: '2px 6px',
+                                    borderRadius: 4,
+                                    backgroundColor: '#E8F5E9',
+                                    color: '#2E7D32',
+                                  }}
+                                >
+                                  {order.payment_status}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Center: Items Preview Summary */}
+                            <div style={{ flex: 1, minWidth: 200 }}>
+                              <div style={{ fontSize: 12, color: '#333', fontWeight: 600 }}>
+                                {order.items_summary ? order.items_summary : `${order.items_count} items`}
+                              </div>
+                              <div style={{ fontSize: 10, color: '#777', marginTop: 1 }}>
+                                {order.items && order.items.length > 0 ? `${order.items.length} line item${order.items.length !== 1 ? 's' : ''} in bill` : `${order.items_count} items`}
+                              </div>
+                            </div>
+
+                            {/* Right: Bill Amount & Actions */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <div style={{ textAlign: 'right', minWidth: 90 }}>
+                                <div style={{ fontSize: 15, fontWeight: 800, color: '#8B1E2D' }}>
+                                  ₹{(order.net_payable_paise / 100).toFixed(2)}
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => setExpandedModalOrderSaleId(isOrderExpanded ? null : order.sale_id)}
+                                style={{
+                                  padding: '5px 10px',
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  borderRadius: 4,
+                                  border: isOrderExpanded ? '1px solid #8B1E2D' : '1px solid #D0C5B8',
+                                  backgroundColor: isOrderExpanded ? '#8B1E2D' : '#FFF',
+                                  color: isOrderExpanded ? '#FFF' : '#8B1E2D',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {isOrderExpanded ? 'Hide Items' : `View Items (${order.items?.length || order.items_count})`}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenReceiptReprint(order.invoice_number)}
+                                style={{
+                                  padding: '5px 10px',
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  backgroundColor: '#8B1E2D',
+                                  color: '#FFF',
+                                  border: 'none',
+                                  borderRadius: 4,
+                                  cursor: 'pointer',
+                                }}
+                                title="Reprint Official 3-Inch Thermal Receipt"
+                              >
+                                Reprint Slip
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Itemized Lines Breakdown Table */}
+                          {isOrderExpanded && (
+                            <div
+                              style={{
+                                padding: '10px 14px 14px',
+                                backgroundColor: '#FCFAF7',
+                                borderTop: '1px solid #EAD8C7',
+                              }}
+                            >
+                              <div style={{ fontSize: 11, fontWeight: 700, color: '#8B1E2D', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                                Billed Items for Invoice {order.invoice_number}
+                              </div>
+
+                              {order.items && order.items.length > 0 ? (
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, backgroundColor: '#FFF', borderRadius: 4, overflow: 'hidden', border: '1px solid #E8DFD5' }}>
+                                  <thead>
+                                    <tr style={{ backgroundColor: '#F5EFE6', textAlign: 'left', borderBottom: '1px solid #E0D3C5', fontSize: 11, color: '#4A151D' }}>
+                                      <th style={{ padding: '6px 10px' }}>#</th>
+                                      <th style={{ padding: '6px 10px' }}>Item Description (English / தமிழ்)</th>
+                                      <th style={{ padding: '6px 10px' }}>Unit Type</th>
+                                      <th style={{ padding: '6px 10px', textAlign: 'center' }}>Billed Qty</th>
+                                      <th style={{ padding: '6px 10px', textAlign: 'right' }}>Unit Rate (₹)</th>
+                                      <th style={{ padding: '6px 10px', textAlign: 'right' }}>Total (₹)</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {order.items.map((item, idx) => (
+                                      <tr key={idx} style={{ borderBottom: idx < order.items.length - 1 ? '1px solid #EEE' : 'none' }}>
+                                        <td style={{ padding: '7px 10px', color: '#888', fontSize: 11 }}>{idx + 1}</td>
+                                        <td style={{ padding: '7px 10px' }}>
+                                          <div style={{ fontWeight: 700, color: '#2B1810' }}>{item.product_name}</div>
+                                          {item.tamil_name && (
+                                            <div style={{ fontSize: 11, color: '#666', marginTop: 1 }}>{item.tamil_name}</div>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: '7px 10px', color: '#555', fontSize: 11 }}>
+                                          <span style={{ backgroundColor: '#F0ECE1', padding: '1px 6px', borderRadius: 3, fontWeight: 600 }}>
+                                            {item.pricing_unit.replace('_', ' ')}
+                                          </span>
+                                        </td>
+                                        <td style={{ padding: '7px 10px', textAlign: 'center', fontWeight: 700, color: '#1B5E20' }}>
+                                          {item.quantity_formatted}
+                                        </td>
+                                        <td style={{ padding: '7px 10px', textAlign: 'right', color: '#555' }}>
+                                          ₹{(item.unit_price_paise / 100).toFixed(2)}
+                                        </td>
+                                        <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: 800, color: '#8B1E2D' }}>
+                                          ₹{(item.gross_paise / 100).toFixed(2)}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              ) : (
+                                <div style={{ fontSize: 11, color: '#666', padding: 8, backgroundColor: '#FFF', border: '1px dashed #CCC', borderRadius: 4 }}>
+                                  Item breakdown for this transaction is stored in archive records. Click "Reprint Slip" to view the complete thermal receipt.
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Pagination and Modal Footer */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '12px 20px',
+                  backgroundColor: '#FFFDF9',
+                  borderTop: '1px solid #EAD8C7',
+                  flexWrap: 'wrap',
+                  gap: 10,
+                }}
+              >
+                <div style={{ fontSize: 12, color: '#666' }}>
+                  Showing {filteredOrders.length > 0 ? startIndex + 1 : 0} - {Math.min(startIndex + ORDERS_PER_PAGE, filteredOrders.length)} of {filteredOrders.length} orders
+                  {filteredOrders.length !== currentCustomer.orders.length && (
+                    <span> (filtered from {currentCustomer.orders.length} total)</span>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    disabled={safePage <= 1}
+                    onClick={() => setModalOrderPage(p => Math.max(1, p - 1))}
+                    style={{
+                      padding: '5px 12px',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      borderRadius: 4,
+                      border: '1px solid #CCC',
+                      backgroundColor: safePage <= 1 ? '#F5F5F5' : '#FFF',
+                      color: safePage <= 1 ? '#AAA' : '#333',
+                      cursor: safePage <= 1 ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    Previous
+                  </button>
+
+                  <span style={{ fontSize: 12, fontWeight: 700, padding: '0 8px', color: '#444' }}>
+                    Page {safePage} of {totalPages}
+                  </span>
+
+                  <button
+                    type="button"
+                    disabled={safePage >= totalPages}
+                    onClick={() => setModalOrderPage(p => Math.min(totalPages, p + 1))}
+                    style={{
+                      padding: '5px 12px',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      borderRadius: 4,
+                      border: '1px solid #CCC',
+                      backgroundColor: safePage >= totalPages ? '#F5F5F5' : '#FFF',
+                      color: safePage >= totalPages ? '#AAA' : '#333',
+                      cursor: safePage >= totalPages ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    Next
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveCustomerModal(null)}
+                    style={{
+                      marginLeft: 12,
+                      padding: '6px 16px',
+                      backgroundColor: '#555',
+                      color: '#FFF',
+                      border: 'none',
+                      borderRadius: 4,
+                      fontWeight: 700,
+                      fontSize: 12,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Close (Esc)
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

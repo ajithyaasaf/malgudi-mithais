@@ -187,6 +187,64 @@ pub struct CashMovementRow {
 }
 
 // ============================================================================
+// 6. CUSTOMER SALES & ORDER HISTORY REPORT MODELS
+// ============================================================================
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CustomerSalesReport {
+    pub total_customers_count: i64,
+    pub repeat_customers_count: i64,
+    pub total_customer_sales_paise: i64,
+    pub total_walkin_sales_paise: i64,
+    pub total_customer_orders_count: i64,
+    pub total_walkin_orders_count: i64,
+    pub average_spend_per_customer_paise: i64,
+    pub customers: Vec<CustomerSummaryRow>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CustomerSummaryRow {
+    pub customer_id: String,
+    pub customer_name: Option<String>,
+    pub customer_phone: Option<String>,
+    pub customer_location: Option<String>,
+    pub total_orders: i64,
+    pub active_orders: i64,
+    pub voided_orders: i64,
+    pub total_spent_paise: i64,
+    pub average_bill_paise: i64,
+    pub first_visit_date: String,
+    pub last_visit_date: String,
+    pub orders: Vec<CustomerOrderRow>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CustomerOrderItemRow {
+    pub product_id: String,
+    pub product_name: String,
+    pub tamil_name: String,
+    pub pricing_unit: String,
+    pub quantity_formatted: String,
+    pub unit_price_paise: i64,
+    pub gross_paise: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CustomerOrderRow {
+    pub sale_id: String,
+    pub invoice_number: String,
+    pub business_date: String,
+    pub created_at: String,
+    pub net_payable_paise: i64,
+    pub sale_status: String,
+    pub payment_status: String,
+    pub payment_method: String,
+    pub items_count: i64,
+    pub items_summary: String,
+    pub items: Vec<CustomerOrderItemRow>,
+}
+
+// ============================================================================
 // UNIFIED FINANCIAL REPORTS AGGREGATE
 // ============================================================================
 
@@ -198,6 +256,7 @@ pub struct FinancialReportsAggregate {
     pub gst_report: GstReport,
     pub product_sales: ProductSalesReport,
     pub cash_drawer: CashDrawerReport,
+    pub customer_sales: CustomerSalesReport,
 }
 
 // Helper: build SQL date and branch filtering
@@ -940,7 +999,286 @@ pub fn get_cash_drawer_report(
     })
 }
 
-/// 6. Generates All Financial Reports in a single batch
+/// 6. Generates Customer Sales and Order History Report
+pub fn get_customer_sales_report(
+    conn: &Connection,
+    session_token: &str,
+    filter: &ReportFilterPayload,
+) -> Result<CustomerSalesReport, String> {
+    let _session = validate_session_and_permission(conn, session_token, "admin:view_reports")?;
+
+    let (filter_sql, params_vec) = build_filter_clauses(filter);
+
+    let query = format!(
+        "SELECT 
+            s.id,
+            s.invoice_number,
+            s.business_date,
+            s.created_at,
+            s.net_payable_paise,
+            s.sale_status,
+            s.payment_status,
+            s.customer_name,
+            s.customer_phone,
+            s.customer_location,
+            (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id = s.id) as items_count,
+            COALESCE((
+                SELECT GROUP_CONCAT(DISTINCT payment_method) 
+                FROM sale_payments sp 
+                WHERE sp.sale_id = s.id
+            ), 'CASH') as payment_methods
+         FROM sales s
+         WHERE 1=1 {}
+         ORDER BY s.created_at DESC;",
+        filter_sql
+    );
+
+    let mut stmt = conn
+        .prepare(&query)
+        .map_err(|e| format!("Query error in customer sales report: {}", e))?;
+
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params_vec.clone()), |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, Option<String>>(7)?,
+                r.get::<_, Option<String>>(8)?,
+                r.get::<_, Option<String>>(9)?,
+                r.get::<_, i64>(10)?,
+                r.get::<_, String>(11)?,
+            ))
+        })
+        .map_err(|e| format!("Query map error: {}", e))?;
+
+    let mut customer_map: std::collections::HashMap<String, CustomerSummaryRow> = std::collections::HashMap::new();
+    let mut total_walkin_sales_paise: i64 = 0;
+    let mut total_walkin_orders_count: i64 = 0;
+
+    // Pre-query itemized lines for sales in this period
+    let items_query = format!(
+        "SELECT 
+            si.sale_id,
+            si.product_id,
+            COALESCE(p.name, si.product_id),
+            COALESCE(p.tamil_name, ''),
+            si.pricing_unit,
+            si.quantity_input,
+            si.unit_price_paise,
+            si.gross_paise
+         FROM sale_items si
+         JOIN sales s ON s.id = si.sale_id
+         LEFT JOIN products p ON p.id = si.product_id
+         WHERE 1=1 {}
+         ORDER BY si.rowid ASC;",
+        filter_sql
+    );
+
+    let mut sale_items_map: std::collections::HashMap<String, Vec<CustomerOrderItemRow>> = std::collections::HashMap::new();
+
+    if let Ok(mut items_stmt) = conn.prepare(&items_query) {
+        if let Ok(item_rows) = items_stmt.query_map(rusqlite::params_from_iter(params_vec.clone()), |r| {
+            let sale_id: String = r.get(0)?;
+            let product_id: String = r.get(1)?;
+            let product_name: String = r.get(2)?;
+            let tamil_name: String = r.get(3)?;
+            let pricing_unit: String = r.get(4)?;
+            let quantity_input: i64 = r.get(5)?;
+            let unit_price_paise: i64 = r.get(6)?;
+            let gross_paise: i64 = r.get(7)?;
+
+            let qty_formatted = if pricing_unit == "PER_KG" {
+                let grams = (quantity_input as f64) / 1000.0;
+                if grams >= 1000.0 {
+                    format!("{:.3} kg", grams / 1000.0)
+                } else {
+                    format!("{}g", grams.round() as i64)
+                }
+            } else {
+                let unit_suffix = match pricing_unit.as_str() {
+                    "PER_PIECE" => "pcs",
+                    "PER_PACK" => "packs",
+                    "PER_BOX" => "boxes",
+                    _ => "units",
+                };
+                format!("{} {}", quantity_input, unit_suffix)
+            };
+
+            Ok((sale_id, CustomerOrderItemRow {
+                product_id,
+                product_name,
+                tamil_name,
+                pricing_unit,
+                quantity_formatted: qty_formatted,
+                unit_price_paise,
+                gross_paise,
+            }))
+        }) {
+            for row in item_rows.flatten() {
+                sale_items_map.entry(row.0).or_default().push(row.1);
+            }
+        }
+    }
+
+    for row_res in rows {
+        let (
+            sale_id,
+            invoice_number,
+            business_date,
+            created_at,
+            net_payable_paise,
+            sale_status,
+            payment_status,
+            raw_name,
+            raw_phone,
+            raw_location,
+            items_count,
+            payment_method,
+        ) = row_res.map_err(|e| format!("Row read error: {}", e))?;
+
+        let clean_name = raw_name.and_then(|n| {
+            let t = n.trim().to_string();
+            if t.is_empty() { None } else { Some(t) }
+        });
+        let clean_phone = raw_phone.and_then(|p| {
+            let t = p.trim().to_string();
+            if t.is_empty() { None } else { Some(t) }
+        });
+        let clean_location = raw_location.and_then(|l| {
+            let t = l.trim().to_string();
+            if t.is_empty() { None } else { Some(t) }
+        });
+
+        // Determine if customer is identified or anonymous walk-in
+        let cust_key = match (&clean_phone, &clean_name) {
+            (Some(phone), _) => Some(format!("phone:{}", phone)),
+            (None, Some(name)) => Some(format!("name:{}", name.to_lowercase())),
+            (None, None) => None,
+        };
+
+        if let Some(key) = cust_key {
+            let items = sale_items_map.remove(&sale_id).unwrap_or_default();
+            let items_summary = if items.is_empty() {
+                "No items recorded".to_string()
+            } else {
+                let first_three: Vec<String> = items.iter().take(3).map(|it| {
+                    format!("{} ({})", it.product_name, it.quantity_formatted)
+                }).collect();
+                let suffix = if items.len() > 3 {
+                    format!(" +{} more", items.len() - 3)
+                } else {
+                    "".to_string()
+                };
+                format!("{}{}", first_three.join(", "), suffix)
+            };
+
+            let order = CustomerOrderRow {
+                sale_id,
+                invoice_number,
+                business_date: business_date.clone(),
+                created_at: created_at.clone(),
+                net_payable_paise,
+                sale_status: sale_status.clone(),
+                payment_status,
+                payment_method,
+                items_count,
+                items_summary,
+                items,
+            };
+
+            let entry = customer_map.entry(key.clone()).or_insert_with(|| CustomerSummaryRow {
+                customer_id: key,
+                customer_name: clean_name.clone(),
+                customer_phone: clean_phone.clone(),
+                customer_location: clean_location.clone(),
+                total_orders: 0,
+                active_orders: 0,
+                voided_orders: 0,
+                total_spent_paise: 0,
+                average_bill_paise: 0,
+                first_visit_date: business_date.clone(),
+                last_visit_date: business_date.clone(),
+                orders: Vec::new(),
+            });
+
+            // Update latest known name and location if current record has them
+            if entry.customer_name.is_none() && clean_name.is_some() {
+                entry.customer_name = clean_name;
+            }
+            if entry.customer_location.is_none() && clean_location.is_some() {
+                entry.customer_location = clean_location;
+            }
+
+            entry.total_orders += 1;
+            if sale_status == "VOIDED" {
+                entry.voided_orders += 1;
+            } else {
+                entry.active_orders += 1;
+                entry.total_spent_paise += net_payable_paise;
+            }
+
+            // Track visit dates
+            if business_date < entry.first_visit_date {
+                entry.first_visit_date = business_date.clone();
+            }
+            if business_date > entry.last_visit_date {
+                entry.last_visit_date = business_date.clone();
+            }
+
+            entry.orders.push(order);
+        } else {
+            // Anonymous Walk-In
+            if sale_status != "VOIDED" {
+                total_walkin_sales_paise += net_payable_paise;
+                total_walkin_orders_count += 1;
+            }
+        }
+    }
+
+    // Convert map to vec and calculate averages
+    let mut customers: Vec<CustomerSummaryRow> = customer_map
+        .into_values()
+        .map(|mut c| {
+            c.average_bill_paise = if c.active_orders > 0 {
+                c.total_spent_paise / c.active_orders
+            } else {
+                0
+            };
+            c
+        })
+        .collect();
+
+    // Sort by total_spent_paise descending
+    customers.sort_by(|a, b| b.total_spent_paise.cmp(&a.total_spent_paise));
+
+    let total_customers_count = customers.len() as i64;
+    let repeat_customers_count = customers.iter().filter(|c| c.active_orders > 1).count() as i64;
+    let total_customer_sales_paise: i64 = customers.iter().map(|c| c.total_spent_paise).sum();
+    let total_customer_orders_count: i64 = customers.iter().map(|c| c.active_orders).sum();
+    let average_spend_per_customer_paise = if total_customers_count > 0 {
+        total_customer_sales_paise / total_customers_count
+    } else {
+        0
+    };
+
+    Ok(CustomerSalesReport {
+        total_customers_count,
+        repeat_customers_count,
+        total_customer_sales_paise,
+        total_walkin_sales_paise,
+        total_customer_orders_count,
+        total_walkin_orders_count,
+        average_spend_per_customer_paise,
+        customers,
+    })
+}
+
+/// 7. Generates All Financial Reports in a single batch
 pub fn get_financial_reports_aggregate(
     conn: &Connection,
     session_token: &str,
@@ -951,6 +1289,7 @@ pub fn get_financial_reports_aggregate(
     let gst_report = get_gst_report(conn, session_token, filter)?;
     let product_sales = get_product_sales_report(conn, session_token, filter)?;
     let cash_drawer = get_cash_drawer_report(conn, session_token, filter)?;
+    let customer_sales = get_customer_sales_report(conn, session_token, filter)?;
 
     Ok(FinancialReportsAggregate {
         filter: filter.clone(),
@@ -959,5 +1298,6 @@ pub fn get_financial_reports_aggregate(
         gst_report,
         product_sales,
         cash_drawer,
+        customer_sales,
     })
 }
