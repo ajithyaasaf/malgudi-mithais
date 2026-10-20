@@ -2413,6 +2413,7 @@ export const App: React.FC = () => {
   const [isDayCloseSubmitting, setIsDayCloseSubmitting] = useState<boolean>(false);
   const [dayCloseError, setDayCloseError] = useState<string | null>(null);
   const [activeZReportModal, setActiveZReportModal] = useState<DayEndSummary | null>(null);
+  const [dayCloseLogoutSecondsLeft, setDayCloseLogoutSecondsLeft] = useState<number | null>(null);
   const [archiveZReportDate, setArchiveZReportDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [archiveZReportLoading, setArchiveZReportLoading] = useState<boolean>(false);
   const [archiveZReportData, setArchiveZReportData] = useState<DayEndSummary | null>(null);
@@ -2740,6 +2741,7 @@ export const App: React.FC = () => {
         });
         setIsDayCloseModalOpen(false);
         setActiveZReportModal(summary);
+        setDayCloseLogoutSecondsLeft(30);
         if (openingFloatStatus) {
           setOpeningFloatStatus({ ...openingFloatStatus, is_day_closed: true });
         }
@@ -2811,6 +2813,7 @@ export const App: React.FC = () => {
         };
         setIsDayCloseModalOpen(false);
         setActiveZReportModal(mockSummary);
+        setDayCloseLogoutSecondsLeft(30);
       }
     } catch (err: any) {
       const msg = err.message || String(err);
@@ -3173,6 +3176,21 @@ export const App: React.FC = () => {
     setErrorMessage(null);
     setLoginPin('');
   };
+
+  // Auto-logout countdown after Day Close & Z-Report generation (30s safety window)
+  useEffect(() => {
+    if (dayCloseLogoutSecondsLeft === null) return;
+    if (dayCloseLogoutSecondsLeft <= 0) {
+      setDayCloseLogoutSecondsLeft(null);
+      setActiveZReportModal(null);
+      handleLogout();
+      return;
+    }
+    const timer = setTimeout(() => {
+      setDayCloseLogoutSecondsLeft(prev => (prev !== null && prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [dayCloseLogoutSecondsLeft]);
 
   const handleCashierHandover = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -11743,12 +11761,67 @@ export const App: React.FC = () => {
               </span>
               <button
                 type="button"
-                onClick={() => setActiveZReportModal(null)}
+                onClick={() => {
+                  setActiveZReportModal(null);
+                  setDayCloseLogoutSecondsLeft(null);
+                }}
                 style={{ background: 'none', border: 'none', fontSize: 18, color: '#999', cursor: 'pointer' }}
               >
                 ✕
               </button>
             </div>
+
+            {/* Auto-Logout Countdown Alert Banner (Screen Only) */}
+            {dayCloseLogoutSecondsLeft !== null && (
+              <div
+                className="no-print"
+                style={{
+                  backgroundColor: '#FFF1F2',
+                  border: '1.5px solid #FDA4AF',
+                  borderRadius: 8,
+                  padding: '10px 14px',
+                  marginBottom: 12,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 800, color: '#9F1239' }}>
+                    <span>🌙</span>
+                    <span>Day Closed Successfully</span>
+                  </div>
+                  <span
+                    style={{
+                      backgroundColor: '#9F1239',
+                      color: '#ffffff',
+                      fontSize: 11,
+                      fontWeight: 900,
+                      padding: '2px 8px',
+                      borderRadius: 12,
+                      letterSpacing: 0.5,
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                    }}
+                  >
+                    🔒 Auto-logout in {dayCloseLogoutSecondsLeft}s
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: '#881337', lineHeight: 1.35 }}>
+                  Z-Report is ready to print. The register will automatically lock and log out when the timer finishes.
+                </div>
+                {/* Visual Progress Bar */}
+                <div style={{ width: '100%', height: 4, backgroundColor: '#FECDD3', borderRadius: 2, overflow: 'hidden', marginTop: 2 }}>
+                  <div
+                    style={{
+                      height: '100%',
+                      width: `${Math.max(0, Math.min(100, (dayCloseLogoutSecondsLeft / 30) * 100))}%`,
+                      backgroundColor: '#E11D48',
+                      transition: 'width 1s linear',
+                    }}
+                  />
+                </div>
+              </div>
+            )}
 
             {/* 80mm Thermal Receipt Content */}
             <div id="z-report-thermal-slip" style={{ fontFamily: "'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, 'Nirmala UI', 'Noto Sans Tamil', sans-serif", fontSize: 12, lineHeight: 1.35, color: '#000000', backgroundColor: '#ffffff', padding: '10px 4px' }}>
@@ -11944,35 +12017,114 @@ export const App: React.FC = () => {
             </div>
 
             {/* Print & Close Actions */}
-            <div className="no-print" style={{ display: 'flex', gap: 10, marginTop: 16, borderTop: '1px solid #eee', paddingTop: 14 }}>
-              <button
-                type="button"
-                onClick={() => setActiveZReportModal(null)}
-                style={{ flex: 1, padding: '10px', border: '1px solid #ccc', borderRadius: 6, backgroundColor: '#f5f5f5', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
-              >
-                Close
-              </button>
-              <button
-                type="button"
-                onClick={() => window.print()}
-                style={{
-                  flex: 1.5,
-                  padding: '10px',
-                  backgroundColor: '#8B1E2D',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 6,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  fontSize: 14,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 6,
-                }}
-              >
-                Print 80mm Z-Slip
-              </button>
+            <div className="no-print" style={{ display: 'flex', gap: 8, marginTop: 16, borderTop: '1px solid #eee', paddingTop: 14 }}>
+              {dayCloseLogoutSecondsLeft !== null ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDayCloseLogoutSecondsLeft(null);
+                    }}
+                    style={{
+                      padding: '10px 14px',
+                      border: '1px solid #D1D5DB',
+                      borderRadius: 6,
+                      backgroundColor: '#F3F4F6',
+                      color: '#4B5563',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      fontWeight: 700,
+                    }}
+                    title="Cancel auto-logout timer and stay on this screen"
+                  >
+                    ⏸️ Stay
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.print();
+                      setDayCloseLogoutSecondsLeft(30);
+                    }}
+                    style={{
+                      flex: 1.5,
+                      padding: '10px 12px',
+                      backgroundColor: '#8B1E2D',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 6,
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      boxShadow: '0 2px 6px rgba(139,30,45,0.25)',
+                    }}
+                  >
+                    🖨️ Print 80mm Z-Slip
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDayCloseLogoutSecondsLeft(null);
+                      setActiveZReportModal(null);
+                      handleLogout();
+                    }}
+                    style={{
+                      padding: '10px 14px',
+                      backgroundColor: '#1E293B',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 6,
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      fontSize: 13,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      boxShadow: '0 2px 6px rgba(30,41,59,0.25)',
+                    }}
+                  >
+                    🔒 Log Out Now
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveZReportModal(null);
+                      setDayCloseLogoutSecondsLeft(null);
+                    }}
+                    style={{ flex: 1, padding: '10px', border: '1px solid #ccc', borderRadius: 6, backgroundColor: '#f5f5f5', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    style={{
+                      flex: 1.5,
+                      padding: '10px',
+                      backgroundColor: '#8B1E2D',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 6,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    Print 80mm Z-Slip
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
