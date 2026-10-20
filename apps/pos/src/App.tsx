@@ -4964,17 +4964,8 @@ export const App: React.FC = () => {
                 <span style={{ fontSize: 13 }}>💵</span>
                 <span>Till:</span>
                 <span style={{ color: '#14532D', fontWeight: 900, fontSize: 13 }}>
-                  ₹{(liveDrawerSummary.current_drawer_cash_paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  ₹{((liveDrawerSummary.current_drawer_cash_paise + (liveDrawerSummary.upi_sales_paise || 0)) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
-                {(liveDrawerSummary.upi_sales_paise || 0) > 0 && (
-                  <>
-                    <span style={{ color: '#86EFAC', margin: '0 2px' }}>|</span>
-                    <span style={{ fontSize: 12 }}>📱</span>
-                    <span style={{ color: '#065F46', fontWeight: 800, fontSize: 12 }}>
-                      UPI: ₹{((liveDrawerSummary.upi_sales_paise || 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </>
-                )}
                 <span style={{ fontSize: 10, color: '#15803D' }}>▾</span>
               </button>
 
