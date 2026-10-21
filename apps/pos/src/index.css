@@ -15,14 +15,16 @@ body {
 }
 
 /* ========================================================================= */
-/* Thermal Print Buffer (Pre-computed off-screen layout on screen, active on print) */
+/* Thermal Print Root & Off-Screen Buffers (Hidden on screen)                */
 /* ========================================================================= */
 @media screen {
+  #thermal-print-root,
   .thermal-print-buffer {
+    display: none !important;
     position: absolute !important;
     left: -9999px !important;
-    top: 0 !important;
-    width: 80mm !important;
+    top: -9999px !important;
+    width: 0 !important;
     height: 0 !important;
     overflow: hidden !important;
     visibility: hidden !important;
@@ -33,18 +35,20 @@ body {
 
 /* ========================================================================= */
 /* 80mm (3-Inch) Thermal Receipt & Z-Report Print Media Queries              */
+/* Continuous Roll Geometry, Zero Pre-Feed Blank Space, Zero Height Clipping */
 /* ========================================================================= */
 @media print {
-  /* 1. Force 80mm continuous roll receipt geometry with zero browser margins */
+  /* 1. Force 80mm continuous roll receipt geometry with zero driver margins */
   @page {
     size: 80mm auto;
     margin: 0mm !important;
   }
 
-  /* 2. Remove standard browser headers, footers, and scrollbars */
+  /* 2. Remove standard browser headers, footers, body margins, and scrollbars */
   html, body {
     width: 80mm !important;
     max-width: 80mm !important;
+    min-width: 80mm !important;
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
@@ -55,29 +59,26 @@ body {
     overflow: visible !important;
   }
 
-  /* 3. Hide everything on screen by default (background screens, modals, buttons) */
-  body * {
+  /* 3. CRITICAL: Completely hide and collapse the interactive app tree (#root) */
+  /* This guarantees zero vertical layout height from the screen UI is pushed to the printer */
+  #root,
+  .no-print,
+  button {
+    display: none !important;
+    height: 0 !important;
+    max-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    overflow: hidden !important;
     visibility: hidden !important;
   }
 
-  /* 4. Make ONLY the printable receipt or Z-slip visible */
-  .thermal-print-buffer,
-  .thermal-print-buffer *,
-  #receipt-print-area,
-  #receipt-print-area *,
-  #z-report-thermal-slip,
-  #z-report-thermal-slip * {
-    visibility: visible !important;
-    opacity: 1 !important;
-    box-sizing: border-box !important;
-  }
-
-  /* 5. Continuous roll geometry on 80mm thermal paper roll (zero clipping, in-flow static) */
-  .thermal-print-buffer,
-  #receipt-print-area,
-  #z-report-thermal-slip {
-    position: static !important;
+  /* 4. Dedicated 80mm Continuous Roll Print Container */
+  /* Sits directly at (0,0) with no parent margins, flexbox constraints, or pre-feed offset */
+  #thermal-print-root {
     display: block !important;
+    position: static !important;
     left: auto !important;
     top: auto !important;
     width: 80mm !important;
@@ -85,7 +86,7 @@ body {
     min-width: 80mm !important;
     height: auto !important;
     margin: 0 !important;
-    padding: 2mm 4.5mm 12mm 5mm !important;
+    padding: 2mm 3.5mm 8mm 3.5mm !important;
     box-sizing: border-box !important;
     background: #ffffff !important;
     color: #000000 !important;
@@ -103,34 +104,28 @@ body {
     page-break-inside: auto !important;
     break-inside: auto !important;
     visibility: visible !important;
+    opacity: 1 !important;
   }
 
-  /* 5b. Neutralize screen modal dialog scroll boxes so thermal paper prints continuous full height */
-  .z-report-modal-overlay,
-  .z-report-modal-dialog,
-  div:has(#z-report-thermal-slip),
-  div:has(#receipt-print-area) {
-    position: static !important;
-    inset: auto !important;
-    display: block !important;
-    width: 80mm !important;
-    max-width: 80mm !important;
-    height: auto !important;
-    max-height: none !important;
-    overflow: visible !important;
+  /* 5. Direct Fallback if printed without portal */
+  #thermal-print-root:empty {
+    display: none !important;
+  }
+
+  /* Inner reset so container padding is the only outer margin */
+  #thermal-print-root #receipt-print-area,
+  #thermal-print-root #z-report-thermal-slip {
     margin: 0 !important;
     padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
     border: none !important;
-    background: #ffffff !important;
     box-shadow: none !important;
-  }
-
-  #z-report-thermal-slip tr {
-    page-break-inside: avoid !important;
-    break-inside: avoid !important;
+    background: transparent !important;
   }
 
   /* 6. Ensure 100% solid pure black rendering on thermal heads with zero dithering */
+  #thermal-print-root *,
   #receipt-print-area *,
   #z-report-thermal-slip * {
     color: #000000 !important;
@@ -139,9 +134,12 @@ body {
     box-shadow: none !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+    visibility: visible !important;
+    opacity: 1 !important;
   }
 
   /* 7. Receipt itemized table rules */
+  #thermal-print-root table,
   #receipt-print-area table,
   #z-report-thermal-slip table {
     width: 100% !important;
@@ -149,6 +147,8 @@ body {
     border-collapse: collapse !important;
   }
 
+  #thermal-print-root th,
+  #thermal-print-root td,
   #receipt-print-area th,
   #receipt-print-area td,
   #z-report-thermal-slip th,
@@ -157,19 +157,19 @@ body {
     word-break: break-word !important;
   }
 
+  #thermal-print-root tr,
+  #z-report-thermal-slip tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
   /* 8. Crisp dashed divider lines in solid black */
   .dashed-divider,
+  #thermal-print-root hr,
   #receipt-print-area hr,
   #z-report-thermal-slip hr {
     border: none !important;
     border-top: 1.5px dashed #000000 !important;
     margin: 6px 0 !important;
-  }
-
-  /* 9. Never print action buttons, close controls, or UI chrome */
-  button,
-  .no-print {
-    display: none !important;
-    visibility: hidden !important;
   }
 }

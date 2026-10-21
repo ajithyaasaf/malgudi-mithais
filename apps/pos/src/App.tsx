@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { flushSync } from 'react-dom';
+import { flushSync, createPortal } from 'react-dom';
 import { check as checkTauriUpdate, Update as TauriUpdate, DownloadEvent } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { calculateLineItem } from '@malgudi/domain/pricing.js';
@@ -2418,6 +2418,415 @@ export const App: React.FC = () => {
   const [archiveZReportLoading, setArchiveZReportLoading] = useState<boolean>(false);
   const [archiveZReportData, setArchiveZReportData] = useState<DayEndSummary | null>(null);
   const [archiveZReportError, setArchiveZReportError] = useState<string | null>(null);
+
+  // Helper: Render 80mm Continuous Thermal Receipt Content
+  const renderReceiptContent = (receipt: DetailedSaleReceipt) => {
+    const isUk =
+      receipt.branch_id === 'UK' ||
+      (receipt.branch_name || '').toLowerCase().includes('umachikulam');
+
+    const branchTitle = isUk ? 'Umachikulam Branch (UK)' : 'Iyer Bungalow Branch (IB)';
+    const branchAddress = isUk
+      ? 'Main Road, Umachikulam, Madurai - 625014'
+      : 'Natham Main Road, Iyer Bungalow, Madurai - 625014';
+
+    return (
+      <div id="receipt-print-area">
+        <div style={{ textAlign: 'center', borderBottom: '1.5px dashed #000000', paddingBottom: 8, marginBottom: 8 }}>
+          <div style={{ fontWeight: 900, fontSize: 16, letterSpacing: 0.5, color: '#000000' }}>MALGUDI MITHAIS</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: '#000000', marginTop: 2 }}>
+            {branchTitle}
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#000000' }}>{branchAddress}</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>GSTIN: 33NNYPS3460L1ZV</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>FSSAI: 12418012002674</div>
+        </div>
+
+        {receipt.sale_status === 'VOIDED' && (
+          <div style={{ color: '#000000', fontWeight: 900, textAlign: 'center', padding: '6px 0', margin: '6px 0', border: '2px solid #000000', fontSize: 13, letterSpacing: 1 }}>
+            *** VOIDED / REFUNDED ***
+          </div>
+        )}
+
+        {receipt.is_reprint && receipt.sale_status !== 'VOIDED' && (
+          <div style={{ color: '#000000', fontWeight: 900, textAlign: 'center', padding: '4px 0', margin: '4px 0', border: '1.5px dashed #000000', fontSize: 12, letterSpacing: 1 }}>
+            *** DUPLICATE / REPRINT SLIP ***
+          </div>
+        )}
+
+        <div style={{ marginBottom: 8, fontSize: 11, fontWeight: 600, color: '#000000', lineHeight: 1.5 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span><strong>Invoice:</strong> {receipt.invoice_number}</span>
+            <span><strong>Status:</strong> {receipt.payment_status}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span><strong>Cashier:</strong> {receipt.cashier_name}</span>
+            <span><strong>Terminal:</strong> {receipt.branch_id}/{receipt.terminal_id}</span>
+          </div>
+          <div><strong>Date:</strong> {formatDateTime(receipt.created_at)}</div>
+          {(receipt.customer_name || receipt.customer_phone || receipt.customer_location) && (
+            <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px dashed #000000', fontSize: 11, fontWeight: 600, color: '#000000', lineHeight: 1.4 }}>
+              {receipt.customer_name && <div><strong>Customer:</strong> {receipt.customer_name}</div>}
+              {receipt.customer_phone && <div><strong>Phone:</strong> {receipt.customer_phone}</div>}
+              {receipt.customer_location && <div><strong>Location:</strong> {receipt.customer_location}</div>}
+            </div>
+          )}
+        </div>
+
+        {/* Itemized Table */}
+        <div style={{ borderTop: '1.5px dashed #000000', borderBottom: '1.5px dashed #000000', padding: '6px 0', marginBottom: 8 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, color: '#000000' }}>
+            <thead>
+              <tr style={{ borderBottom: '1.5px dashed #000000', textAlign: 'left' }}>
+                <th style={{ paddingBottom: 4, width: '45%', fontWeight: 800, color: '#000000' }}>Item</th>
+                <th style={{ paddingBottom: 4, textAlign: 'center', width: '18%', fontWeight: 800, color: '#000000' }}>Qty</th>
+                <th style={{ paddingBottom: 4, textAlign: 'right', width: '17%', fontWeight: 800, color: '#000000' }}>Rate</th>
+                <th style={{ paddingBottom: 4, textAlign: 'right', width: '20%', fontWeight: 800, color: '#000000' }}>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {receipt.items && receipt.items.length > 0 ? (
+                receipt.items.map((it, idx) => (
+                  <tr key={idx} style={{ verticalAlign: 'top', borderBottom: '1px dotted #000000' }}>
+                    <td style={{ padding: '4px 0', color: '#000000' }}>
+                      <div style={{ fontWeight: 800, fontSize: 12, color: '#000000' }}>{it.product_name}</div>
+                      {it.tamil_name && it.tamil_name.trim() !== '' && it.tamil_name.trim().toLowerCase() !== it.product_name.trim().toLowerCase() && (
+                        <div style={{ fontSize: 11, fontWeight: 700, color: '#000000', marginTop: 1 }}>{it.tamil_name}</div>
+                      )}
+                    </td>
+                    <td style={{ padding: '4px 0', textAlign: 'center', fontWeight: 700, whiteSpace: 'nowrap', color: '#000000' }}>{it.quantity_formatted}</td>
+                    <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', color: '#000000' }}>
+                      ₹{(it.unit_price_paise / 100).toFixed(0)}
+                    </td>
+                    <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', color: '#000000' }}>
+                      ₹{(it.gross_paise / 100).toFixed(2)}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={4} style={{ textAlign: 'center', padding: '8px 0', fontWeight: 700, color: '#000000' }}>
+                    Items Billed: {receipt.items_count || 1}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Tax & Net Totals */}
+        <div style={{ borderBottom: '1.5px dashed #000000', paddingBottom: 6, marginBottom: 8, fontSize: 11, color: '#000000' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
+            <span>Taxable Subtotal:</span>
+            <span style={{ fontWeight: 700 }}>₹{(receipt.subtotal_taxable_paise / 100).toFixed(2)}</span>
+          </div>
+          {receipt.total_cgst_paise > 0 || receipt.total_sgst_paise > 0 ? (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
+                <span>CGST:</span>
+                <span style={{ fontWeight: 700 }}>₹{(receipt.total_cgst_paise / 100).toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
+                <span>SGST:</span>
+                <span style={{ fontWeight: 700 }}>₹{(receipt.total_sgst_paise / 100).toFixed(2)}</span>
+              </div>
+            </>
+          ) : (
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
+              <span>GST (Nil / Exempt):</span>
+              <span style={{ fontWeight: 700 }}>₹0.00</span>
+            </div>
+          )}
+          {receipt.round_off_paise !== 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
+              <span>Round-off:</span>
+              <span style={{ fontWeight: 700 }}>₹{(receipt.round_off_paise / 100).toFixed(2)}</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: 16, marginTop: 4, color: '#000000', borderTop: '1.5px dashed #000000', paddingTop: 4 }}>
+            <span>TOTAL NET PAYABLE:</span>
+            <span>₹{(receipt.net_payable_paise / 100).toFixed(2)}</span>
+          </div>
+        </div>
+
+        {/* Payment Tender Breakdown */}
+        <div style={{ borderBottom: '1.5px dashed #000000', paddingBottom: 6, marginBottom: 8, fontSize: 11, color: '#000000' }}>
+          {receipt.payments && receipt.payments.length === 1 ? (
+            (() => {
+              const p = receipt.payments[0];
+              if (p.payment_method === 'CASH') {
+                return (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+                      <span style={{ fontWeight: 600 }}>Payment:</span>
+                      <span style={{ fontWeight: 800 }}>CASH</span>
+                    </div>
+                    {p.change_returned_paise > 0 && (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2, color: '#000000' }}>
+                          <span style={{ fontWeight: 600 }}>Cash Tendered:</span>
+                          <span style={{ fontWeight: 700 }}>₹{(p.tendered_paise / 100).toFixed(2)}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 1, color: '#000000', fontWeight: 800 }}>
+                          <span>Change Returned:</span>
+                          <span>₹{(p.change_returned_paise / 100).toFixed(2)}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              } else {
+                return (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+                    <span style={{ fontWeight: 600 }}>Payment:</span>
+                    <span style={{ fontWeight: 800 }}>UPI / Soundbox</span>
+                  </div>
+                );
+              }
+            })()
+          ) : receipt.payments && receipt.payments.length > 1 ? (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, marginBottom: 3, color: '#000000' }}>
+                <span>Payment:</span>
+                <span>SPLIT TENDER</span>
+              </div>
+              {receipt.payments.map((p, idx) => (
+                <div key={idx} style={{ marginBottom: 2, color: '#000000' }}>
+                  {p.payment_method === 'CASH' ? (
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+                        <span style={{ fontWeight: 600 }}>Cash Portion:</span>
+                        <span style={{ fontWeight: 700 }}>₹{(p.net_amount_paise / 100).toFixed(2)}</span>
+                      </div>
+                      {p.change_returned_paise > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000', fontSize: 10, fontWeight: 700 }}>
+                          <span>Tendered: ₹{(p.tendered_paise / 100).toFixed(2)}</span>
+                          <span>Change: ₹{(p.change_returned_paise / 100).toFixed(2)}</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+                      <span style={{ fontWeight: 600 }}>UPI Portion:</span>
+                      <span style={{ fontWeight: 700 }}>₹{(p.net_amount_paise / 100).toFixed(2)}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+              <span style={{ fontWeight: 600 }}>Payment:</span>
+              <span style={{ fontWeight: 800 }}>{receipt.payment_status || 'SETTLED'}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Retail Customer Greetings */}
+        <div style={{ textAlign: 'center', fontSize: 11, color: '#000000', margin: '10px 0 6px 0' }}>
+          <div style={{ fontWeight: 800, color: '#000000' }}>Thank you for choosing Malgudi Mithais!</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#000000', marginTop: 2 }}>Sweetening your celebrations • Visit again!</div>
+        </div>
+      </div>
+    );
+  };
+
+  // Helper: Render 80mm Continuous Day-End Z-Report Thermal Slip Content
+  const renderZReportContent = (report: DayEndSummary) => {
+    return (
+      <div id="z-report-thermal-slip" style={{ fontFamily: "'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, 'Nirmala UI', 'Noto Sans Tamil', sans-serif", fontSize: 12, lineHeight: 1.35, color: '#000000', backgroundColor: '#ffffff', padding: '10px 4px' }}>
+        <div style={{ textAlign: 'center', marginBottom: 8, color: '#000000' }}>
+          <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: -0.5, color: '#000000' }}>மால்குடி மிட்டாய்ஸ்</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#000000' }}>MALGUDI MITHAIS</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>{report.branch_name}</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>GSTIN: 33NNYPS3460L1ZV | FSSAI: 12418012002674</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#000000' }}>Terminal: {report.terminal_id} | Session: {report.session_id}</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#000000' }}>Date: {report.business_date}</div>
+          <div style={{ fontSize: 10, fontWeight: 600, color: '#000000' }}>Closed At: {report.closed_at ? formatDateTime(report.closed_at) : 'Active'}</div>
+          <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
+          <div style={{ fontSize: 13, fontWeight: 900, textTransform: 'uppercase', color: '#000000' }}>*** END OF DAY Z-REPORT ***</div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#000000' }}>முடிவு தணிக்கை அறிக்கை</div>
+          <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
+        </div>
+
+        {/* Section 1: Cash Drawer Reconciliation */}
+        <div style={{ marginBottom: 10, color: '#000000' }}>
+          <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>1. CASH RECONCILIATION</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+            <span>Opening Cash Float:</span>
+            <span style={{ fontWeight: 700 }}>₹{(report.opening_float_paise / 100).toFixed(2)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+            <span>(+) Cash Sales In:</span>
+            <span style={{ fontWeight: 700 }}>₹{(report.cash_sales_paise / 100).toFixed(2)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+            <span>(-) Cash Refunds:</span>
+            <span style={{ fontWeight: 700 }}>₹{(report.cash_refunds_paise / 100).toFixed(2)}</span>
+          </div>
+          <div style={{ borderTop: '1px dotted #000000', margin: '4px 0' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: '#000000' }}>
+            <span>Expected Drawer Cash:</span>
+            <span>₹{(report.expected_closing_cash_paise / 100).toFixed(2)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: '#000000' }}>
+            <span>Counted Closing Cash:</span>
+            <span>₹{(report.counted_closing_cash_paise / 100).toFixed(2)}</span>
+          </div>
+          <div style={{ borderTop: '1.5px dashed #000000', margin: '4px 0' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: 13, color: '#000000' }}>
+            <span>DRAWER VARIANCE:</span>
+            <span>
+              {report.variance_paise === 0
+                ? '₹0.00 (EXACT)'
+                : report.variance_paise > 0
+                  ? `+₹${(report.variance_paise / 100).toFixed(2)} (OVER)`
+                  : `-₹${(Math.abs(report.variance_paise) / 100).toFixed(2)} (SHORT)`}
+            </span>
+          </div>
+          {report.variance_notes && (
+            <div style={{ fontSize: 10, marginTop: 2, fontStyle: 'italic', fontWeight: 600, color: '#000000' }}>
+              Note: {report.variance_notes}
+            </div>
+          )}
+        </div>
+
+        <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
+
+        {/* Section 2: Sales & Volume */}
+        <div style={{ marginBottom: 10, color: '#000000' }}>
+          <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>2. SALES & BILL VOLUME</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+            <span>Total Bills Printed:</span>
+            <span style={{ fontWeight: 700 }}>{report.total_bills_recorded}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+            <span>Active Settled Bills:</span>
+            <span style={{ fontWeight: 700 }}>{report.active_bills_count}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+            <span>Voided/Cancelled Bills:</span>
+            <span style={{ fontWeight: 700 }}>{report.voided_bills_count}</span>
+          </div>
+          <div style={{ borderTop: '1px dotted #000000', margin: '4px 0' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#000000' }}>
+            <span>GROSS TURNOVER:</span>
+            <span>₹{(report.gross_sales_paise / 100).toFixed(2)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#000000' }}>
+            <span>NET REVENUE:</span>
+            <span>₹{(report.net_sales_paise / 100).toFixed(2)}</span>
+          </div>
+        </div>
+
+        <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
+
+        {/* Section 3: Tender Realization */}
+        <div style={{ marginBottom: 10, color: '#000000' }}>
+          <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>3. PAYMENT METHOD BREAKDOWN</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+            <span>Cash Realized:</span>
+            <span style={{ fontWeight: 700 }}>₹{(report.cash_realized_paise / 100).toFixed(2)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+            <span>UPI / Digital Realized:</span>
+            <span style={{ fontWeight: 700 }}>₹{(report.upi_realized_paise / 100).toFixed(2)}</span>
+          </div>
+          <div style={{ borderTop: '1px dotted #000000', margin: '4px 0' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#000000' }}>
+            <span>TOTAL REALIZED:</span>
+            <span>₹{((report.cash_realized_paise + report.upi_realized_paise) / 100).toFixed(2)}</span>
+          </div>
+        </div>
+
+        <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
+
+        {/* Section 4: GST Breakdown */}
+        <div style={{ marginBottom: 10, color: '#000000' }}>
+          <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>4. GST TAX AUDIT</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+            <span>Taxable Value (Ex-Tax):</span>
+            <span style={{ fontWeight: 700 }}>₹{(report.total_taxable_paise / 100).toFixed(2)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+            <span>CGST:</span>
+            <span style={{ fontWeight: 700 }}>₹{(report.total_cgst_paise / 100).toFixed(2)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
+            <span>SGST:</span>
+            <span style={{ fontWeight: 700 }}>₹{(report.total_sgst_paise / 100).toFixed(2)}</span>
+          </div>
+          <div style={{ borderTop: '1px dotted #000000', margin: '4px 0' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#000000' }}>
+            <span>TOTAL GST:</span>
+            <span>₹{(report.total_tax_paise / 100).toFixed(2)}</span>
+          </div>
+        </div>
+
+        {/* Section 5: Item-wise Sales Breakdown (பொருட்கள் வாரியான விற்பனை) */}
+        <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
+        <div style={{ marginBottom: 10, color: '#000000' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <span style={{ fontWeight: 800, textDecoration: 'underline', color: '#000000' }}>5. ITEM-WISE SALES</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#444' }}>பொருட்கள் வாரியான பட்டியல்</span>
+          </div>
+
+          {report.item_sales && report.item_sales.length > 0 ? (
+            <>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, color: '#000000', marginTop: 4 }}>
+                <thead>
+                  <tr style={{ borderBottom: '1.5px dashed #000000', textAlign: 'left' }}>
+                    <th style={{ padding: '4px 0', fontWeight: 900, textTransform: 'uppercase' }}>ItemName</th>
+                    <th style={{ padding: '4px 0', textAlign: 'right', fontWeight: 900, textTransform: 'uppercase' }}>Qty</th>
+                    <th style={{ padding: '4px 0', textAlign: 'right', fontWeight: 900, textTransform: 'uppercase' }}>Sales (₹)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.item_sales.map((item, idx) => (
+                    <tr key={item.product_id || idx} style={{ borderBottom: '0.5px dotted #888' }}>
+                      <td style={{ padding: '3px 0', verticalAlign: 'top', paddingRight: 6 }}>
+                        <div style={{ fontWeight: 700, textTransform: 'uppercase' }}>{item.product_name}</div>
+                        {item.tamil_name && (
+                          <div style={{ fontSize: 9.5, color: '#333' }}>{item.tamil_name}</div>
+                        )}
+                      </td>
+                      <td style={{ padding: '3px 0', textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                        {item.quantity_formatted}
+                      </td>
+                      <td style={{ padding: '3px 0', textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', verticalAlign: 'top' }}>
+                        {(item.gross_paise / 100).toFixed(2)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, marginTop: 6, paddingTop: 4, borderTop: '1px dotted #000000', fontSize: 11 }}>
+                <span>Total Items Sold:</span>
+                <span>
+                  {report.item_sales.length} items (₹{(
+                    report.item_sales.reduce((acc, it) => acc + it.gross_paise, 0) / 100
+                  ).toFixed(2)})
+                </span>
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 11, fontStyle: 'italic', color: '#666', textAlign: 'center', padding: '6px 0' }}>
+              No items recorded for this shift.
+            </div>
+          )}
+        </div>
+
+        <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
+
+        <div style={{ textAlign: 'center', fontSize: 11, marginTop: 8, color: '#000000' }}>
+          <div>Closed by: <strong>{report.closed_by_user}</strong></div>
+          <div>Offline Sync Outbox: {report.pending_sync_count} events pending</div>
+          <div style={{ marginTop: 6, fontWeight: 800, color: '#000000' }}>*** END OF OFFICIAL Z-SLIP ***</div>
+        </div>
+      </div>
+    );
+  };
 
   // Helper: Print a quick diagnostic test slip to verify thermal printer connectivity
   const handlePrintTestSlip = () => {
@@ -10756,259 +11165,31 @@ export const App: React.FC = () => {
       )}
 
       {/* ========================================================= */}
-      {/* MODAL 5: Tax Invoice Receipt Modal                        */}
+      {/* MODAL 5: Tax Invoice Receipt (Screen Preview Modal)        */}
       {/* ========================================================= */}
-      {/* ========================================================= */}
-      {/* MODAL 5: Tax Invoice Receipt (Preview & Print Buffer)     */}
-      {/* ========================================================= */}
-      {(() => {
-        const renderReceiptContent = (receipt: DetailedSaleReceipt) => {
-          const isUk =
-            receipt.branch_id === 'UK' ||
-            (receipt.branch_name || '').toLowerCase().includes('umachikulam');
-
-          const branchTitle = isUk ? 'Umachikulam Branch (UK)' : 'Iyer Bungalow Branch (IB)';
-          const branchAddress = isUk
-            ? 'Main Road, Umachikulam, Madurai - 625014'
-            : 'Natham Main Road, Iyer Bungalow, Madurai - 625014';
-
-          return (
-            <div id="receipt-print-area">
-              <div style={{ textAlign: 'center', borderBottom: '1.5px dashed #000000', paddingBottom: 8, marginBottom: 8 }}>
-                <div style={{ fontWeight: 900, fontSize: 16, letterSpacing: 0.5, color: '#000000' }}>MALGUDI MITHAIS</div>
-                <div style={{ fontSize: 12, fontWeight: 800, color: '#000000', marginTop: 2 }}>
-                  {branchTitle}
-                </div>
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#000000' }}>{branchAddress}</div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>GSTIN: 33NNYPS3460L1ZV</div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>FSSAI: 12418012002674</div>
-              </div>
-
-              {receipt.sale_status === 'VOIDED' && (
-                <div style={{ color: '#000000', fontWeight: 900, textAlign: 'center', padding: '6px 0', margin: '6px 0', border: '2px solid #000000', fontSize: 13, letterSpacing: 1 }}>
-                  *** VOIDED / REFUNDED ***
-                </div>
-              )}
-
-              {receipt.is_reprint && receipt.sale_status !== 'VOIDED' && (
-                <div style={{ color: '#000000', fontWeight: 900, textAlign: 'center', padding: '4px 0', margin: '4px 0', border: '1.5px dashed #000000', fontSize: 12, letterSpacing: 1 }}>
-                  *** DUPLICATE / REPRINT SLIP ***
-                </div>
-              )}
-
-              <div style={{ marginBottom: 8, fontSize: 11, fontWeight: 600, color: '#000000', lineHeight: 1.5 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span><strong>Invoice:</strong> {receipt.invoice_number}</span>
-                  <span><strong>Status:</strong> {receipt.payment_status}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span><strong>Cashier:</strong> {receipt.cashier_name}</span>
-                  <span><strong>Terminal:</strong> {receipt.branch_id}/{receipt.terminal_id}</span>
-                </div>
-                <div><strong>Date:</strong> {formatDateTime(receipt.created_at)}</div>
-                {(receipt.customer_name || receipt.customer_phone || receipt.customer_location) && (
-                  <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px dashed #000000', fontSize: 11, fontWeight: 600, color: '#000000', lineHeight: 1.4 }}>
-                    {receipt.customer_name && <div><strong>Customer:</strong> {receipt.customer_name}</div>}
-                    {receipt.customer_phone && <div><strong>Phone:</strong> {receipt.customer_phone}</div>}
-                    {receipt.customer_location && <div><strong>Location:</strong> {receipt.customer_location}</div>}
-                  </div>
-                )}
-              </div>
-
-              {/* Itemized Table */}
-              <div style={{ borderTop: '1.5px dashed #000000', borderBottom: '1.5px dashed #000000', padding: '6px 0', marginBottom: 8 }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, color: '#000000' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1.5px dashed #000000', textAlign: 'left' }}>
-                      <th style={{ paddingBottom: 4, width: '45%', fontWeight: 800, color: '#000000' }}>Item</th>
-                      <th style={{ paddingBottom: 4, textAlign: 'center', width: '18%', fontWeight: 800, color: '#000000' }}>Qty</th>
-                      <th style={{ paddingBottom: 4, textAlign: 'right', width: '17%', fontWeight: 800, color: '#000000' }}>Rate</th>
-                      <th style={{ paddingBottom: 4, textAlign: 'right', width: '20%', fontWeight: 800, color: '#000000' }}>Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {receipt.items && receipt.items.length > 0 ? (
-                      receipt.items.map((it, idx) => (
-                        <tr key={idx} style={{ verticalAlign: 'top', borderBottom: '1px dotted #000000' }}>
-                          <td style={{ padding: '4px 0', color: '#000000' }}>
-                            <div style={{ fontWeight: 800, fontSize: 12, color: '#000000' }}>{it.product_name}</div>
-                            {it.tamil_name && it.tamil_name.trim() !== '' && it.tamil_name.trim().toLowerCase() !== it.product_name.trim().toLowerCase() && (
-                              <div style={{ fontSize: 11, fontWeight: 700, color: '#000000', marginTop: 1 }}>{it.tamil_name}</div>
-                            )}
-                          </td>
-                          <td style={{ padding: '4px 0', textAlign: 'center', fontWeight: 700, whiteSpace: 'nowrap', color: '#000000' }}>{it.quantity_formatted}</td>
-                          <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', color: '#000000' }}>
-                            ₹{(it.unit_price_paise / 100).toFixed(0)}
-                          </td>
-                          <td style={{ padding: '4px 0', textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', color: '#000000' }}>
-                            ₹{(it.gross_paise / 100).toFixed(2)}
-                          </td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={4} style={{ textAlign: 'center', padding: '8px 0', fontWeight: 700, color: '#000000' }}>
-                          Items Billed: {receipt.items_count || 1}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Tax & Net Totals */}
-              <div style={{ borderBottom: '1.5px dashed #000000', paddingBottom: 6, marginBottom: 8, fontSize: 11, color: '#000000' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
-                  <span>Taxable Subtotal:</span>
-                  <span style={{ fontWeight: 700 }}>₹{(receipt.subtotal_taxable_paise / 100).toFixed(2)}</span>
-                </div>
-                {receipt.total_cgst_paise > 0 || receipt.total_sgst_paise > 0 ? (
-                  <>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
-                      <span>CGST:</span>
-                      <span style={{ fontWeight: 700 }}>₹{(receipt.total_cgst_paise / 100).toFixed(2)}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
-                      <span>SGST:</span>
-                      <span style={{ fontWeight: 700 }}>₹{(receipt.total_sgst_paise / 100).toFixed(2)}</span>
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
-                    <span>GST (Nil / Exempt):</span>
-                    <span style={{ fontWeight: 700 }}>₹0.00</span>
-                  </div>
-                )}
-                {receipt.round_off_paise !== 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#000000' }}>
-                    <span>Round-off:</span>
-                    <span style={{ fontWeight: 700 }}>₹{(receipt.round_off_paise / 100).toFixed(2)}</span>
-                  </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: 16, marginTop: 4, color: '#000000', borderTop: '1.5px dashed #000000', paddingTop: 4 }}>
-                  <span>TOTAL NET PAYABLE:</span>
-                  <span>₹{(receipt.net_payable_paise / 100).toFixed(2)}</span>
-                </div>
-              </div>
-
-              {/* Payment Tender Breakdown */}
-              <div style={{ borderBottom: '1.5px dashed #000000', paddingBottom: 6, marginBottom: 8, fontSize: 11, color: '#000000' }}>
-                {receipt.payments && receipt.payments.length === 1 ? (
-                  (() => {
-                    const p = receipt.payments[0];
-                    if (p.payment_method === 'CASH') {
-                      return (
-                        <div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                            <span style={{ fontWeight: 600 }}>Payment:</span>
-                            <span style={{ fontWeight: 800 }}>CASH</span>
-                          </div>
-                          {p.change_returned_paise > 0 && (
-                            <>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2, color: '#000000' }}>
-                                <span style={{ fontWeight: 600 }}>Cash Tendered:</span>
-                                <span style={{ fontWeight: 700 }}>₹{(p.tendered_paise / 100).toFixed(2)}</span>
-                              </div>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 1, color: '#000000', fontWeight: 800 }}>
-                                <span>Change Returned:</span>
-                                <span>₹{(p.change_returned_paise / 100).toFixed(2)}</span>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      );
-                    } else {
-                      return (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                          <span style={{ fontWeight: 600 }}>Payment:</span>
-                          <span style={{ fontWeight: 800 }}>UPI / Soundbox</span>
-                        </div>
-                      );
-                    }
-                  })()
-                ) : receipt.payments && receipt.payments.length > 1 ? (
-                  <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, marginBottom: 3, color: '#000000' }}>
-                      <span>Payment:</span>
-                      <span>SPLIT TENDER</span>
-                    </div>
-                    {receipt.payments.map((p, idx) => (
-                      <div key={idx} style={{ marginBottom: 2, color: '#000000' }}>
-                        {p.payment_method === 'CASH' ? (
-                          <div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                              <span style={{ fontWeight: 600 }}>Cash Portion:</span>
-                              <span style={{ fontWeight: 700 }}>₹{(p.net_amount_paise / 100).toFixed(2)}</span>
-                            </div>
-                            {p.change_returned_paise > 0 && (
-                              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000', fontSize: 10, fontWeight: 700 }}>
-                                <span>Tendered: ₹{(p.tendered_paise / 100).toFixed(2)}</span>
-                                <span>Change: ₹{(p.change_returned_paise / 100).toFixed(2)}</span>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                            <span style={{ fontWeight: 600 }}>UPI Portion:</span>
-                            <span style={{ fontWeight: 700 }}>₹{(p.net_amount_paise / 100).toFixed(2)}</span>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                    <span style={{ fontWeight: 600 }}>Payment:</span>
-                    <span style={{ fontWeight: 800 }}>{receipt.payment_status || 'SETTLED'}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Retail Customer Greetings */}
-              <div style={{ textAlign: 'center', fontSize: 11, color: '#000000', margin: '10px 0 6px 0' }}>
-                <div style={{ fontWeight: 800, color: '#000000' }}>Thank you for choosing Malgudi Mithais!</div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: '#000000', marginTop: 2 }}>Sweetening your celebrations • Visit again!</div>
-              </div>
+      {activeReceiptModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1300, padding: 16 }}>
+          <div style={{ backgroundColor: '#fff', padding: 22, borderRadius: 8, width: 380, maxWidth: '95vw', fontFamily: 'monospace', fontSize: 12, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
+            {renderReceiptContent(activeReceiptModal)}
+            <div className="no-print" style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                style={{ flex: 1, padding: '10px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
+              >
+                Print Receipt
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveReceiptModal(null)}
+                style={{ padding: '10px 18px', backgroundColor: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
+              >
+                Close
+              </button>
             </div>
-          );
-        };
-
-        if (activeReceiptModal) {
-          return (
-            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1300, padding: 16 }}>
-              <div style={{ backgroundColor: '#fff', padding: 22, borderRadius: 8, width: 380, maxWidth: '95vw', fontFamily: 'monospace', fontSize: 12, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
-                {renderReceiptContent(activeReceiptModal)}
-                <div className="no-print" style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-                  <button
-                    type="button"
-                    onClick={() => window.print()}
-                    style={{ flex: 1, padding: '10px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
-                  >
-                    Print Receipt
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveReceiptModal(null)}
-                    style={{ padding: '10px 18px', backgroundColor: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        }
-
-        if (lastSettledReceipt) {
-          return (
-            <div className="thermal-print-buffer">
-              {renderReceiptContent(lastSettledReceipt)}
-            </div>
-          );
-        }
-
-        return null;
-      })()}
+          </div>
+        </div>
+      )}
 
       {/* ========================================================= */}
       {/* MODAL 5B: Category Management & Edit Dialog                 */}
@@ -11757,7 +11938,7 @@ export const App: React.FC = () => {
             {/* Top Close Bar */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee', paddingBottom: 10, marginBottom: 14 }}>
               <span style={{ fontSize: 14, fontWeight: 800, color: '#8B1E2D' }}>
-                📋 80mm Day-End Z-Report Slip
+                80mm Day-End Z-Report Slip
               </span>
               <button
                 type="button"
@@ -11788,7 +11969,6 @@ export const App: React.FC = () => {
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 800, color: '#9F1239' }}>
-                    <span>🌙</span>
                     <span>Day Closed Successfully</span>
                   </div>
                   <span
@@ -11803,7 +11983,7 @@ export const App: React.FC = () => {
                       boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
                     }}
                   >
-                    🔒 Auto-logout in {dayCloseLogoutSecondsLeft}s
+                    Auto-logout in {dayCloseLogoutSecondsLeft}s
                   </span>
                 </div>
                 <div style={{ fontSize: 11, color: '#881337', lineHeight: 1.35 }}>
@@ -11823,198 +12003,8 @@ export const App: React.FC = () => {
               </div>
             )}
 
-            {/* 80mm Thermal Receipt Content */}
-            <div id="z-report-thermal-slip" style={{ fontFamily: "'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, 'Nirmala UI', 'Noto Sans Tamil', sans-serif", fontSize: 12, lineHeight: 1.35, color: '#000000', backgroundColor: '#ffffff', padding: '10px 4px' }}>
-              <div style={{ textAlign: 'center', marginBottom: 8, color: '#000000' }}>
-                <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: -0.5, color: '#000000' }}>மால்குடி மிட்டாய்ஸ்</div>
-                <div style={{ fontSize: 13, fontWeight: 800, color: '#000000' }}>MALGUDI MITHAIS</div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>{activeZReportModal.branch_name}</div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>GSTIN: 33NNYPS3460L1ZV | FSSAI: 12418012002674</div>
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#000000' }}>Terminal: {activeZReportModal.terminal_id} | Session: {activeZReportModal.session_id}</div>
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#000000' }}>Date: {activeZReportModal.business_date}</div>
-                <div style={{ fontSize: 10, fontWeight: 600, color: '#000000' }}>Closed At: {activeZReportModal.closed_at ? formatDateTime(activeZReportModal.closed_at) : 'Active'}</div>
-                <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
-                <div style={{ fontSize: 13, fontWeight: 900, textTransform: 'uppercase', color: '#000000' }}>*** END OF DAY Z-REPORT ***</div>
-                <div style={{ fontSize: 11, fontWeight: 800, color: '#000000' }}>முடிவு தணிக்கை அறிக்கை</div>
-                <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
-              </div>
-
-              {/* Section 1: Cash Drawer Reconciliation */}
-              <div style={{ marginBottom: 10, color: '#000000' }}>
-                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>1. CASH RECONCILIATION</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                  <span>Opening Cash Float:</span>
-                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.opening_float_paise / 100).toFixed(2)}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                  <span>(+) Cash Sales In:</span>
-                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.cash_sales_paise / 100).toFixed(2)}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                  <span>(-) Cash Refunds:</span>
-                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.cash_refunds_paise / 100).toFixed(2)}</span>
-                </div>
-                <div style={{ borderTop: '1px dotted #000000', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: '#000000' }}>
-                  <span>Expected Drawer Cash:</span>
-                  <span>₹{(activeZReportModal.expected_closing_cash_paise / 100).toFixed(2)}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: '#000000' }}>
-                  <span>Counted Closing Cash:</span>
-                  <span>₹{(activeZReportModal.counted_closing_cash_paise / 100).toFixed(2)}</span>
-                </div>
-                <div style={{ borderTop: '1.5px dashed #000000', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, fontSize: 13, color: '#000000' }}>
-                  <span>DRAWER VARIANCE:</span>
-                  <span>
-                    {activeZReportModal.variance_paise === 0
-                      ? '₹0.00 (EXACT)'
-                      : activeZReportModal.variance_paise > 0
-                        ? `+₹${(activeZReportModal.variance_paise / 100).toFixed(2)} (OVER)`
-                        : `-₹${(Math.abs(activeZReportModal.variance_paise) / 100).toFixed(2)} (SHORT)`}
-                  </span>
-                </div>
-                {activeZReportModal.variance_notes && (
-                  <div style={{ fontSize: 10, marginTop: 2, fontStyle: 'italic', fontWeight: 600, color: '#000000' }}>
-                    Note: {activeZReportModal.variance_notes}
-                  </div>
-                )}
-              </div>
-
-              <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
-
-              {/* Section 2: Sales & Volume */}
-              <div style={{ marginBottom: 10, color: '#000000' }}>
-                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>2. SALES & BILL VOLUME</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                  <span>Total Bills Printed:</span>
-                  <span style={{ fontWeight: 700 }}>{activeZReportModal.total_bills_recorded}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                  <span>Active Settled Bills:</span>
-                  <span style={{ fontWeight: 700 }}>{activeZReportModal.active_bills_count}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                  <span>Voided/Cancelled Bills:</span>
-                  <span style={{ fontWeight: 700 }}>{activeZReportModal.voided_bills_count}</span>
-                </div>
-                <div style={{ borderTop: '1px dotted #000000', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#000000' }}>
-                  <span>GROSS TURNOVER:</span>
-                  <span>₹{(activeZReportModal.gross_sales_paise / 100).toFixed(2)}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#000000' }}>
-                  <span>NET REVENUE:</span>
-                  <span>₹{(activeZReportModal.net_sales_paise / 100).toFixed(2)}</span>
-                </div>
-              </div>
-
-              <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
-
-              {/* Section 3: Tender Realization */}
-              <div style={{ marginBottom: 10, color: '#000000' }}>
-                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>3. PAYMENT METHOD BREAKDOWN</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                  <span>Cash Realized:</span>
-                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.cash_realized_paise / 100).toFixed(2)}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                  <span>UPI / Digital Realized:</span>
-                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.upi_realized_paise / 100).toFixed(2)}</span>
-                </div>
-                <div style={{ borderTop: '1px dotted #000000', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#000000' }}>
-                  <span>TOTAL REALIZED:</span>
-                  <span>₹{((activeZReportModal.cash_realized_paise + activeZReportModal.upi_realized_paise) / 100).toFixed(2)}</span>
-                </div>
-              </div>
-
-              <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
-
-              {/* Section 4: GST Breakdown */}
-              <div style={{ marginBottom: 10, color: '#000000' }}>
-                <div style={{ fontWeight: 800, textDecoration: 'underline', marginBottom: 4, color: '#000000' }}>4. GST TAX AUDIT</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                  <span>Taxable Value (Ex-Tax):</span>
-                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.total_taxable_paise / 100).toFixed(2)}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                  <span>CGST:</span>
-                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.total_cgst_paise / 100).toFixed(2)}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#000000' }}>
-                  <span>SGST:</span>
-                  <span style={{ fontWeight: 700 }}>₹{(activeZReportModal.total_sgst_paise / 100).toFixed(2)}</span>
-                </div>
-                <div style={{ borderTop: '1px dotted #000000', margin: '4px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, color: '#000000' }}>
-                  <span>TOTAL GST:</span>
-                  <span>₹{(activeZReportModal.total_tax_paise / 100).toFixed(2)}</span>
-                </div>
-              </div>
-
-              {/* Section 5: Item-wise Sales Breakdown (பொருட்கள் வாரியான விற்பனை) */}
-              <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
-              <div style={{ marginBottom: 10, color: '#000000' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <span style={{ fontWeight: 800, textDecoration: 'underline', color: '#000000' }}>5. ITEM-WISE SALES</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: '#444' }}>பொருட்கள் வாரியான பட்டியல்</span>
-                </div>
-
-                {activeZReportModal.item_sales && activeZReportModal.item_sales.length > 0 ? (
-                  <>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, color: '#000000', marginTop: 4 }}>
-                      <thead>
-                        <tr style={{ borderBottom: '1.5px dashed #000000', textAlign: 'left' }}>
-                          <th style={{ padding: '4px 0', fontWeight: 900, textTransform: 'uppercase' }}>ItemName</th>
-                          <th style={{ padding: '4px 0', textAlign: 'right', fontWeight: 900, textTransform: 'uppercase' }}>Qty</th>
-                          <th style={{ padding: '4px 0', textAlign: 'right', fontWeight: 900, textTransform: 'uppercase' }}>Sales (₹)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {activeZReportModal.item_sales.map((item, idx) => (
-                          <tr key={item.product_id || idx} style={{ borderBottom: '0.5px dotted #888' }}>
-                            <td style={{ padding: '3px 0', verticalAlign: 'top', paddingRight: 6 }}>
-                              <div style={{ fontWeight: 700, textTransform: 'uppercase' }}>{item.product_name}</div>
-                              {item.tamil_name && (
-                                <div style={{ fontSize: 9.5, color: '#333' }}>{item.tamil_name}</div>
-                              )}
-                            </td>
-                            <td style={{ padding: '3px 0', textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', verticalAlign: 'top' }}>
-                              {item.quantity_formatted}
-                            </td>
-                            <td style={{ padding: '3px 0', textAlign: 'right', fontWeight: 800, whiteSpace: 'nowrap', verticalAlign: 'top' }}>
-                              {(item.gross_paise / 100).toFixed(2)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 900, marginTop: 6, paddingTop: 4, borderTop: '1px dotted #000000', fontSize: 11 }}>
-                      <span>Total Items Sold:</span>
-                      <span>
-                        {activeZReportModal.item_sales.length} items (₹{(
-                          activeZReportModal.item_sales.reduce((acc, it) => acc + it.gross_paise, 0) / 100
-                        ).toFixed(2)})
-                      </span>
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ fontSize: 11, fontStyle: 'italic', color: '#666', textAlign: 'center', padding: '6px 0' }}>
-                    No items recorded for this shift.
-                  </div>
-                )}
-              </div>
-
-              <div style={{ borderTop: '1.5px dashed #000000', margin: '8px 0' }} />
-
-              <div style={{ textAlign: 'center', fontSize: 11, marginTop: 8, color: '#000000' }}>
-                <div>Closed by: <strong>{activeZReportModal.closed_by_user}</strong></div>
-                <div>Offline Sync Outbox: {activeZReportModal.pending_sync_count} events pending</div>
-                <div style={{ marginTop: 6, fontWeight: 800, color: '#000000' }}>*** END OF OFFICIAL Z-SLIP ***</div>
-              </div>
-            </div>
+            {/* 80mm Thermal Receipt Preview */}
+            {renderZReportContent(activeZReportModal)}
 
             {/* Print & Close Actions */}
             <div className="no-print" style={{ display: 'flex', gap: 8, marginTop: 16, borderTop: '1px solid #eee', paddingTop: 14 }}>
@@ -12037,7 +12027,7 @@ export const App: React.FC = () => {
                     }}
                     title="Cancel auto-logout timer and stay on this screen"
                   >
-                    ⏸️ Stay
+                    Stay
                   </button>
                   <button
                     type="button"
@@ -12062,7 +12052,7 @@ export const App: React.FC = () => {
                       boxShadow: '0 2px 6px rgba(139,30,45,0.25)',
                     }}
                   >
-                    🖨️ Print 80mm Z-Slip
+                    Print 80mm Z-Slip
                   </button>
                   <button
                     type="button"
@@ -12087,7 +12077,7 @@ export const App: React.FC = () => {
                       boxShadow: '0 2px 6px rgba(30,41,59,0.25)',
                     }}
                   >
-                    🔒 Log Out Now
+                    Log Out Now
                   </button>
                 </>
               ) : (
@@ -13611,6 +13601,24 @@ export const App: React.FC = () => {
             </div>
           </div>
         );
+      })()}
+
+      {/* ========================================================= */}
+      {/* 80mm Continuous Thermal Print Portal                      */}
+      {/* Directly mounts active receipt/Z-report into body child   */}
+      {/* #thermal-print-root for zero blank paper and zero clipping*/}
+      {/* ========================================================= */}
+      {typeof document !== 'undefined' && document.getElementById('thermal-print-root') && (() => {
+        let printPayload: React.ReactNode = null;
+        if (activeZReportModal) {
+          printPayload = renderZReportContent(activeZReportModal);
+        } else if (activeReceiptModal) {
+          printPayload = renderReceiptContent(activeReceiptModal);
+        } else if (lastSettledReceipt) {
+          printPayload = renderReceiptContent(lastSettledReceipt);
+        }
+        if (!printPayload) return null;
+        return createPortal(printPayload, document.getElementById('thermal-print-root')!);
       })()}
     </div>
   );
