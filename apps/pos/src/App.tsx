@@ -2429,6 +2429,8 @@ export const App: React.FC = () => {
     const branchAddress = isUk
       ? 'Main Road, Umachikulam, Madurai - 625014'
       : 'Natham Main Road, Iyer Bungalow, Madurai - 625014';
+    const branchPhone = isUk ? '0452 351 0356' : '0452 796 4772';
+    const branchFssai = isUk ? '12424012002260' : '12418012002674';
 
     return (
       <div id="receipt-print-area">
@@ -2438,8 +2440,9 @@ export const App: React.FC = () => {
             {branchTitle}
           </div>
           <div style={{ fontSize: 11, fontWeight: 600, color: '#000000' }}>{branchAddress}</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>Ph: {branchPhone}</div>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>GSTIN: 33NNYPS3460L1ZV</div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>FSSAI: 12418012002674</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>FSSAI: {branchFssai}</div>
         </div>
 
         {receipt.sale_status === 'VOIDED' && (
@@ -2633,13 +2636,20 @@ export const App: React.FC = () => {
 
   // Helper: Render 80mm Continuous Day-End Z-Report Thermal Slip Content
   const renderZReportContent = (report: DayEndSummary) => {
+    const isUk =
+      (report.branch_name || '').toLowerCase().includes('umachikulam') ||
+      (currentSession?.branch_id === 'UK');
+    const zPhone = isUk ? '0452 351 0356' : '0452 796 4772';
+    const zFssai = isUk ? '12424012002260' : '12418012002674';
+
     return (
       <div id="z-report-thermal-slip" style={{ fontFamily: "'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, 'Nirmala UI', 'Noto Sans Tamil', sans-serif", fontSize: 12, lineHeight: 1.35, color: '#000000', backgroundColor: '#ffffff', padding: '10px 4px' }}>
         <div style={{ textAlign: 'center', marginBottom: 8, color: '#000000' }}>
           <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: -0.5, color: '#000000' }}>மால்குடி மிட்டாய்ஸ்</div>
           <div style={{ fontSize: 13, fontWeight: 800, color: '#000000' }}>MALGUDI MITHAIS</div>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>{report.branch_name}</div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>GSTIN: 33NNYPS3460L1ZV | FSSAI: 12418012002674</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>Ph: {zPhone}</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#000000' }}>GSTIN: 33NNYPS3460L1ZV | FSSAI: {zFssai}</div>
           <div style={{ fontSize: 11, fontWeight: 600, color: '#000000' }}>Terminal: {report.terminal_id} | Session: {report.session_id}</div>
           <div style={{ fontSize: 11, fontWeight: 600, color: '#000000' }}>Date: {report.business_date}</div>
           <div style={{ fontSize: 10, fontWeight: 600, color: '#000000' }}>Closed At: {report.closed_at ? formatDateTime(report.closed_at) : 'Active'}</div>
@@ -3807,6 +3817,13 @@ export const App: React.FC = () => {
       }
       // Tactical UX hold (450ms) to ensure smooth human-perceptible blur and loading indication
       await new Promise(resolve => setTimeout(resolve, 450));
+      // Synchronize in-memory active session so newly finalized bills immediately reflect the new branch without requiring logout
+      setCurrentSession({
+        ...currentSession,
+        branch_id: syncConfigForm.branch_id,
+        terminal_id: syncConfigForm.terminal_id,
+        counter_id: syncConfigForm.counter_id,
+      });
       setAdminActionMessage(`Branch configuration saved successfully! Active Identity: ${syncConfigForm.branch_id} - ${syncConfigForm.branch_name}`);
       await loadSyncConfig();
       await loadSyncStatus();
@@ -8474,16 +8491,16 @@ export const App: React.FC = () => {
 
                       <div style={{ marginBottom: 16 }}>
                         <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 4 }}>
-                          Cloud API Authorization Key *
+                          Cloud API Authorization Key
                         </label>
                         <input
                           type="password"
                           value={syncConfigForm.cloud_api_key}
                           onChange={e => setSyncConfigForm({ ...syncConfigForm, cloud_api_key: e.target.value })}
-                          required
+                          placeholder="•••••••• (Default system key active)"
                           style={{ width: '100%', padding: '8px 10px', fontSize: 13, border: '1px solid #ccc', borderRadius: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}
                         />
-                        <span style={{ fontSize: 11, color: '#777' }}>Bearer token for authenticating batch uploads</span>
+                        <span style={{ fontSize: 11, color: '#777' }}>Optional. Leave blank to preserve active system sync key.</span>
                       </div>
 
                       <div style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 8 }}>

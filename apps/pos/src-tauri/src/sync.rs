@@ -204,16 +204,7 @@ pub fn get_branch_config(conn: &Connection) -> Result<BranchConfig, String> {
 
     let cloud_api_key = env_key
         .or_else(|| get_val("cloud_api_key"))
-        .unwrap_or_else(|| {
-            #[cfg(debug_assertions)]
-            {
-                "malgudi_sync_secret_token_2026".to_string()
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                String::new()
-            }
-        });
+        .unwrap_or_else(|| "malgudi_sync_secret_token_2026".to_string());
 
     let auto_sync_enabled = get_val("auto_sync_enabled")
         .map(|v| v == "true" || v == "1")
@@ -274,6 +265,12 @@ pub fn save_branch_config(
         },
     )
     .map_err(|e| format!("Failed to save auto_sync_enabled: {}", e))?;
+
+    // Synchronize active session in user_sessions table so that in-flight billing immediately inherits new branch/terminal
+    let _ = conn.execute(
+        "UPDATE user_sessions SET branch_id = ?1, terminal_id = ?2, counter_id = ?3 WHERE token = ?4;",
+        params![config.branch_id.trim(), config.terminal_id.trim(), config.counter_id.trim(), session_token],
+    );
 
     crate::auth::record_audit_event(
         conn,
