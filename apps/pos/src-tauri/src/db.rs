@@ -445,9 +445,65 @@ impl DatabaseManager {
             );
         }
 
-        // Ensure baseline stock is safely initialized for both branches (IB & MN)
+        // --- Migration v7: Harmonize orphan sales for Umachikulam branch terminal ---
+        let has_v7: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 7);",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(false);
+
+        if !has_v7 {
+            let active_branch: Option<String> = conn
+                .query_row(
+                    "SELECT value FROM terminal_trust_state WHERE key = 'branch_id';",
+                    [],
+                    |r| r.get(0),
+                )
+                .ok();
+
+            if let Some(ref branch) = active_branch {
+                let b_trimmed = branch.trim();
+                // Strictly guard: only run on Umachikulam terminal (UK/MN) — Iyer Bungalow (IB) is completely untouched
+                if b_trimmed == "UK" || b_trimmed == "MN" {
+                    let _ = conn.execute(
+                        "UPDATE sales SET branch_id = ?1 WHERE branch_id = 'IB';",
+                        [b_trimmed],
+                    );
+                    let _ = conn.execute(
+                        "UPDATE cash_movements SET branch_id = ?1 WHERE branch_id = 'IB' AND movement_type != 'OPENING_FLOAT';",
+                        [b_trimmed],
+                    );
+                    let _ = conn.execute(
+                        "UPDATE cash_movements SET branch_id = ?1 
+                         WHERE branch_id = 'IB' AND movement_type = 'OPENING_FLOAT'
+                           AND SUBSTR(created_at, 1, 10) NOT IN (
+                             SELECT SUBSTR(created_at, 1, 10) FROM cash_movements WHERE branch_id = ?1 AND movement_type = 'OPENING_FLOAT'
+                           );",
+                        [b_trimmed],
+                    );
+                    let _ = conn.execute(
+                        "UPDATE stock_movements SET branch_id = ?1 WHERE branch_id = 'IB';",
+                        [b_trimmed],
+                    );
+                    let _ = conn.execute(
+                        "UPDATE user_sessions SET branch_id = ?1 WHERE branch_id = 'IB';",
+                        [b_trimmed],
+                    );
+                }
+            }
+
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (7, '2026-10-26T22:30:00Z');",
+                [],
+            );
+        }
+
+        // Ensure baseline stock is safely initialized for all branches (IB, MN, UK)
         Self::initialize_branch_stock_if_missing(conn, "IB")?;
         Self::initialize_branch_stock_if_missing(conn, "MN")?;
+        Self::initialize_branch_stock_if_missing(conn, "UK")?;
 
         Ok(())
     }

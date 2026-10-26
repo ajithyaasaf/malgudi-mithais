@@ -1,6 +1,6 @@
 {
   "name": "@malgudi/pos",
-  "version": "2.9.38",
+  "version": "2.9.39",
   "private": true,
   "type": "module",
   "scripts": {

@@ -272,6 +272,31 @@ pub fn save_branch_config(
         params![config.branch_id.trim(), config.terminal_id.trim(), config.counter_id.trim(), session_token],
     );
 
+    // If branch is being configured as Umachikulam (UK/MN), harmonize any unassigned default 'IB' sales on this local terminal
+    let target_branch = config.branch_id.trim();
+    if target_branch == "UK" || target_branch == "MN" {
+        let _ = conn.execute(
+            "UPDATE sales SET branch_id = ?1 WHERE branch_id = 'IB';",
+            params![target_branch],
+        );
+        let _ = conn.execute(
+            "UPDATE cash_movements SET branch_id = ?1 WHERE branch_id = 'IB' AND movement_type != 'OPENING_FLOAT';",
+            params![target_branch],
+        );
+        let _ = conn.execute(
+            "UPDATE cash_movements SET branch_id = ?1 
+             WHERE branch_id = 'IB' AND movement_type = 'OPENING_FLOAT'
+               AND SUBSTR(created_at, 1, 10) NOT IN (
+                 SELECT SUBSTR(created_at, 1, 10) FROM cash_movements WHERE branch_id = ?1 AND movement_type = 'OPENING_FLOAT'
+               );",
+            params![target_branch],
+        );
+        let _ = conn.execute(
+            "UPDATE stock_movements SET branch_id = ?1 WHERE branch_id = 'IB';",
+            params![target_branch],
+        );
+    }
+
     crate::auth::record_audit_event(
         conn,
         "BRANCH_CONFIG_UPDATED",
