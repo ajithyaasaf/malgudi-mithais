@@ -2791,11 +2791,11 @@ export const App: React.FC = () => {
             <div style={{ fontSize: 24, fontWeight: 900, color: '#2563EB', letterSpacing: 0.5, marginBottom: 4 }}>
               TAX INVOICE
             </div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: '#0F172A' }}>
-              SHRI SURIYA TRADERS
+            <div style={{ fontSize: 22, fontWeight: 900, color: '#8B1E2D', letterSpacing: 0.5 }}>
+              MALGUDI MITHAIS
             </div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#8B1E2D', marginBottom: 4 }}>
-              MALGUDI MITHAIS • {branchTitle}
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#0F172A', marginBottom: 4 }}>
+              {branchTitle}
             </div>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>
               GSTIN: <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 13 }}>33NNYPS3460L1ZV</span>
@@ -2995,7 +2995,7 @@ export const App: React.FC = () => {
           </div>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontWeight: 700, color: '#0F172A', marginBottom: 40 }}>
-              For SHRI SURIYA TRADERS (MALGUDI MITHAIS)
+              For MALGUDI MITHAIS ({branchTitle})
             </div>
             <div style={{ borderTop: '1px dashed #64748B', paddingTop: 4, fontSize: 11, fontWeight: 700 }}>
               Authorized Signatory
