@@ -39,6 +39,7 @@ export interface FinalizeSaleResult {
   sale_status?: string;
   payment_status: string;
   created_at: string;
+  customer_gstin?: string | null;
   items?: any[];
 }
 
@@ -3861,6 +3862,7 @@ export const App: React.FC = () => {
               sale_status: s.sale_status,
               payment_status: s.payment_status,
               created_at: s.created_at,
+              customer_gstin: s.customer_gstin || null,
             }))
           );
         }
@@ -5351,6 +5353,7 @@ export const App: React.FC = () => {
           sale_status: 'COMPLETED',
           payment_status: lifecycleEval.derivedPaymentStatus,
           created_at: new Date().toISOString(),
+          customer_gstin: finalGstin,
         };
       } else {
         const nextSeq = persistedHistory.length + 101;
@@ -5366,6 +5369,7 @@ export const App: React.FC = () => {
           sale_status: 'COMPLETED',
           payment_status: lifecycleEval.derivedPaymentStatus,
           created_at: new Date().toISOString(),
+          customer_gstin: finalGstin,
         };
       }
 
@@ -11321,32 +11325,34 @@ export const App: React.FC = () => {
                                 borderRadius: 4,
                                 cursor: 'pointer',
                                 fontWeight: 600,
-                                marginRight: 4,
+                                marginRight: s.customer_gstin ? 4 : 0,
                               }}
                               title="Reprint 80mm Thermal Slip"
                             >
                               Reprint
                             </button>
-                            <button
-                              onClick={() => {
-                                handleOpenA4Invoice(s.invoice_number, s);
-                                setIsHistoryModalOpen(false);
-                              }}
-                              style={{
-                                padding: '4px 8px',
-                                fontSize: 12,
-                                backgroundColor: '#1E3A8A',
-                                color: '#fff',
-                                border: 'none',
-                                borderRadius: 4,
-                                cursor: 'pointer',
-                                fontWeight: 600,
-                                marginRight: 4,
-                              }}
-                              title="View & Download / Print A4 Tax Invoice PDF"
-                            >
-                              📄 A4
-                            </button>
+                            {Boolean(s.customer_gstin && s.customer_gstin.trim() !== '') && (
+                              <button
+                                onClick={() => {
+                                  handleOpenA4Invoice(s.invoice_number, s);
+                                  setIsHistoryModalOpen(false);
+                                }}
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: 12,
+                                  backgroundColor: '#1E3A8A',
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: 4,
+                                  cursor: 'pointer',
+                                  fontWeight: 600,
+                                  marginRight: 4,
+                                }}
+                                title="View & Download / Print A4 Tax Invoice PDF"
+                              >
+                                📄 A4
+                              </button>
+                            )}
                             {s.sale_status !== 'VOIDED' && currentSession?.role === 'ADMIN' && (
                               <button
                                 onClick={() => {
@@ -11706,26 +11712,28 @@ export const App: React.FC = () => {
               <button
                 type="button"
                 onClick={() => window.print()}
-                style={{ flex: 1, padding: '10px 6px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}
+                style={{ flex: 1, padding: '10px 8px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
                 title="Print 80mm Continuous Thermal Receipt"
               >
-                🖨️ Thermal
+                {activeReceiptModal.customer_gstin ? '🖨️ Print Thermal' : 'Print Receipt'}
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  handleOpenA4Invoice(activeReceiptModal.invoice_number, activeReceiptModal);
-                  setActiveReceiptModal(null);
-                }}
-                style={{ flex: 1.3, padding: '10px 6px', backgroundColor: '#1E3A8A', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}
-                title="View & Download / Print Full A4 Tax Invoice PDF"
-              >
-                📄 A4 Invoice / PDF
-              </button>
+              {Boolean(activeReceiptModal.customer_gstin && activeReceiptModal.customer_gstin.trim() !== '') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleOpenA4Invoice(activeReceiptModal.invoice_number, activeReceiptModal);
+                    setActiveReceiptModal(null);
+                  }}
+                  style={{ flex: 1.2, padding: '10px 8px', backgroundColor: '#1E3A8A', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
+                  title="View & Download / Print Full A4 Tax Invoice PDF"
+                >
+                  📄 A4 Invoice / PDF
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setActiveReceiptModal(null)}
-                style={{ padding: '10px 14px', backgroundColor: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 12 }}
+                style={{ padding: '10px 14px', backgroundColor: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
               >
                 Close
               </button>

@@ -34,6 +34,7 @@ pub struct PersistedSaleSummary {
     pub payment_status: String,
     pub sync_status: String,
     pub created_at: String,
+    pub customer_gstin: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -440,8 +441,8 @@ fn get_recent_sales(
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, invoice_number, business_date, net_payable_paise, sale_status, payment_status, sync_status, created_at 
-             FROM sales ORDER BY rowid DESC LIMIT 20;"
+            "SELECT id, invoice_number, business_date, net_payable_paise, sale_status, payment_status, sync_status, created_at, customer_gstin 
+             FROM sales ORDER BY rowid DESC LIMIT 50;"
         )
         .map_err(|e| e.to_string())?;
 
@@ -456,6 +457,7 @@ fn get_recent_sales(
                 payment_status: row.get(5)?,
                 sync_status: row.get(6)?,
                 created_at: row.get(7)?,
+                customer_gstin: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?;
