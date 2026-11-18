@@ -65,6 +65,8 @@ pub struct FinalizeSalePayload {
     pub customer_phone: Option<String>,
     #[serde(default)]
     pub customer_location: Option<String>,
+    #[serde(default)]
+    pub customer_gstin: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -137,9 +139,9 @@ pub fn finalize_sale_atomic(
             id, invoice_number, branch_id, counter_id, terminal_id, session_id,
             business_date, tax_policy_version, subtotal_taxable_paise, total_cgst_paise,
             total_sgst_paise, total_igst_paise, round_off_paise, net_payable_paise,
-            sale_status, payment_status, sync_status, customer_name, customer_phone, customer_location, created_at
+            sale_status, payment_status, sync_status, customer_name, customer_phone, customer_location, customer_gstin, created_at
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'FINALIZED', 'SETTLED', 'SYNC_PENDING', ?15, ?16, ?17, ?18
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'FINALIZED', 'SETTLED', 'SYNC_PENDING', ?15, ?16, ?17, ?18, ?19
         );",
         rusqlite::params![
             sale_id,
@@ -159,6 +161,7 @@ pub fn finalize_sale_atomic(
             payload.customer_name,
             payload.customer_phone,
             payload.customer_location,
+            payload.customer_gstin,
             now_iso
         ],
     )?;

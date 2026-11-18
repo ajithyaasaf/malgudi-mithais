@@ -19,6 +19,7 @@ body {
 /* ========================================================================= */
 @media screen {
   #thermal-print-root,
+  #a4-print-root,
   .thermal-print-buffer {
     display: none !important;
     position: absolute !important;
@@ -171,5 +172,44 @@ body {
     border: none !important;
     border-top: 1.5px dashed #000000 !important;
     margin: 6px 0 !important;
+  }
+
+  /* 9. A4 B2B Tax Invoice Print Container Isolation */
+  #a4-print-root {
+    display: none !important;
+  }
+
+  body.a4-print-active {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+  }
+
+  body.a4-print-active #thermal-print-root {
+    display: none !important;
+  }
+
+  body.a4-print-active #a4-print-root {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+
+  body.a4-print-active #a4-print-root * {
+    visibility: visible !important;
+    opacity: 1 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }

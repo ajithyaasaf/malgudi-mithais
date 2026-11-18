@@ -69,6 +69,7 @@ fn sample_mn_payload() -> FinalizeSalePayload {
         customer_name: None,
         customer_phone: None,
         customer_location: None,
+        customer_gstin: None,
     }
 }
 

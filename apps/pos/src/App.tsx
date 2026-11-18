@@ -87,6 +87,7 @@ export interface DetailedSaleReceipt {
   customer_name?: string | null;
   customer_phone?: string | null;
   customer_location?: string | null;
+  customer_gstin?: string | null;
   is_reprint?: boolean;
 }
 
@@ -436,6 +437,7 @@ export interface QuickCustomerLookup {
   customer_name: string | null;
   customer_phone: string;
   customer_location: string | null;
+  customer_gstin?: string | null;
   total_orders: number;
   total_spent_paise: number;
 }
@@ -2369,9 +2371,10 @@ export const App: React.FC = () => {
     name: string;
     phone: string;
     location: string;
+    gstin?: string;
   } | null>(null);
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState<boolean>(false);
-  const [customerForm, setCustomerForm] = useState({ name: '', phone: '', location: '' });
+  const [customerForm, setCustomerForm] = useState({ name: '', phone: '', location: '', gstin: '' });
   const [customerPhoneError, setCustomerPhoneError] = useState<string | null>(null);
   const [customerLookupMatch, setCustomerLookupMatch] = useState<QuickCustomerLookup | null>(null);
 
@@ -2387,11 +2390,13 @@ export const App: React.FC = () => {
             phone: clean,
             name: match.customer_name || prev.name,
             location: match.customer_location || prev.location,
+            gstin: match.customer_gstin || prev.gstin,
           }));
           setCustomerInfo({
             phone: clean,
             name: match.customer_name || '',
             location: match.customer_location || '',
+            gstin: match.customer_gstin || '',
           });
           return;
         }
@@ -2418,6 +2423,105 @@ export const App: React.FC = () => {
   const [archiveZReportLoading, setArchiveZReportLoading] = useState<boolean>(false);
   const [archiveZReportData, setArchiveZReportData] = useState<DayEndSummary | null>(null);
   const [archiveZReportError, setArchiveZReportError] = useState<string | null>(null);
+  const [activeA4InvoiceModal, setActiveA4InvoiceModal] = useState<DetailedSaleReceipt | null>(null);
+
+  // Helper: Indian State Name Derivation from GSTIN
+  const getPlaceOfSupply = (gstin?: string | null): string => {
+    if (!gstin || gstin.trim().length < 2) return '33-TAMIL NADU';
+    const code = gstin.trim().substring(0, 2);
+    const stateMap: Record<string, string> = {
+      '33': '33-TAMIL NADU',
+      '29': '29-KARNATAKA',
+      '32': '32-KERALA',
+      '37': '37-ANDHRA PRADESH',
+      '36': '36-TELANGANA',
+      '27': '27-MAHARASHTRA',
+      '07': '07-DELHI',
+      '09': '09-UTTAR PRADESH',
+      '19': '19-WEST BENGAL',
+      '24': '24-GUJARAT',
+      '34': '34-PUDUCHERRY',
+    };
+    return stateMap[code] || `${code}-OTHER STATE`;
+  };
+
+  // Helper: Amount to Indian Words (KaTeX / GST Compliant)
+  const amountToIndianWords = (amountRupees: number): string => {
+    const n = Math.round(amountRupees);
+    if (n <= 0) return 'INR Zero Rupees Only.';
+
+    const single = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+    const teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+    const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+    const convertGroup = (num: number): string => {
+      let str = '';
+      const h = Math.floor(num / 100);
+      const rem = num % 100;
+      if (h > 0) {
+        str += `${single[h]} Hundred`;
+      }
+      if (rem > 0) {
+        if (str) str += ' and ';
+        if (rem < 10) {
+          str += single[rem];
+        } else if (rem < 20) {
+          str += teens[rem - 10];
+        } else {
+          const t = Math.floor(rem / 10);
+          const u = rem % 10;
+          str += tens[t] + (u > 0 ? ` ${single[u]}` : '');
+        }
+      }
+      return str;
+    };
+
+    let num = n;
+    const parts: string[] = [];
+
+    const crores = Math.floor(num / 10000000);
+    num %= 10000000;
+    if (crores > 0) parts.push(`${convertGroup(crores)} Crore`);
+
+    const lakhs = Math.floor(num / 100000);
+    num %= 100000;
+    if (lakhs > 0) parts.push(`${convertGroup(lakhs)} Lakh`);
+
+    const thousands = Math.floor(num / 1000);
+    num %= 1000;
+    if (thousands > 0) parts.push(`${convertGroup(thousands)} Thousand`);
+
+    if (num > 0) parts.push(convertGroup(num));
+
+    return `INR ${parts.join(', ')} Rupees Only.`;
+  };
+
+  // Helper: Trigger Isolated A4 Tax Invoice Print / PDF Export
+  const handlePrintA4 = () => {
+    document.body.classList.add('a4-print-active');
+    const styleEl = document.createElement('style');
+    styleEl.id = 'a4-print-dynamic-style';
+    styleEl.innerHTML = `
+      @page {
+        size: A4 portrait !important;
+        margin: 10mm 12mm !important;
+      }
+    `;
+    document.head.appendChild(styleEl);
+
+    requestAnimationFrame(() => {
+      try {
+        window.print();
+      } catch (err) {
+        console.warn('A4 print invocation failed:', err);
+      } finally {
+        setTimeout(() => {
+          document.body.classList.remove('a4-print-active');
+          document.getElementById('a4-print-dynamic-style')?.remove();
+        }, 1200);
+      }
+    });
+  };
 
   // Helper: Render 80mm Continuous Thermal Receipt Content
   const renderReceiptContent = (receipt: DetailedSaleReceipt) => {
@@ -2467,11 +2571,22 @@ export const App: React.FC = () => {
             <span><strong>Terminal:</strong> {receipt.branch_id}/{receipt.terminal_id}</span>
           </div>
           <div><strong>Date:</strong> {formatDateTime(receipt.created_at)}</div>
-          {(receipt.customer_name || receipt.customer_phone || receipt.customer_location) && (
+          {(receipt.customer_name || receipt.customer_phone || receipt.customer_location || receipt.customer_gstin) && (
             <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px dashed #000000', fontSize: 11, fontWeight: 600, color: '#000000', lineHeight: 1.4 }}>
+              {receipt.customer_gstin && (
+                <div style={{ fontWeight: 800, fontSize: 11, textAlign: 'center', backgroundColor: '#eee', padding: '2px 0', marginBottom: 3, border: '1px dashed #000' }}>
+                  *** TAX INVOICE (B2B) ***
+                </div>
+              )}
               {receipt.customer_name && <div><strong>Customer:</strong> {receipt.customer_name}</div>}
               {receipt.customer_phone && <div><strong>Phone:</strong> {receipt.customer_phone}</div>}
-              {receipt.customer_location && <div><strong>Location:</strong> {receipt.customer_location}</div>}
+              {receipt.customer_location && <div><strong>Address:</strong> {receipt.customer_location}</div>}
+              {receipt.customer_gstin && (
+                <>
+                  <div><strong>Customer GSTIN:</strong> {receipt.customer_gstin}</div>
+                  <div><strong>Place of Supply:</strong> {getPlaceOfSupply(receipt.customer_gstin)}</div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -2629,6 +2744,262 @@ export const App: React.FC = () => {
         <div style={{ textAlign: 'center', fontSize: 11, color: '#000000', margin: '10px 0 6px 0' }}>
           <div style={{ fontWeight: 800, color: '#000000' }}>Thank you for choosing Malgudi Mithais!</div>
           <div style={{ fontSize: 10, fontWeight: 700, color: '#000000', marginTop: 2 }}>Sweetening your celebrations • Visit again!</div>
+        </div>
+      </div>
+    );
+  };
+
+  // Helper: Render A4 Tax Invoice (Full B2B Page Layout matching client specifications)
+  const renderA4InvoiceContent = (receipt: DetailedSaleReceipt) => {
+    const isUk =
+      receipt.branch_id === 'UK' ||
+      (receipt.branch_name || '').toLowerCase().includes('umachikulam');
+
+    const branchTitle = isUk ? 'Umachikulam Branch (UK)' : 'Iyer Bungalow Branch (IB)';
+    const branchAddress = isUk
+      ? 'Main Road, Umachikulam, Madurai, TAMIL NADU - 625014'
+      : '3/260, Natham Main Road, Thiruppalai / Iyer Bungalow, Madurai, TAMIL NADU - 625014';
+    const branchPhone = isUk ? '+91 0452 351 0356' : '+91 95851 19975 / 0452 796 4772';
+    const branchFssai = isUk ? '12424012002260' : '12418012002674';
+
+    const totalQty = (receipt.items || []).reduce((acc, it) => acc + (it.quantity_input || 1), 0);
+    const placeOfSupply = getPlaceOfSupply(receipt.customer_gstin);
+
+    const paymentMethodText = (receipt.payments && receipt.payments.length > 0)
+      ? receipt.payments.map(p => p.payment_method).join(' + ')
+      : receipt.payment_status || 'PAID';
+
+    return (
+      <div
+        id="a4-invoice-document"
+        style={{
+          width: '100%',
+          maxWidth: '820px',
+          margin: '0 auto',
+          padding: '24px 30px',
+          backgroundColor: '#FFFFFF',
+          color: '#1E293B',
+          fontFamily: "'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, sans-serif",
+          boxSizing: 'border-box',
+          lineHeight: 1.4,
+        }}
+      >
+        {/* Header Section: Title, Seller Details & Original Copy Stamp */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '2px solid #2563EB', paddingBottom: 14, marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 900, color: '#2563EB', letterSpacing: 0.5, marginBottom: 4 }}>
+              TAX INVOICE
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: '#0F172A' }}>
+              SHRI SURIYA TRADERS
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#8B1E2D', marginBottom: 4 }}>
+              MALGUDI MITHAIS • {branchTitle}
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>
+              GSTIN: <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 13 }}>33NNYPS3460L1ZV</span>
+            </div>
+            <div style={{ fontSize: 12, color: '#475569' }}>{branchAddress}</div>
+            <div style={{ fontSize: 12, color: '#475569' }}>
+              Mobile: {branchPhone} • FSSAI: {branchFssai}
+            </div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: '#475569', letterSpacing: 1, textTransform: 'uppercase', border: '1.5px solid #94A3B8', padding: '4px 8px', borderRadius: 4, display: 'inline-block' }}>
+              ORIGINAL FOR RECIPIENT
+            </div>
+            {receipt.sale_status === 'VOIDED' && (
+              <div style={{ marginTop: 8, fontSize: 13, fontWeight: 800, color: '#DC2626', border: '1.5px solid #DC2626', padding: '3px 8px', borderRadius: 4 }}>
+                VOIDED / CANCELLED
+              </div>
+            )}
+            {receipt.is_reprint && receipt.sale_status !== 'VOIDED' && (
+              <div style={{ marginTop: 8, fontSize: 11, fontWeight: 700, color: '#D97706', border: '1px dashed #D97706', padding: '2px 6px', borderRadius: 4 }}>
+                DUPLICATE REPRINT
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Invoice Metadata Row */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: 12, backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: 12 }}>
+          <div>
+            <span style={{ color: '#64748B', fontWeight: 600 }}>Invoice #: </span>
+            <strong style={{ color: '#0F172A', fontSize: 13 }}>{receipt.invoice_number}</strong>
+          </div>
+          <div>
+            <span style={{ color: '#64748B', fontWeight: 600 }}>Invoice Date: </span>
+            <strong style={{ color: '#0F172A' }}>{formatDateTime(receipt.created_at).split(' ')[0]}</strong>
+          </div>
+          <div>
+            <span style={{ color: '#64748B', fontWeight: 600 }}>Due Date: </span>
+            <strong style={{ color: '#0F172A' }}>Immediate / Paid</strong>
+          </div>
+        </div>
+
+        {/* Customer & Supply Details (3 Columns) */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.3fr 1fr', gap: 16, borderBottom: '1px solid #E2E8F0', paddingBottom: 14, marginBottom: 16, fontSize: 12 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', color: '#64748B', letterSpacing: 0.5, marginBottom: 4 }}>
+              Customer Details:
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: '#0F172A', marginBottom: 2 }}>
+              {receipt.customer_name || 'Counter Customer'}
+            </div>
+            {receipt.customer_gstin ? (
+              <div style={{ color: '#0369A1', fontWeight: 700, marginTop: 2 }}>
+                GSTIN: <span style={{ fontFamily: 'monospace', fontWeight: 800 }}>{receipt.customer_gstin}</span>
+              </div>
+            ) : (
+              <div style={{ color: '#64748B', fontStyle: 'italic', fontSize: 11 }}>
+                Unregistered Consumer (B2C)
+              </div>
+            )}
+            {receipt.customer_phone && (
+              <div style={{ color: '#475569', marginTop: 2 }}>
+                Mobile: +91 {receipt.customer_phone}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', color: '#64748B', letterSpacing: 0.5, marginBottom: 4 }}>
+              Billing / Delivery Address:
+            </div>
+            <div style={{ color: '#334155', lineHeight: 1.4 }}>
+              {receipt.customer_location || 'Madurai, TAMIL NADU'}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', color: '#64748B', letterSpacing: 0.5, marginBottom: 4 }}>
+              Place of Supply:
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: '#0F172A' }}>
+              {placeOfSupply}
+            </div>
+            <div style={{ fontSize: 11, color: '#64748B', marginTop: 4 }}>
+              Reverse Charge: <strong>No</strong>
+            </div>
+          </div>
+        </div>
+
+        {/* Itemized Table */}
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 16 }}>
+          <thead>
+            <tr style={{ backgroundColor: '#F1F5F9', borderTop: '1.5px solid #CBD5E1', borderBottom: '1.5px solid #2563EB', textAlign: 'left' }}>
+              <th style={{ padding: '8px 6px', width: '4%', fontWeight: 800, color: '#1E293B' }}>#</th>
+              <th style={{ padding: '8px 6px', width: '38%', fontWeight: 800, color: '#1E293B' }}>Item</th>
+              <th style={{ padding: '8px 6px', width: '13%', textAlign: 'right', fontWeight: 800, color: '#1E293B' }}>Rate / Item</th>
+              <th style={{ padding: '8px 6px', width: '11%', textAlign: 'center', fontWeight: 800, color: '#1E293B' }}>Qty</th>
+              <th style={{ padding: '8px 6px', width: '12%', textAlign: 'right', fontWeight: 800, color: '#1E293B' }}>Taxable Value</th>
+              <th style={{ padding: '8px 6px', width: '10%', textAlign: 'right', fontWeight: 800, color: '#1E293B' }}>Tax (5%)</th>
+              <th style={{ padding: '8px 6px', width: '12%', textAlign: 'right', fontWeight: 800, color: '#1E293B' }}>Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(receipt.items || []).map((it, idx) => {
+              const unitRate = (it.taxable_paise / (it.quantity_input || 1) / 100);
+              return (
+                <tr key={idx} style={{ borderBottom: '1px solid #E2E8F0', verticalAlign: 'top' }}>
+                  <td style={{ padding: '8px 6px', color: '#64748B' }}>{idx + 1}</td>
+                  <td style={{ padding: '8px 6px' }}>
+                    <div style={{ fontWeight: 800, color: '#0F172A', fontSize: 13 }}>{it.product_name}</div>
+                    {it.tamil_name && it.tamil_name.trim() !== '' && it.tamil_name.trim().toLowerCase() !== it.product_name.trim().toLowerCase() && (
+                      <div style={{ fontSize: 11, color: '#475569', marginTop: 1 }}>{it.tamil_name}</div>
+                    )}
+                    <div style={{ fontSize: 10, color: '#64748B', marginTop: 1, fontFamily: 'monospace' }}>
+                      HSN: 2106
+                    </div>
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'right', color: '#334155' }}>
+                    ₹{unitRate.toFixed(2)}
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'center', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap' }}>
+                    {it.quantity_formatted}
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'right', color: '#334155' }}>
+                    ₹{(it.taxable_paise / 100).toFixed(2)}
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'right', color: '#475569' }}>
+                    ₹{(it.total_tax_paise / 100).toFixed(2)}
+                  </td>
+                  <td style={{ padding: '8px 6px', textAlign: 'right', fontWeight: 800, color: '#0F172A' }}>
+                    ₹{(it.gross_paise / 100).toFixed(2)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {/* Summary Totals & Words Row */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 20, borderTop: '2px solid #2563EB', paddingTop: 12, marginBottom: 20 }}>
+          {/* Left Column: Qty count, Amount in Words & Payment Note */}
+          <div>
+            <div style={{ fontSize: 12, color: '#475569', marginBottom: 8 }}>
+              Total Items / Qty: <strong>{receipt.items?.length || 0} / {totalQty}</strong>
+            </div>
+            <div style={{ backgroundColor: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, padding: '10px 12px', marginBottom: 10 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: '#64748B', marginBottom: 3 }}>
+                Total Amount (in words):
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#0F172A', lineHeight: 1.35 }}>
+                {amountToIndianWords(receipt.net_payable_paise / 100)}
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: '#475569' }}>
+              Payment Mode: <strong style={{ color: '#0F172A' }}>{paymentMethodText}</strong> • Status: <strong style={{ color: '#2E7D32' }}>{receipt.payment_status}</strong>
+            </div>
+          </div>
+
+          {/* Right Column: Tax Breakdown & Final Totals */}
+          <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+              <span>Taxable Amount:</span>
+              <span style={{ fontWeight: 600, color: '#0F172A' }}>₹{(receipt.subtotal_taxable_paise / 100).toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+              <span>CGST 2.5%:</span>
+              <span style={{ fontWeight: 600, color: '#0F172A' }}>₹{(receipt.total_cgst_paise / 100).toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+              <span>SGST 2.5%:</span>
+              <span style={{ fontWeight: 600, color: '#0F172A' }}>₹{(receipt.total_sgst_paise / 100).toFixed(2)}</span>
+            </div>
+            {receipt.round_off_paise !== 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#475569' }}>
+                <span>Round Off:</span>
+                <span style={{ fontWeight: 600, color: '#0F172A' }}>₹{(receipt.round_off_paise / 100).toFixed(2)}</span>
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 900, color: '#0F172A', borderTop: '1.5px solid #0F172A', paddingTop: 6, marginTop: 4 }}>
+              <span>Total:</span>
+              <span>₹{(receipt.net_payable_paise / 100).toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 800, color: '#2563EB', marginTop: 2 }}>
+              <span>Amount Payable:</span>
+              <span>₹{(receipt.net_payable_paise / 100).toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer & Signature Section */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderTop: '1px solid #CBD5E1', paddingTop: 16, marginTop: 10, fontSize: 11, color: '#64748B' }}>
+          <div>
+            <div style={{ fontWeight: 700, color: '#334155', marginBottom: 2 }}>Terms & Conditions:</div>
+            <div>1. Goods once sold will not be taken back or exchanged.</div>
+            <div>2. All disputes are subject to Madurai jurisdiction only.</div>
+            <div style={{ marginTop: 4, fontStyle: 'italic' }}>This is a computer-generated tax invoice.</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontWeight: 700, color: '#0F172A', marginBottom: 40 }}>
+              For SHRI SURIYA TRADERS (MALGUDI MITHAIS)
+            </div>
+            <div style={{ borderTop: '1px dashed #64748B', paddingTop: 4, fontSize: 11, fontWeight: 700 }}>
+              Authorized Signatory
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -2969,6 +3340,29 @@ export const App: React.FC = () => {
       };
       setLastSettledReceipt(mockReceipt);
       setActiveReceiptModal(mockReceipt);
+    }
+  };
+
+  // Helper: Open Detailed A4 Tax Invoice (Full sheet view & PDF export)
+  const handleOpenA4Invoice = async (invoiceNumber: string, fallbackSummary?: any) => {
+    if (isTauriRuntime) {
+      try {
+        const detailed = await window.__TAURI__!.core.invoke<DetailedSaleReceipt>('get_sale_details', {
+          sessionToken: currentSession?.token,
+          invoiceOrSaleId: invoiceNumber,
+        });
+        detailed.is_reprint = true;
+        setActiveA4InvoiceModal(detailed);
+        return;
+      } catch (e: any) {
+        console.error('Failed to get A4 invoice details via Tauri:', e);
+        setErrorMessage('Failed to load A4 invoice details: ' + (e?.message || String(e)));
+      }
+    }
+
+    if (fallbackSummary && 'items' in fallbackSummary && Array.isArray((fallbackSummary as DetailedSaleReceipt).items)) {
+      setActiveA4InvoiceModal(fallbackSummary as DetailedSaleReceipt);
+      return;
     }
   };
 
@@ -3379,6 +3773,7 @@ export const App: React.FC = () => {
         name: customerInfo.name || '',
         phone: customerInfo.phone || '',
         location: customerInfo.location || '',
+        gstin: customerInfo.gstin || '',
       });
       if (customerInfo.phone && customerInfo.phone.length === 10) {
         handlePhoneLookup(customerInfo.phone);
@@ -4887,6 +5282,7 @@ export const App: React.FC = () => {
       const finalPhone = (customerForm.phone?.trim() || customerInfo?.phone?.trim() || '') || null;
       const finalName = (customerForm.name?.trim() || customerInfo?.name?.trim() || '') || null;
       const finalLocation = (customerForm.location?.trim() || customerInfo?.location?.trim() || '') || null;
+      const finalGstin = (customerForm.gstin?.trim() || customerInfo?.gstin?.trim() || '') || null;
 
       const payload = {
         branch_id: currentSession.branch_id,
@@ -4932,6 +5328,7 @@ export const App: React.FC = () => {
         customer_name: finalName,
         customer_phone: finalPhone,
         customer_location: finalLocation,
+        customer_gstin: finalGstin,
       };
 
       let committedRecord: FinalizeSaleResult;
@@ -5036,6 +5433,7 @@ export const App: React.FC = () => {
         customer_name: finalName,
         customer_phone: finalPhone,
         customer_location: finalLocation,
+        customer_gstin: finalGstin,
       };
 
       setPersistedHistory(prev => [committedRecord, ...prev]);
@@ -5048,7 +5446,7 @@ export const App: React.FC = () => {
       setUpiSimulatedVerified(false);
       setCartItems([]);
       setCustomerInfo(null);
-      setCustomerForm({ name: '', phone: '', location: '' });
+      setCustomerForm({ name: '', phone: '', location: '', gstin: '' });
       setCustomerLookupMatch(null);
       setCustomerPhoneError(null);
       setPaymentMode('CASH');
@@ -9117,7 +9515,7 @@ export const App: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      setCustomerForm({ name: '', phone: '', location: '' });
+                      setCustomerForm({ name: '', phone: '', location: '', gstin: '' });
                       setCustomerLookupMatch(null);
                       setCustomerPhoneError(null);
                       setIsCustomerModalOpen(true);
@@ -9147,13 +9545,13 @@ export const App: React.FC = () => {
                       display: 'flex',
                       alignItems: 'center',
                       gap: 6,
-                      backgroundColor: '#E8F5E9',
-                      border: '1px solid #C8E6C9',
+                      backgroundColor: customerInfo.gstin ? '#EFF6FF' : '#E8F5E9',
+                      border: customerInfo.gstin ? '1px solid #BFDBFE' : '1px solid #C8E6C9',
                       borderRadius: 14,
                       padding: '3px 8px 3px 10px',
                       fontSize: 11,
                       fontWeight: 700,
-                      color: '#2E7D32',
+                      color: customerInfo.gstin ? '#1E3A8A' : '#2E7D32',
                     }}
                   >
                     <span
@@ -9162,6 +9560,7 @@ export const App: React.FC = () => {
                           name: customerInfo.name,
                           phone: customerInfo.phone,
                           location: customerInfo.location,
+                          gstin: customerInfo.gstin || '',
                         });
                         setCustomerPhoneError(null);
                         if (customerInfo.phone && customerInfo.phone.length === 10) {
@@ -9171,9 +9570,14 @@ export const App: React.FC = () => {
                         }
                         setIsCustomerModalOpen(true);
                       }}
-                      style={{ cursor: 'pointer' }}
-                      title="Click to edit customer details"
+                      style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                      title="Click to edit customer details & GSTIN"
                     >
+                      {customerInfo.gstin && (
+                        <span style={{ backgroundColor: '#2563EB', color: '#fff', fontSize: 9, fontWeight: 800, padding: '1px 5px', borderRadius: 4, marginRight: 5 }}>
+                          B2B
+                        </span>
+                      )}
                       {customerInfo.name || customerInfo.phone || 'Customer'}
                       {customerInfo.phone && <span style={{ opacity: 0.75, fontSize: 10, marginLeft: 4 }}>({customerInfo.phone})</span>}
                     </span>
@@ -9181,7 +9585,7 @@ export const App: React.FC = () => {
                       type="button"
                       onClick={() => {
                         setCustomerInfo(null);
-                        setCustomerForm({ name: '', phone: '', location: '' });
+                        setCustomerForm({ name: '', phone: '', location: '', gstin: '' });
                         setCustomerLookupMatch(null);
                         setCustomerPhoneError(null);
                       }}
@@ -10105,12 +10509,12 @@ export const App: React.FC = () => {
                       Repeat Patron ({customerLookupMatch.total_orders} visits)
                     </span>
                   )}
-                  {(customerForm.phone || customerForm.name || customerForm.location || customerInfo) && (
+                  {(customerForm.phone || customerForm.name || customerForm.location || customerForm.gstin || customerInfo) && (
                     <button
                       type="button"
                       onClick={() => {
                         setCustomerInfo(null);
-                        setCustomerForm({ name: '', phone: '', location: '' });
+                        setCustomerForm({ name: '', phone: '', location: '', gstin: '' });
                         setCustomerLookupMatch(null);
                         setCustomerPhoneError(null);
                       }}
@@ -10199,16 +10603,17 @@ export const App: React.FC = () => {
                   <input
                     type="text"
                     maxLength={50}
-                    placeholder="Customer Name..."
+                    placeholder="Customer / Company Name..."
                     value={customerForm.name}
                     onChange={(e) => {
                       const val = e.target.value;
                       setCustomerForm(prev => ({ ...prev, name: val }));
-                      if (val.trim() || customerForm.phone.trim() || customerForm.location.trim()) {
+                      if (val.trim() || customerForm.phone.trim() || customerForm.location.trim() || customerForm.gstin.trim()) {
                         setCustomerInfo({
                           name: val,
                           phone: customerForm.phone,
                           location: customerForm.location,
+                          gstin: customerForm.gstin,
                         });
                       } else {
                         setCustomerInfo(null);
@@ -10231,16 +10636,17 @@ export const App: React.FC = () => {
                   <input
                     type="text"
                     maxLength={100}
-                    placeholder="Area / Landmark..."
+                    placeholder="Area / Landmark / Address..."
                     value={customerForm.location}
                     onChange={(e) => {
                       const val = e.target.value;
                       setCustomerForm(prev => ({ ...prev, location: val }));
-                      if (val.trim() || customerForm.phone.trim() || customerForm.name.trim()) {
+                      if (val.trim() || customerForm.phone.trim() || customerForm.name.trim() || customerForm.gstin.trim()) {
                         setCustomerInfo({
                           name: customerForm.name,
                           phone: customerForm.phone,
                           location: val,
+                          gstin: customerForm.gstin,
                         });
                       } else {
                         setCustomerInfo(null);
@@ -10257,6 +10663,47 @@ export const App: React.FC = () => {
                     }}
                   />
                 </div>
+              </div>
+
+              {/* 4. Customer / Company GSTIN (B2B Tax Invoice) */}
+              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="text"
+                  maxLength={15}
+                  placeholder="🏢 Customer GSTIN (e.g. 33NNYPS3460L1ZV) - Optional for B2B Tax Invoice"
+                  value={customerForm.gstin || ''}
+                  onChange={(e) => {
+                    const val = e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 15);
+                    setCustomerForm(prev => ({ ...prev, gstin: val }));
+                    if (val.trim() || customerForm.phone.trim() || customerForm.name.trim() || customerForm.location.trim()) {
+                      setCustomerInfo({
+                        name: customerForm.name,
+                        phone: customerForm.phone,
+                        location: customerForm.location,
+                        gstin: val,
+                      });
+                    } else {
+                      setCustomerInfo(null);
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '6px 10px',
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                    fontWeight: 700,
+                    letterSpacing: 0.8,
+                    borderRadius: 6,
+                    border: customerForm.gstin && customerForm.gstin.length > 0 && customerForm.gstin.length !== 15 ? '1.5px solid #FF9800' : '1px solid #CCC',
+                    backgroundColor: customerForm.gstin?.length === 15 ? '#F0F9FF' : '#FFF',
+                    boxSizing: 'border-box',
+                  }}
+                />
+                {customerForm.gstin && customerForm.gstin.length === 15 && (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#0369A1', backgroundColor: '#E0F2FE', padding: '5px 8px', borderRadius: 4, whiteSpace: 'nowrap' }}>
+                    ✓ B2B ({getPlaceOfSupply(customerForm.gstin)})
+                  </span>
+                )}
               </div>
 
               {/* Quick feedback message */}
@@ -10859,14 +11306,14 @@ export const App: React.FC = () => {
                             )}
                           </td>
                           <td style={{ padding: 8, color: '#666', whiteSpace: 'nowrap' }}>{formatDateTime(s.created_at)}</td>
-                          <td style={{ padding: 8, textAlign: 'right' }}>
+                          <td style={{ padding: 8, textAlign: 'right', whiteSpace: 'nowrap' }}>
                             <button
                               onClick={() => {
                                 handleOpenReceiptReprint(s.invoice_number, s);
                                 setIsHistoryModalOpen(false);
                               }}
                               style={{
-                                padding: '4px 10px',
+                                padding: '4px 8px',
                                 fontSize: 12,
                                 backgroundColor: '#8B1E2D',
                                 color: '#fff',
@@ -10874,9 +11321,31 @@ export const App: React.FC = () => {
                                 borderRadius: 4,
                                 cursor: 'pointer',
                                 fontWeight: 600,
+                                marginRight: 4,
                               }}
+                              title="Reprint 80mm Thermal Slip"
                             >
                               Reprint
+                            </button>
+                            <button
+                              onClick={() => {
+                                handleOpenA4Invoice(s.invoice_number, s);
+                                setIsHistoryModalOpen(false);
+                              }}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: 12,
+                                backgroundColor: '#1E3A8A',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: 4,
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                                marginRight: 4,
+                              }}
+                              title="View & Download / Print A4 Tax Invoice PDF"
+                            >
+                              📄 A4
                             </button>
                             {s.sale_status !== 'VOIDED' && currentSession?.role === 'ADMIN' && (
                               <button
@@ -11006,6 +11475,7 @@ export const App: React.FC = () => {
                 const phone = customerForm.phone.trim();
                 const name = customerForm.name.trim();
                 const location = customerForm.location.trim();
+                const gstin = customerForm.gstin.trim();
 
                 // If phone is entered, it MUST be a valid 10-digit Indian mobile number
                 if (phone.length > 0) {
@@ -11015,11 +11485,12 @@ export const App: React.FC = () => {
                   }
                 }
 
-                if (name || phone || location) {
+                if (name || phone || location || gstin) {
                   setCustomerInfo({
                     name,
                     phone,
                     location,
+                    gstin,
                   });
                 } else {
                   setCustomerInfo(null);
@@ -11145,12 +11616,55 @@ export const App: React.FC = () => {
                 />
               </div>
 
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#333' }}>
+                    🏢 Company / Customer GSTIN
+                  </label>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: customerForm.gstin?.length === 15 ? '#0369A1' : '#888' }}>
+                    {customerForm.gstin?.length === 15 ? `✓ ${getPlaceOfSupply(customerForm.gstin)}` : 'Optional • For B2B Tax Invoice'}
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  maxLength={15}
+                  placeholder="e.g. 33NNYPS3460L1ZV"
+                  value={customerForm.gstin}
+                  onChange={(e) => {
+                    const val = e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 15);
+                    setCustomerForm(prev => ({ ...prev, gstin: val }));
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px',
+                    borderRadius: 6,
+                    border: customerForm.gstin?.length > 0 && customerForm.gstin.length !== 15 ? '1.5px solid #FF9800' : '1px solid #CCC',
+                    fontSize: 14,
+                    fontFamily: 'monospace',
+                    fontWeight: 700,
+                    letterSpacing: 1,
+                    backgroundColor: customerForm.gstin?.length === 15 ? '#F0F9FF' : '#FFF',
+                    boxSizing: 'border-box',
+                  }}
+                />
+                {customerForm.gstin && customerForm.gstin.length > 0 && customerForm.gstin.length !== 15 && (
+                  <div style={{ color: '#E65100', fontSize: 11, marginTop: 4 }}>
+                    GSTIN must be 15 alphanumeric characters ({customerForm.gstin.length}/15 entered)
+                  </div>
+                )}
+                {customerForm.gstin && customerForm.gstin.length === 15 && (
+                  <div style={{ color: '#0369A1', fontSize: 11, fontWeight: 700, marginTop: 4 }}>
+                    ✓ B2B Tax Invoice enabled • Place of Supply: {getPlaceOfSupply(customerForm.gstin)}
+                  </div>
+                )}
+              </div>
+
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', borderTop: '1px solid #eee', paddingTop: 14 }}>
                 <button
                   type="button"
                   onClick={() => {
                     setCustomerInfo(null);
-                    setCustomerForm({ name: '', phone: '', location: '' });
+                    setCustomerForm({ name: '', phone: '', location: '', gstin: '' });
                     setCustomerLookupMatch(null);
                     setCustomerPhoneError(null);
                     setIsCustomerModalOpen(false);
@@ -11188,21 +11702,99 @@ export const App: React.FC = () => {
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1300, padding: 16 }}>
           <div style={{ backgroundColor: '#fff', padding: 22, borderRadius: 8, width: 380, maxWidth: '95vw', fontFamily: 'monospace', fontSize: 12, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', maxHeight: '90vh', overflowY: 'auto' }}>
             {renderReceiptContent(activeReceiptModal)}
-            <div className="no-print" style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+            <div className="no-print" style={{ display: 'flex', gap: 8, marginTop: 14 }}>
               <button
                 type="button"
                 onClick={() => window.print()}
-                style={{ flex: 1, padding: '10px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', fontSize: 13 }}
+                style={{ flex: 1, padding: '10px 6px', backgroundColor: '#8B1E2D', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}
+                title="Print 80mm Continuous Thermal Receipt"
               >
-                Print Receipt
+                🖨️ Thermal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleOpenA4Invoice(activeReceiptModal.invoice_number, activeReceiptModal);
+                  setActiveReceiptModal(null);
+                }}
+                style={{ flex: 1.3, padding: '10px 6px', backgroundColor: '#1E3A8A', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 'bold', fontSize: 12 }}
+                title="View & Download / Print Full A4 Tax Invoice PDF"
+              >
+                📄 A4 Invoice / PDF
               </button>
               <button
                 type="button"
                 onClick={() => setActiveReceiptModal(null)}
-                style={{ padding: '10px 18px', backgroundColor: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
+                style={{ padding: '10px 14px', backgroundColor: '#eee', border: '1px solid #ccc', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 12 }}
               >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 5A: A4 Tax Invoice View & Print Dialog               */}
+      {/* ========================================================= */}
+      {activeA4InvoiceModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1310, padding: 16 }}>
+          <div style={{ backgroundColor: '#fff', borderRadius: 8, width: 880, maxWidth: '96vw', maxHeight: '92vh', display: 'flex', flexDirection: 'column', boxShadow: '0 10px 30px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
+            {/* Modal Header */}
+            <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1.5px solid #CBD5E1', padding: '12px 20px', backgroundColor: '#F8FAFC' }}>
+              <div>
+                <h3 style={{ margin: 0, color: '#1E3A8A', fontSize: 17, fontWeight: 800 }}>
+                  📄 Tax Invoice (A4 Format) — {activeA4InvoiceModal.invoice_number}
+                </h3>
+                <div style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                  Official B2B Tax Invoice • Place of Supply: {getPlaceOfSupply(activeA4InvoiceModal.customer_gstin)}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={handlePrintA4}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#1E3A8A',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: 6,
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                  title="Print on A4 printer or Save as PDF"
+                >
+                  <span>🖨️ Print / Save as PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveA4InvoiceModal(null)}
+                  style={{
+                    padding: '8px 14px',
+                    backgroundColor: '#E2E8F0',
+                    color: '#334155',
+                    border: '1px solid #CBD5E1',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                    fontSize: 13,
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            {/* Scrollable A4 Document View */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px', backgroundColor: '#E2E8F0' }}>
+              <div style={{ boxShadow: '0 4px 14px rgba(0,0,0,0.1)', borderRadius: 4, overflow: 'hidden' }}>
+                {renderA4InvoiceContent(activeA4InvoiceModal)}
+              </div>
             </div>
           </div>
         </div>
@@ -13637,6 +14229,13 @@ export const App: React.FC = () => {
         if (!printPayload) return null;
         return createPortal(printPayload, document.getElementById('thermal-print-root')!);
       })()}
+
+      {/* ========================================================= */}
+      {/* Dedicated A4 Tax Invoice Print Portal                     */}
+      {/* ========================================================= */}
+      {typeof document !== 'undefined' && document.getElementById('a4-print-root') && activeA4InvoiceModal && (
+        createPortal(renderA4InvoiceContent(activeA4InvoiceModal), document.getElementById('a4-print-root')!)
+      )}
     </div>
   );
 };

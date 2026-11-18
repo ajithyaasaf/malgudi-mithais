@@ -100,6 +100,7 @@ impl DatabaseManager {
                 customer_name TEXT,
                 customer_phone TEXT,
                 customer_location TEXT,
+                customer_gstin TEXT,
                 created_at TEXT NOT NULL
             );
 
@@ -355,6 +356,9 @@ impl DatabaseManager {
             }
             if !cols.contains(&"customer_location".to_string()) {
                 conn.execute("ALTER TABLE sales ADD COLUMN customer_location TEXT;", [])?;
+            }
+            if !cols.contains(&"customer_gstin".to_string()) {
+                conn.execute("ALTER TABLE sales ADD COLUMN customer_gstin TEXT;", [])?;
             }
         }
  

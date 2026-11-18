@@ -66,6 +66,7 @@ fn sample_sale(sale_id: &str, _invoice_num: &str) -> FinalizeSalePayload {
         customer_name: None,
         customer_phone: None,
         customer_location: None,
+        customer_gstin: None,
     }
 }
 

@@ -315,6 +315,7 @@ fn test_billing_stock_deduction_and_void_reversal() {
         customer_name: None,
         customer_phone: None,
         customer_location: None,
+        customer_gstin: None,
     };
 
     let sale_res =

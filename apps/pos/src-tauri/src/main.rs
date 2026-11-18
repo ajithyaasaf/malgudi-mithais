@@ -94,6 +94,8 @@ pub struct DetailedSaleReceipt {
     pub customer_phone: Option<String>,
     #[serde(default)]
     pub customer_location: Option<String>,
+    #[serde(default)]
+    pub customer_gstin: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -486,7 +488,7 @@ fn get_sale_details(
                 s.subtotal_taxable_paise, s.total_cgst_paise, s.total_sgst_paise, s.round_off_paise, s.net_payable_paise,
                 s.sale_status, s.payment_status,
                 COALESCE((SELECT us.display_name FROM user_sessions us WHERE us.session_id = s.session_id LIMIT 1), 'Store Owner') as cashier_name,
-                s.customer_name, s.customer_phone, s.customer_location
+                s.customer_name, s.customer_phone, s.customer_location, s.customer_gstin
          FROM sales s
          WHERE s.id = ?1 OR s.invoice_number = ?1;",
         [&invoice_or_sale_id],
@@ -510,6 +512,7 @@ fn get_sale_details(
                 r.get::<_, Option<String>>(15)?,
                 r.get::<_, Option<String>>(16)?,
                 r.get::<_, Option<String>>(17)?,
+                r.get::<_, Option<String>>(18)?,
             ))
         },
     ).map_err(|e| format!("Sale not found: {}", e))?;
@@ -631,6 +634,7 @@ fn get_sale_details(
         customer_name: sale_row.15,
         customer_phone: sale_row.16,
         customer_location: sale_row.17,
+        customer_gstin: sale_row.18,
     })
 }
 
@@ -1402,6 +1406,7 @@ pub struct QuickCustomerLookup {
     pub customer_name: Option<String>,
     pub customer_phone: String,
     pub customer_location: Option<String>,
+    pub customer_gstin: Option<String>,
     pub total_orders: i64,
     pub total_spent_paise: i64,
 }
@@ -1421,11 +1426,11 @@ fn lookup_customer_by_phone(
         .map_err(|e| format!("Mutex lock poisoned: {}", e))?;
 
     let mut stmt = conn.prepare(
-        "SELECT customer_name, customer_location, COUNT(*), COALESCE(SUM(net_payable_paise), 0)
+        "SELECT customer_name, customer_location, customer_gstin, COUNT(*), COALESCE(SUM(net_payable_paise), 0)
          FROM sales
          WHERE customer_phone = ?1 AND sale_status != 'VOIDED'
-         GROUP BY customer_name, customer_location
-         ORDER BY COUNT(*) DESC
+         GROUP BY customer_name, customer_location, customer_gstin
+         ORDER BY (customer_gstin IS NOT NULL) DESC, COUNT(*) DESC
          LIMIT 1;",
     ).map_err(|e| e.to_string())?;
 
@@ -1433,12 +1438,14 @@ fn lookup_customer_by_phone(
     if let Some(row) = rows.next().map_err(|e| e.to_string())? {
         let name: Option<String> = row.get(0).map_err(|e| e.to_string())?;
         let loc: Option<String> = row.get(1).map_err(|e| e.to_string())?;
-        let orders_count: i64 = row.get(2).map_err(|e| e.to_string())?;
-        let total_spent: i64 = row.get(3).map_err(|e| e.to_string())?;
+        let gstin: Option<String> = row.get(2).map_err(|e| e.to_string())?;
+        let orders_count: i64 = row.get(3).map_err(|e| e.to_string())?;
+        let total_spent: i64 = row.get(4).map_err(|e| e.to_string())?;
         Ok(Some(QuickCustomerLookup {
             customer_name: name,
             customer_phone: clean_phone,
             customer_location: loc,
+            customer_gstin: gstin,
             total_orders: orders_count,
             total_spent_paise: total_spent,
         }))

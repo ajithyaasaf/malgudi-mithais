@@ -78,6 +78,7 @@ fn sample_payload() -> FinalizeSalePayload {
         customer_name: None,
         customer_phone: None,
         customer_location: None,
+        customer_gstin: None,
     }
 }
 
@@ -408,6 +409,38 @@ fn test_read_only_pragma_and_write_rejection() {
         write_res.is_err(),
         "Write on read-only connection must be rejected"
     );
+
+    let _ = fs::remove_file(db_path);
+}
+
+#[test]
+fn test_b2b_gst_customer_billing_persisted_and_retrievable() {
+    let db_path = Path::new("target/test_b2b_gst.db");
+    let mut conn = setup_test_db(db_path);
+
+    let mut payload = sample_payload();
+    payload.sale_id = Some("b2b_sale_001".to_string());
+    payload.customer_name = Some("Supasee Enterprise".to_string());
+    payload.customer_phone = Some("9842188888".to_string());
+    payload.customer_location = Some("42/54, Harvey Nagar, Madurai".to_string());
+    payload.customer_gstin = Some("33NNYPS3460L1ZV".to_string());
+
+    let result = finalize_sale_atomic(&mut conn, &payload, None)
+        .expect("B2B Sale finalization failed");
+
+    // Verify database row contains customer_gstin
+    let (db_name, db_phone, db_location, db_gstin): (Option<String>, Option<String>, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT customer_name, customer_phone, customer_location, customer_gstin FROM sales WHERE id = ?1;",
+            [&result.sale_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .expect("Failed to query sales table");
+
+    assert_eq!(db_name, Some("Supasee Enterprise".to_string()));
+    assert_eq!(db_phone, Some("9842188888".to_string()));
+    assert_eq!(db_location, Some("42/54, Harvey Nagar, Madurai".to_string()));
+    assert_eq!(db_gstin, Some("33NNYPS3460L1ZV".to_string()));
 
     let _ = fs::remove_file(db_path);
 }
